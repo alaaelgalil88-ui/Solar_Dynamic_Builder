@@ -5902,40 +5902,58 @@ function buildExecutionCellLabels(){
   const labels=new Map();
   try{
     const wb=project?.wb;
-    const sheet=wb?.SheetNames?.[0]||'';
+    const mapSheetNames=Array.isArray(wb?.SheetNames)?wb.SheetNames:[];
     const ts=project?.buildResult?.trackerMatches||[];
     const byUnit=new Map();
+    const byCoord=new Map();
     for(const t of ts){
-      const row=String(t.row||'');
-      const tracker=String(t.label||'').toUpperCase();
-      (t.units||[]).forEach((u,i)=>byUnit.set(row+'|'+tracker+'|'+(i+1),u));
+      const row=String(t.row||'').trim();
+      const tracker=String(t.label||'').trim().toUpperCase();
+      (t.units||[]).forEach((u,i)=>{
+        const unitNo=i+1;
+        byUnit.set(row+'|'+tracker+'|'+unitNo,u);
+        for(let r=Number(u.r1);r<=Number(u.r2);r++) for(let c=Number(u.c1);c<=Number(u.c2);c++)
+          byCoord.set(r+'|'+c,u);
+      });
     }
     let rawStore={};
     try{rawStore=JSON.parse(localStorage.getItem('DPB_SHARED_PRODUCTION_V2')||'{}')}catch(_){rawStore={};}
+    let allRecs=Array.isArray(rawStore.records)?rawStore.records:[];
     const activeProject=String(window.__dpbActiveProjectId||'').trim();
-    const allRecs=Array.isArray(rawStore.records)?rawStore.records:[];
-    const recs=allRecs.filter(r=>!activeProject || String(r?.projectId||activeProject)===activeProject);
+    const projectRecs=activeProject?allRecs.filter(r=>String(r?.projectId||'')===activeProject):[];
+    // If the current browser/project id is not attached to older records, do not
+    // lose the mapping: fall back to the available Production records.
+    const recs=projectRecs.length?projectRecs:allRecs;
     for(const rec of recs){
       const code=Number(rec?.code);
       if(!Number.isFinite(code) || code<=0) continue;
-      let u=null;
-      const key=String(rec.row||'')+'|'+String(rec.tracker||rec.label||'').toUpperCase()+'|'+Number(rec.unit||0);
-      u=byUnit.get(key)||null;
-      // Exact physical coordinates are even stronger when the tracker/unit
-      // labels differ between imported source files.
-      if(!u && Number.isFinite(Number(rec.r1)) && Number.isFinite(Number(rec.c1))){
-        u=(ts.flatMap(t=>t.units||[])).find(x=>Number(x.r1)===Number(rec.r1)&&Number(x.c1)===Number(rec.c1)&&Number(x.r2)===Number(rec.r2)&&Number(x.c2)===Number(rec.c2))||null;
+      const row=String(rec?.row||'').trim();
+      const tracker=String(rec?.tracker||rec?.label||'').trim().toUpperCase();
+      let unitNo=Number(rec?.unit);
+      if(!Number.isFinite(unitNo)){
+        const m=String(rec?.unit||'').match(/\d+/);
+        unitNo=m?Number(m[0]):NaN;
       }
-      if(!u) continue;
-      const stamp=Date.parse(rec.updatedAt||rec.editedAt||rec.time||'')||0;
-      for(let r=u.r1;r<=u.r2;r++) for(let c=u.c1;c<=u.c2;c++){
-        const k=sheet+'|'+r+'|'+c;
-        const old=labels.get(k);
-        // For a cell that has multiple process records, keep the latest
-        // record of the same process and expose the highest completed process
-        // in the unfiltered EXCUTION view.
-        if(!old || code>old.code || (code===old.code && stamp>=old.stamp))
-          labels.set(k,{code,stamp});
+      let u=(Number.isFinite(unitNo)?byUnit.get(row+'|'+tracker+'|'+unitNo):null)||null;
+      if(!u && Number.isFinite(Number(rec?.r1)) && Number.isFinite(Number(rec?.c1)))
+        u=byCoord.get(Number(rec.r1)+'|'+Number(rec.c1))||null;
+
+      const stamp=Date.parse(rec?.updatedAt||rec?.editedAt||rec?.time||'')||0;
+      const r1=Number.isFinite(Number(rec?.r1))?Number(rec.r1):Number(u?.r1);
+      const c1=Number.isFinite(Number(rec?.c1))?Number(rec.c1):Number(u?.c1);
+      const r2=Number.isFinite(Number(rec?.r2))?Number(rec.r2):Number(u?.r2);
+      const c2=Number.isFinite(Number(rec?.c2))?Number(rec.c2):Number(u?.c2);
+      if(!Number.isFinite(r1)||!Number.isFinite(c1)) continue;
+      const rr2=Number.isFinite(r2)?r2:r1, cc2=Number.isFinite(c2)?c2:c1;
+      for(const sh of mapSheetNames){
+        for(let r=r1;r<=rr2;r++) for(let c=c1;c<=cc2;c++){
+          const k=sh+'|'+r+'|'+c;
+          const old=labels.get(k);
+          // Same physical cell can have several completed processes. Keep the
+          // highest process code; if the same process was edited later, keep it.
+          if(!old || code>old.code || (code===old.code && stamp>=old.stamp))
+            labels.set(k,{code,stamp});
+        }
       }
     }
   }catch(e){ console.warn('Execution cell label build skipped:',e); }
