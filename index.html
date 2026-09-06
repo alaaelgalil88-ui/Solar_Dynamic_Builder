@@ -8802,7 +8802,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // ---------------------------------------------------------------------
   // NEW unified backend: after deploying Code.gs, paste the /exec URL here.
   // Keep this same URL for Users + Production sync.
-  const GS_URL="https://script.google.com/macros/s/AKfycbzq2aQVseD7MLhj0f7nCDlYCGJFdXfKb7OoRWspwEZbfg25lrP9MZeW7jVb0UV3rRZu-w/exec";
+  const GS_URL="https://script.google.com/macros/s/AKfycbwxnRseFIBz-cUahVBYlENtcZECIR9OQ7WPDFgCXsh5ba96h-W4-Fpi3Hp_AK-VNsUk/exec";
   window.DPB_BACKEND_URL=GS_URL;
   const ACC_KEY="DPB_SUPERVISOR_ACCOUNTS_V1";
   const ALL_USERS_KEY="DPB_GS_USERS_ALL_V1";
@@ -8958,7 +8958,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // Unified bidirectional Production sync.
   // Google Sheets is the shared cloud ledger; localStorage remains the fast
   // local cache. Program edits are pushed, Sheet edits are pulled.
-  const CLOUD_URL=String(window.DPB_BACKEND_URL||"https://script.google.com/macros/s/AKfycbzq2aQVseD7MLhj0f7nCDlYCGJFdXfKb7OoRWspwEZbfg25lrP9MZeW7jVb0UV3rRZu-w/exec");
+  const CLOUD_URL=String(window.DPB_BACKEND_URL||"https://script.google.com/macros/s/AKfycbwxnRseFIBz-cUahVBYlENtcZECIR9OQ7WPDFgCXsh5ba96h-W4-Fpi3Hp_AK-VNsUk/exec");
   const STORE="DPB_SHARED_PRODUCTION_V2";
   const CURSOR_KEY="DPB_GS_PRODUCTION_CURSOR_V2";
   let pushing=false, pulling=false, timer=null;
@@ -12502,7 +12502,7 @@ body.dpbAdminHammerEntry #dpbAdminHammerBackBtn{display:flex!important}
             number:t.number,row:t.row,unit:i+1,time:now,editedAt:now,
             editedBy:"Admin",sheet:u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||""),r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2
           });
-          gsSyncEntries.push({supervisor:user,owner,source,process:state.process.name,code:state.process.code,tracker:t.label,row:t.row,unit:i+1,time:now,action:"admin_correction"});
+          gsSyncEntries.push({supervisor:user,owner,source,process:state.process.name,code:state.process.code,tracker:t.label,row:t.row,unit:i+1,time:now,action:"admin_correction",sheet:u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||""),r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2});
           // Clear any stale overlay value for this unit; the fresh record below is
           // now the single source of truth for the new status.
           try{
@@ -12529,7 +12529,7 @@ body.dpbAdminHammerEntry #dpbAdminHammerBackBtn{display:flex!important}
         if(already.done||existingIndex>=0){skipped++;return}
         if(already.adminReopened) clearAdminReopen(unitK);
         list.push({id:"prd_"+Math.random().toString(36).slice(2,11),key:unitK,user:state.user,owner:state.user,source:isAdminUser?'Admin':'Supervisor',process:state.process.name,code:state.process.code,tracker:t.label,number:t.number,row:t.row,unit:i+1,time:now,sheet:u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||""),r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2});
-        gsSyncEntries.push({supervisor:state.user,owner:state.user,source:isAdminUser?'Admin':'Supervisor',process:state.process.name,code:state.process.code,tracker:t.label,row:t.row,unit:i+1,time:now,action:"new"});
+        gsSyncEntries.push({supervisor:state.user,owner:state.user,source:isAdminUser?'Admin':'Supervisor',process:state.process.name,code:state.process.code,tracker:t.label,row:t.row,unit:i+1,time:now,action:"new",sheet:u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||""),r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2});
         // FIX: this used to overwrite the shared overlay with the NEW
         // process's code unconditionally. If the same physical cell already
         // held a higher stage (e.g. Bearing=3 recorded through another
