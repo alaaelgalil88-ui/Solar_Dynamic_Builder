@@ -8926,23 +8926,20 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     }
     return changed;
   }
-  function pendingRecords(){
-    const all=Array.isArray(readStore().records)?readStore().records:[];
-    // Send the active project only. A record without updatedAt is sent once;
-    // the server will stamp it and return the canonical version.
-    const active=pid();
-    return all.filter(r=>r&&r.id&&(!active||String(r.projectId||"")===active)).map(r=>{
-      const x=Object.assign({},r);
-      x.recordId=x.recordId||x.id;
-      x.projectId=x.projectId||active;
-      x.updatedAt=x.updatedAt||x.editedAt||x.time||new Date().toISOString();
-      x.editedAt=x.editedAt||x.updatedAt;
-      x.editedBy=x.editedBy||x.user||currentUser();
-      return x;
-    });
-  }
-  async function cloudSync(){
-    if(pushing||pulling||!pid()||!CLOUD_URL||CLOUD_URL.indexOf("PASTE_NEW")===0)return;
+  function resolveCloudProjectId(){
+      let active=pid();
+      if(active)return active;
+      try{const all=Array.isArray(readStore().records)?readStore().records:[];const ids=[...new Set(all.map(r=>String(r&&r.projectId||"").trim()).filter(Boolean))];if(ids.length===1){active=ids[0];window.__dpbActiveProjectId=active;return active;}}catch(_){ }
+      return "";
+    }
+    function pendingRecords(activeId){
+      const all=Array.isArray(readStore().records)?readStore().records:[];
+      const active=String(activeId||resolveCloudProjectId()||"").trim();
+      return all.filter(r=>r&&r.id&&(!active||String(r.projectId||"")===active)).map(r=>{const x=Object.assign({},r);x.recordId=x.recordId||x.id;x.projectId=x.projectId||active;x.updatedAt=x.updatedAt||x.editedAt||x.time||new Date().toISOString();x.editedAt=x.editedAt||x.updatedAt;x.editedBy=x.editedBy||x.user||currentUser();return x;});
+    }
+    async function cloudSync(){
+      const active=resolveCloudProjectId();
+      if(pushing||pulling||!active||!CLOUD_URL||CLOUD_URL.indexOf("PASTE_NEW")===0)return;
     pulling=true;
     try{
       const since=cursorGet();
@@ -11761,13 +11758,17 @@ body.dpbAdminHammerEntry #dpbAdminHammerBackBtn{display:flex!important}
   function setStore(x){localStorage.setItem(STORE,JSON.stringify(x));SHARED_STAGE_INDEX=null;PROCESS_STAGE_CELL_CACHE=null}
   function records(){return getStore().records||[]}
   function saveRecords(a){
-    const pid=window.__dpbActiveProjectId||'';
-    let raw={};try{raw=JSON.parse(localStorage.getItem(STORE)||"{}")}catch(_){raw={}}
-    const others=Array.isArray(raw.records)?raw.records.filter(r=>!pid || String(r.projectId||'')!==String(pid)):[];
-    const scoped=(a||[]).map(r=>({...r,projectId:r.projectId||pid}));
-    raw.records=others.concat(scoped);raw.updatedAt=new Date().toISOString();setStore(raw);SHARED_STAGE_INDEX=null;
-    try{if(typeof window.__dpbScheduleCloudSync==="function")window.__dpbScheduleCloudSync()}catch(_){}
-  }
+     let active=String(window.__dpbActiveProjectId||'').trim();
+     let raw={};try{raw=JSON.parse(localStorage.getItem(STORE)||"{}")}catch(_){raw={}}
+     if(!active){try{const ids=[...new Set((Array.isArray(raw.records)?raw.records:[]).map(r=>String(r&&r.projectId||'').trim()).filter(Boolean))];if(ids.length===1)active=ids[0];}catch(_){} }
+     if(!active)active='PRJ-001';
+     window.__dpbActiveProjectId=active;
+     const others=Array.isArray(raw.records)?raw.records.filter(r=>String(r.projectId||'')!==active):[];
+     const now=new Date().toISOString();
+     const scoped=(a||[]).map(r=>({...r,projectId:r.projectId||active,updatedAt:r.updatedAt||r.editedAt||r.time||now,editedAt:r.editedAt||r.updatedAt||now,editedBy:r.editedBy||r.user||''}));
+     raw.records=others.concat(scoped);raw.updatedAt=now;setStore(raw);SHARED_STAGE_INDEX=null;
+     try{if(typeof window.__dpbScheduleCloudSync==="function")window.__dpbScheduleCloudSync()}catch(_){}
+   }
 
   // Admin correction ledger: when Admin discovers that an Admin/Excel status
   // was entered incorrectly, the Admin can reopen that exact unit for a new
