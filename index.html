@@ -8802,7 +8802,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // ---------------------------------------------------------------------
   // NEW unified backend: after deploying Code.gs, paste the /exec URL here.
   // Keep this same URL for Users + Production sync.
-  const GS_URL="https://script.google.com/macros/s/AKfycbzFczkmf2p8KFC_zmlNp2ANkIVp6tUch3ZaWX5ivAiUTB6sMbtGyoY0QQdZzdXuT_1z3Q/exec";
+  const GS_URL="https://script.google.com/macros/s/AKfycbzq2aQVseD7MLhj0f7nCDlYCGJFdXfKb7OoRWspwEZbfg25lrP9MZeW7jVb0UV3rRZu-w/exec";
   window.DPB_BACKEND_URL=GS_URL;
   const ACC_KEY="DPB_SUPERVISOR_ACCOUNTS_V1";
   const ALL_USERS_KEY="DPB_GS_USERS_ALL_V1";
@@ -8958,7 +8958,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // Unified bidirectional Production sync.
   // Google Sheets is the shared cloud ledger; localStorage remains the fast
   // local cache. Program edits are pushed, Sheet edits are pulled.
-  const CLOUD_URL=String(window.DPB_BACKEND_URL||"https://script.google.com/macros/s/AKfycbzFczkmf2p8KFC_zmlNp2ANkIVp6tUch3ZaWX5ivAiUTB6sMbtGyoY0QQdZzdXuT_1z3Q/exec");
+  const CLOUD_URL=String(window.DPB_BACKEND_URL||"https://script.google.com/macros/s/AKfycbzq2aQVseD7MLhj0f7nCDlYCGJFdXfKb7OoRWspwEZbfg25lrP9MZeW7jVb0UV3rRZu-w/exec");
   const STORE="DPB_SHARED_PRODUCTION_V2";
   const CURSOR_KEY="DPB_GS_PRODUCTION_CURSOR_V2";
   let pushing=false, pulling=false, timer=null;
