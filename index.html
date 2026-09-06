@@ -8714,7 +8714,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // Sheets sync is an enhancement layered on top of the existing local
   // storage, never a hard dependency.
   // ---------------------------------------------------------------------
-  const GS_URL="https://script.google.com/macros/s/AKfycbzZlGfBU0xWBsUlvVf3jBehlvYM9FrCTZpddwsMD-Vnv1_1cM4yJnwxs0eq6p6kC8Ye/exec";
+  // NEW unified backend: after deploying Code.gs, paste the /exec URL here.
+  // Keep this same URL for Users + Production sync.
+  const GS_URL="https://script.google.com/macros/s/AKfycbzFczkmf2p8KFC_zmlNp2ANkIVp6tUch3ZaWX5ivAiUTB6sMbtGyoY0QQdZzdXuT_1z3Q/exec";
+  window.DPB_BACKEND_URL=GS_URL;
   const ACC_KEY="DPB_SUPERVISOR_ACCOUNTS_V1";
   const ALL_USERS_KEY="DPB_GS_USERS_ALL_V1";
   const LAST_SYNC_KEY="DPB_GS_LAST_SYNC_V1";
@@ -8763,15 +8766,57 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // (ACC_KEY); the Admin role is kept in a side cache so the Admin Portal's
   // own "Supervisor accounts" list isn't cluttered with the Admin row.
   function syncUsersFromSheet(){
+    // FIRST CONNECTION SAFETY: never erase the existing local supervisor
+    // accounts just because the new Users sheet is empty. On the first
+    // successful connection we migrate local accounts into Users; after that,
+    // the Sheet can become authoritative normally.
+    let localSup=[];
+    try{
+      const raw=JSON.parse(localStorage.getItem(ACC_KEY)||"[]");
+      if(Array.isArray(raw))localSup=raw.filter(a=>a&&a.name);
+    }catch(_){}
     return gsCall("getUsers",{}).then(res=>{
       if(!res||res.ok===false||!Array.isArray(res.users))return false;
-      const accounts=res.users.map(rowToAccount).filter(a=>a.name);
+      const remote=res.users.map(rowToAccount).filter(a=>a.name);
+      const firstSync=!localStorage.getItem(LAST_SYNC_KEY);
+      const byName=new Map();
+      // On first sync, preserve any existing local accounts that are not yet
+      // present in the new Users sheet. Remote rows win when the same name
+      // exists in both places.
+      if(firstSync)localSup.forEach(a=>byName.set(String(a.name).toLowerCase(),a));
+      remote.forEach(a=>byName.set(String(a.name).toLowerCase(),a));
+      const accounts=[...byName.values()];
       try{
-        localStorage.setItem(ACC_KEY,JSON.stringify(accounts.filter(a=>!a.isAdmin)));
-        localStorage.setItem(ALL_USERS_KEY,JSON.stringify(accounts));
-        localStorage.setItem(LAST_SYNC_KEY,String(Date.now()));
-        if(typeof window.__dpbMarkDataChanged==="function")window.__dpbMarkDataChanged();
+        if(accounts.length || remote.length){
+          localStorage.setItem(ACC_KEY,JSON.stringify(accounts.filter(a=>!a.isAdmin)));
+          localStorage.setItem(ALL_USERS_KEY,JSON.stringify(accounts));
+          localStorage.setItem(LAST_SYNC_KEY,String(Date.now()));
+          if(typeof window.__dpbMarkDataChanged==="function")window.__dpbMarkDataChanged();
+        }
       }catch(_){}
+      // FIRST CONNECTION: migrate the old local supervisor accounts AND the
+      // locally verified Admin PIN into the new Users sheet. Admin PIN is
+      // stored separately in DPB_ADMIN_PIN_V1, so it must be migrated here
+      // explicitly; it is not part of DPB_SUPERVISOR_ACCOUNTS_V1.
+      if(firstSync){
+        const jobs=[];
+        const missing=remote.length?localSup.filter(a=>!remote.some(r=>String(r.name).toLowerCase()===String(a.name).toLowerCase())):localSup;
+        missing.forEach(a=>jobs.push(gsCall("saveUser",{user:{
+          userID:a.userID||("gs_"+String(a.name).toLowerCase()),
+          username:a.name,password:a.pin,role:"Supervisor",
+          processIds:a.processIds||[],allProcesses:!!a.allProcesses,active:a.active!==false
+        }}).catch(()=>null)));
+        let localAdminPin="";
+        try{localAdminPin=String(localStorage.getItem("DPB_ADMIN_PIN_V1")||"").trim();}catch(_){}
+        const hasRemoteAdmin=remote.some(r=>String(r.name||"").toLowerCase()==="admin" || !!r.isAdmin);
+        if(localAdminPin && !hasRemoteAdmin){
+          jobs.push(gsCall("saveUser",{user:{
+            userID:"gs_admin",username:"Admin",password:localAdminPin,role:"Admin",
+            processIds:["*"],allProcesses:true,active:true
+          }}).catch(()=>null));
+        }
+        return Promise.all(jobs).then(()=>true);
+      }
       return true;
     });
   }
@@ -8789,9 +8834,16 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // second case.
   function verifyAdminPin(pin){
     return gsCall("login",{username:"Admin",password:pin}).then(res=>{
-      const reachable=!!(res && res.__reachable===true);
-      const ok=!!(reachable && res.ok===true && res.user);
-      return {reachable,ok,account:ok?rowToAccount(res.user):null};
+      const transportOk=!!(res && res.__reachable===true);
+      if(!transportOk)return {reachable:false,ok:false,account:null};
+      if(res.ok===true && res.user)return {reachable:true,ok:true,account:rowToAccount(res.user)};
+      // A reachable NEW backend with no Admin row must not lock out the
+      // original local Admin PIN. If an Admin row exists, a wrong PIN is a
+      // real wrong PIN and must be rejected.
+      return getUsersRaw().then(rows=>{
+        const hasAdmin=(rows||[]).some(u=>String(u.username||u.Username||"").trim().toLowerCase()==="admin");
+        return {reachable:hasAdmin,ok:false,account:null};
+      }).catch(()=>({reachable:false,ok:false,account:null}));
     });
   }
 
@@ -8817,162 +8869,109 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 <script id="dpbCloudProductionSync">
 (function(){
   "use strict";
-  // ---------------------------------------------------------------------
-  // Cross-device production sync via the Google Apps Script Web App backed
-  // by the "Production" sheet (doGet returns {ok,data:[...]}, doPost with
-  // {action:"upsertMany"} saves). Every production record already stored
-  // locally (DPB_SHARED_PRODUCTION_V2) gets pushed to the Sheet; every
-  // device also pulls the latest Sheet snapshot and merges it into its own
-  // local copy (newest .time per record id wins). Fully additive: if the
-  // network/Sheet is unreachable this silently no-ops and the app keeps
-  // working exactly as it did with local-only storage.
-  // IMPORTANT: replace CLOUD_URL below with the exact /exec URL of your
-  // deployed Production-sync Apps Script if it differs from this one.
-  // ---------------------------------------------------------------------
-  const CLOUD_URL="https://script.google.com/macros/s/AKfycbzEygfh5S6ELgpDY06eLmaPM4hmSKw73jD_gVBrQbsQYHfqd5mnhKzWMYUt57o5XCIenA/exec";
+  // Unified bidirectional Production sync.
+  // Google Sheets is the shared cloud ledger; localStorage remains the fast
+  // local cache. Program edits are pushed, Sheet edits are pulled.
+  const CLOUD_URL=String(window.DPB_BACKEND_URL||"https://script.google.com/macros/s/AKfycbzFczkmf2p8KFC_zmlNp2ANkIVp6tUch3ZaWX5ivAiUTB6sMbtGyoY0QQdZzdXuT_1z3Q/exec");
   const STORE="DPB_SHARED_PRODUCTION_V2";
-  const SYNCED_KEY="DPB_CLOUD_SYNCED_TIMES_V1";
+  const CURSOR_KEY="DPB_GS_PRODUCTION_CURSOR_V2";
+  let pushing=false, pulling=false, timer=null;
 
-  function readStore(){
-    try{ return JSON.parse(localStorage.getItem(STORE)||"{}"); }catch(_){ return {}; }
+  function readStore(){try{return JSON.parse(localStorage.getItem(STORE)||"{}")}catch(_){return {}}}
+  function writeStoreDirect(x){try{localStorage.setItem(STORE,JSON.stringify(x))}catch(_){}
   }
-  function writeStoreDirect(store){
-    try{ localStorage.setItem(STORE,JSON.stringify(store)); }catch(_){}
+  function pid(){return String(window.__dpbActiveProjectId||"").trim()}
+  function currentUser(){
+    try{return String((window.state&&window.state.user)||localStorage.getItem("DPB_CURRENT_USER")||"").trim()}catch(_){return ""}
   }
-  function getSyncedMap(){
-    try{ return JSON.parse(localStorage.getItem(SYNCED_KEY)||"{}"); }catch(_){ return {}; }
+  function cursorGet(){try{return String(localStorage.getItem(CURSOR_KEY)||"")}catch(_){return ""}}
+  function cursorSet(v){try{localStorage.setItem(CURSOR_KEY,String(v||""))}catch(_){}
   }
-  function setSyncedMap(m){
-    try{ localStorage.setItem(SYNCED_KEY,JSON.stringify(m)); }catch(_){}
-  }
-
-  let pushing=false, pullPending=false;
-
   function showCloudStatus(msg){
     try{
-      let t=document.getElementById("dpbSupToast");
-      if(!t){
-        t=document.createElement("div");
-        t.id="dpbCloudSyncToast";
-        t.style.cssText="position:fixed;left:12px;right:12px;bottom:14px;z-index:99999;background:#3a1414;color:#ffdede;border:1px solid #ff6767;border-radius:12px;padding:10px 14px;font-size:12px;font-weight:800;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.4)";
-        document.body.appendChild(t);
-      }
-      t.textContent=msg;t.style.display="block";
-      clearTimeout(showCloudStatus._t);
-      showCloudStatus._t=setTimeout(()=>{t.style.display="none"},4000);
-    }catch(_){}
+      let t=document.getElementById("dpbCloudSyncToast");
+      if(!t){t=document.createElement("div");t.id="dpbCloudSyncToast";t.style.cssText="position:fixed;left:12px;right:12px;bottom:14px;z-index:99999;background:#3a1414;color:#ffdede;border:1px solid #ff6767;border-radius:12px;padding:10px 14px;font-size:12px;font-weight:800;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.4)";document.body.appendChild(t)}
+      t.textContent=msg;t.style.display="block";clearTimeout(showCloudStatus._t);showCloudStatus._t=setTimeout(()=>t.style.display="none",4000);
+    }catch(_){ }
   }
-
-  async function cloudPush(){
-    if(pushing) return;
-    pushing=true;
-    try{
-      const store=readStore();
-      const all=Array.isArray(store.records)?store.records:[];
-      const synced=getSyncedMap();
-      const pending=all.filter(r=>r&&r.id&&synced[r.id]!==r.time);
-      if(!pending.length) return;
-      const res=await fetch(CLOUD_URL,{method:"POST",body:JSON.stringify({action:"upsertMany",records:pending})});
-      if(!res.ok){
-        showCloudStatus("⚠️ فشلت مزامنة الرفع للسحابة (خطأ "+res.status+"). راجع نشر الـ Apps Script.");
-        return;
+  function normalizeRemote(r){
+    if(!r)return null;
+    const x=Object.assign({},r);
+    if(!x.id && x.recordId)x.id=x.recordId;
+    if(!x.recordId && x.id)x.recordId=x.id;
+    if(!x.key && x.logicalKey)x.key=x.logicalKey;
+    if(!x.process && x.processCode)x.process=x.processCode;
+    if(!x.editedAt)x.editedAt=x.updatedAt||x.time||new Date().toISOString();
+    return x;
+  }
+  function mergeRemote(records){
+    if(!Array.isArray(records)||!records.length)return false;
+    const store=readStore();
+    const local=Array.isArray(store.records)?store.records:[];
+    const byId={}; local.forEach(r=>{if(r&&r.id)byId[String(r.id)]=r});
+    let changed=false;
+    records.forEach(raw=>{
+      const r=normalizeRemote(raw); if(!r||!r.id)return;
+      const id=String(r.id), old=byId[id];
+      const rt=String(r.updatedAt||r.editedAt||r.time||"");
+      const ot=String(old?.updatedAt||old?.editedAt||old?.time||"");
+      if(!old || rt>=ot){
+        if(!old || JSON.stringify(old)!==JSON.stringify(r)){byId[id]=r;changed=true;}
       }
-      const rawText=await res.text();
-      let json=null; try{ json=JSON.parse(rawText); }catch(_){
-        showCloudStatus("⚠️ رد السيرفر غير متوقع (مش JSON). راجع كود الـ Apps Script.");
-        console.warn("[CloudSync] push non-JSON response:",rawText.slice(0,300));
-        return;
-      }
-      if(json && json.ok){
-        pending.forEach(r=>{ synced[r.id]=r.time; });
-        setSyncedMap(synced);
-      }else{
-        showCloudStatus("⚠️ السيرفر رفض حفظ البيانات: "+(json&&json.error?json.error:"سبب غير معروف"));
-      }
-    }catch(e){
-      console.warn("[CloudSync] push failed",e);
-      showCloudStatus("⚠️ تعذّر الاتصال بسيرفر المزامنة (لا يوجد إنترنت أو السيرفر متوقف).");
+    });
+    if(changed){
+      store.records=Object.values(byId);store.updatedAt=new Date().toISOString();writeStoreDirect(store);
+      if(typeof window.__dpbMarkDataChanged==="function")window.__dpbMarkDataChanged();
+      try{window.dispatchEvent(new CustomEvent("dpbCloudDataMerged"))}catch(_){}
     }
-    finally{ pushing=false; }
+    return changed;
   }
-
-  async function cloudPull(){
-    if(pullPending) return;
-    pullPending=true;
+  function pendingRecords(){
+    const all=Array.isArray(readStore().records)?readStore().records:[];
+    // Send the active project only. A record without updatedAt is sent once;
+    // the server will stamp it and return the canonical version.
+    const active=pid();
+    return all.filter(r=>r&&r.id&&(!active||String(r.projectId||"")===active)).map(r=>{
+      const x=Object.assign({},r);
+      x.recordId=x.recordId||x.id;
+      x.projectId=x.projectId||active;
+      x.updatedAt=x.updatedAt||x.editedAt||x.time||new Date().toISOString();
+      x.editedAt=x.editedAt||x.updatedAt;
+      x.editedBy=x.editedBy||x.user||currentUser();
+      return x;
+    });
+  }
+  async function cloudSync(){
+    if(pushing||pulling||!pid()||!CLOUD_URL||CLOUD_URL.indexOf("PASTE_NEW")===0)return;
+    pulling=true;
     try{
-      const res=await fetch(CLOUD_URL+"?t="+Date.now());
-      if(!res.ok){
-        showCloudStatus("⚠️ فشل سحب التحديثات من السحابة (خطأ "+res.status+").");
-        return;
-      }
-      const rawText=await res.text();
-      let json=null; try{ json=JSON.parse(rawText); }catch(_){
-        showCloudStatus("⚠️ رد السحب من السيرفر غير متوقع (مش JSON).");
-        console.warn("[CloudSync] pull non-JSON response:",rawText.slice(0,300));
-        return;
-      }
-      if(!json || !json.ok || !Array.isArray(json.data)){
-        showCloudStatus("⚠️ السيرفر رجّع بيانات غير صالحة عند السحب.");
-        return;
-      }
-      window.__dpbLastCloudPullOk={time:new Date().toISOString(),count:json.data.length};
-      const store=readStore();
-      const local=Array.isArray(store.records)?store.records:[];
-      const byId={};
-      local.forEach(r=>{ if(r && r.id) byId[r.id]=r; });
-      let changed=false;
-      json.data.forEach(cloudRec=>{
-        if(!cloudRec || !cloudRec.id) return;
-        const existing=byId[cloudRec.id];
-        if(!existing || String(cloudRec.time||"") > String(existing.time||"")){
-          byId[cloudRec.id]=cloudRec; changed=true;
-        }
-      });
-      if(changed){
-        store.records=Object.values(byId);
-        store.updatedAt=new Date().toISOString();
-        writeStoreDirect(store);
-        const synced=getSyncedMap();
-        json.data.forEach(r=>{ if(r && r.id) synced[r.id]=r.time; });
-        setSyncedMap(synced);
-        if(typeof window.__dpbMarkDataChanged==="function")window.__dpbMarkDataChanged();
-        try{ window.dispatchEvent(new CustomEvent("dpbCloudDataMerged")); }catch(_){}
-      }
-    }catch(e){
-      console.warn("[CloudSync] pull failed",e);
-      showCloudStatus("⚠️ تعذّر الاتصال بسيرفر المزامنة (لا يوجد إنترنت أو السيرفر متوقف).");
-    }
-    finally{ pullPending=false; }
+      const since=cursorGet();
+      const pending=pendingRecords();
+      const res=await fetch(CLOUD_URL,{method:"POST",body:JSON.stringify({action:"sync",projectId:pid(),since,records:pending,user:currentUser()})});
+      if(!res.ok)throw new Error("HTTP "+res.status);
+      const json=await res.json();
+      if(!json||json.ok!==true)throw new Error(json&&json.error||"Invalid server response");
+      mergeRemote(Array.isArray(json.records)?json.records:[]);
+      if(json.cursor)cursorSet(json.cursor);
+      window.__dpbLastCloudPullOk={time:new Date().toISOString(),count:Array.isArray(json.records)?json.records.length:0};
+    }catch(e){console.warn("[UnifiedSync] sync failed",e);showCloudStatus("⚠️ تعذّر مزامنة Google Sheets حاليًا. التطبيق سيستمر محليًا.")}
+    finally{pulling=false;pushing=false}
   }
-
-  function scheduleSync(){ cloudPull().then(cloudPush); }
-
-  // Fire a push shortly after any local save (markDataChanged is already
-  // called by every code path that writes production records, including
-  // the admin/supervisor save flow above).
-  const prevMark=window.__dpbMarkDataChanged;
-  window.__dpbMarkDataChanged=function(){
-    if(typeof prevMark==="function"){ try{ prevMark.apply(this,arguments); }catch(_){} }
-    clearTimeout(window.__dpbCloudPushTimer);
-    window.__dpbCloudPushTimer=setTimeout(cloudPush,600);
-  };
-
-  // Whenever a cloud merge changes local data, refresh whatever is on
-  // screen (units grid / map / production list) so the change shows up
-  // without the user having to manually reload.
-  window.addEventListener("dpbCloudDataMerged",()=>{
-    try{ if(typeof renderUnits==="function") renderUnits(); }catch(_){}
-    try{ if(typeof renderHomeSummary==="function") renderHomeSummary(); }catch(_){}
-    try{ if(typeof renderProductionEdits==="function") renderProductionEdits(); }catch(_){}
-    try{ if(typeof drawMap==="function") drawMap(); }catch(_){}
-    try{ if(typeof installSharedStageBridge==="function") installSharedStageBridge(); }catch(_){}
-  });
-
-  window.addEventListener("load",()=>{ setTimeout(scheduleSync,1500); });
-  document.addEventListener("visibilitychange",()=>{ if(!document.hidden) scheduleSync(); });
-  setInterval(scheduleSync,25000);
-
-  window.DPB_CLOUD_PRODUCTION={cloudPush,cloudPull,scheduleSync};
+  function scheduleSync(){clearTimeout(timer);timer=setTimeout(cloudSync,700)}
+  window.__dpbCloudSync=cloudSync;
+  window.__dpbScheduleCloudSync=scheduleSync;
+  // Pull on open/project switch, push shortly after any local save, and keep
+  // devices converged without hammering Apps Script.
+  setTimeout(cloudSync,1200);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")cloudSync()});
+  window.addEventListener("focus",()=>cloudSync());
+  window.addEventListener("dpb-project-switched",()=>{cursorSet("");setTimeout(cloudSync,400)});
+  window.addEventListener("dpbCloudDataMerged",()=>{try{if(typeof drawMap==="function")drawMap()}catch(_){} });
+  if(typeof window.__dpbMarkDataChanged==="function")window.__dpbMarkDataChanged=(()=>{
+    const old=window.__dpbMarkDataChanged;
+    return function(){try{old.apply(this,arguments)}finally{scheduleSync()}};
+  })();
+  setInterval(cloudSync,30000);
 })();
 </script>
 <style id="dpbSupervisorMapAndCompactPatch">
@@ -11755,7 +11754,11 @@ body.dpbAdminHammerEntry #dpbAdminHammerBackBtn{display:flex!important}
     }catch(e){return {}}
   }
   let SHARED_STAGE_INDEX=null;
-  function setStore(x){localStorage.setItem(STORE,JSON.stringify(x));SHARED_STAGE_INDEX=null}
+  // Process-stage lookup is potentially requested once per visible unit.
+  // Never rescan the entire Plan workbook for every unit: build the physical
+  // cell index once and reuse it. This is critical on mobile/Chromium.
+  let PROCESS_STAGE_CELL_CACHE=null;
+  function setStore(x){localStorage.setItem(STORE,JSON.stringify(x));SHARED_STAGE_INDEX=null;PROCESS_STAGE_CELL_CACHE=null}
   function records(){return getStore().records||[]}
   function saveRecords(a){
     const pid=window.__dpbActiveProjectId||'';
@@ -11763,6 +11766,7 @@ body.dpbAdminHammerEntry #dpbAdminHammerBackBtn{display:flex!important}
     const others=Array.isArray(raw.records)?raw.records.filter(r=>!pid || String(r.projectId||'')!==String(pid)):[];
     const scoped=(a||[]).map(r=>({...r,projectId:r.projectId||pid}));
     raw.records=others.concat(scoped);raw.updatedAt=new Date().toISOString();setStore(raw);SHARED_STAGE_INDEX=null;
+    try{if(typeof window.__dpbScheduleCloudSync==="function")window.__dpbScheduleCloudSync()}catch(_){}
   }
 
   // Admin correction ledger: when Admin discovers that an Admin/Excel status
@@ -11957,6 +11961,102 @@ body.dpbAdminHammerEntry #dpbAdminHammerBackBtn{display:flex!important}
     return !!owner && owner.toLowerCase()===String(state.user||'').trim().toLowerCase();
   }
 
+  // Grouped-process workflow: only processes declared inside the SAME
+  // grouped workbook participate in the cumulative stage lock. Separate
+  // process workbooks remain completely independent.
+  function groupedProcessEntries(){
+    const out=[];
+    try{
+      const rec=project?.processConfig?.files?.grouped;
+      if(rec?.applied && Array.isArray(rec.definition?.processes)){
+        rec.definition.processes.forEach((p,i)=>{
+          const code=String(p?.code??'').trim();
+          if(code) out.push({code,processIndex:i,name:String(p?.name||'').trim(),rec});
+        });
+      }
+    }catch(_){ }
+    return out;
+  }
+  function isGroupedProcessCode(code){
+    const c=String(code??'').trim();
+    return !!c && groupedProcessEntries().some(x=>x.code===c);
+  }
+  function processStageCellMap(entry){
+    try{
+      if(!entry?.code) return new Map();
+      const cacheKey=String(entry.id||('code:'+entry.code));
+      if(!PROCESS_STAGE_CELL_CACHE) PROCESS_STAGE_CELL_CACHE=new Map();
+      if(PROCESS_STAGE_CELL_CACHE.has(cacheKey)) return PROCESS_STAGE_CELL_CACHE.get(cacheKey);
+      // processMapCells() performs the full workbook projection/matching.
+      // It is deliberately executed ONCE per applied process, never once per
+      // Production unit.
+      const cells=processMapCells(entry) || new Map();
+      const physical=new Map();
+      for(const key of cells.keys()){
+        const p=String(key).split('|');
+        if(p.length<5) continue;
+        const physicalKey=`${p[0]}|${p[1]}|${p[2]}|${p[3]}|${p[4]}`;
+        physical.set(physicalKey,true);
+      }
+      PROCESS_STAGE_CELL_CACHE.set(cacheKey,physical);
+      return physical;
+    }catch(_){ return new Map(); }
+  }
+
+  function groupedStageForUnit(tracker,unit){
+    if(!isGroupedProcessCode(state.process?.code)) return 0;
+    const entries=groupedProcessEntries();
+    let stage=0;
+    const sh=(unit&&unit.sheet)||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||'');
+    const physicalKey=`${sh}|${Number(unit?.r1)}|${Number(unit?.c1)}|${Number(unit?.r2)-Number(unit?.r1)+1}|${Number(unit?.c2)-Number(unit?.c1)+1}`;
+
+    // Shared production ledger: read it once, then use exact physical cell
+    // coordinates. Do not call records()/localStorage once per unit.
+    try{
+      if(!PROCESS_STAGE_CELL_CACHE) PROCESS_STAGE_CELL_CACHE=new Map();
+      const ledgerKey='__grouped-ledger__';
+      let ledger=PROCESS_STAGE_CELL_CACHE.get(ledgerKey);
+      if(!ledger){
+        ledger=new Map();
+        const allowed=new Set(entries.map(e=>e.code));
+        for(const rec of records()){
+          const code=String(rec.code??'').trim();
+          if(!allowed.has(code)) continue;
+          const r=String(rec.row||''), t=String(rec.tracker||rec.label||'');
+          const rs=String(rec.sheet||sh);
+          const pk=`${rs}|${Number(rec.r1)}|${Number(rec.c1)}|${Number(rec.r2)-Number(rec.r1)+1}|${Number(rec.c2)-Number(rec.c1)+1}`;
+          const k=`${r}|${t}|${pk}`;
+          ledger.set(k,Math.max(Number(ledger.get(k)||0),Number(code)||0));
+        }
+        PROCESS_STAGE_CELL_CACHE.set(ledgerKey,ledger);
+      }
+      stage=Math.max(stage,Number(ledger.get(`${String(tracker?.row||'')}|${String(tracker?.label||'')}|${physicalKey}`)||0));
+    }catch(_){ }
+
+    // Admin/Excel grouped source: each process projection is cached once.
+    for(const entry of entries){
+      const cells=processStageCellMap({id:'grouped:'+entry.processIndex,name:entry.name,code:entry.code,rec:entry.rec,processIndex:entry.processIndex});
+      if(cells.has(physicalKey)) stage=Math.max(stage,Number(entry.code)||0);
+    }
+    return stage;
+  }
+
+  // Separate processes are independent. Their source projection is also
+  // cached so selecting a process cannot trigger an O(units × workbook) scan.
+  function separateProcessStageForUnit(processCode,unit){
+    const code=String(processCode??'').trim();
+    const sh=(unit&&unit.sheet)||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||'');
+    const physicalKey=`${sh}|${Number(unit?.r1)}|${Number(unit?.c1)}|${Number(unit?.r2)-Number(unit?.r1)+1}|${Number(unit?.c2)-Number(unit?.c1)+1}`;
+    let stage=0;
+    try{
+      for(const entry of getAppliedProcessEntries()){
+        if(String(entry.code||'').trim()!==code) continue;
+        if(processStageCellMap(entry).has(physicalKey)) stage=Math.max(stage,Number(entry.code)||0);
+      }
+    }catch(_){ }
+    return stage;
+  }
+
   function existingDone(processCode,tracker,unit,index){
     const unitK=unitKey(processCode,tracker,unit,index);
     // An Admin-only reopen temporarily removes the Admin/Excel lock for this
@@ -11971,10 +12071,13 @@ body.dpbAdminHammerEntry #dpbAdminHammerBackBtn{display:flex!important}
     const sr=supervisorRecordFor(processCode,tracker,unit,index);
     if(sr)return {done:true,source:sr.source==='Admin'?'Admin':(sr.user||"Supervisor"),time:sr.time,record:sr,editable:canEditProductionRecord(sr),adminRecord:sr.source==='Admin'};
 
-    // Then read the Admin / Excel execution state used by the main map.
+    // Then read the execution state. Cumulative locking is ONLY for the
+    // grouped workflow. A higher code from a separate workbook must never
+    // lock this process.
     try{
-      if(typeof window.effectiveUnitStage==='function'){
-        const stage=window.effectiveUnitStage(tracker,unit);
+      const grouped=isGroupedProcessCode(processCode);
+      const stage=grouped ? groupedStageForUnit(tracker,unit) : separateProcessStageForUnit(processCode,unit);
+      if(stage){
         if(Number(stage)>=Number(processCode)){
           // A unit that has already advanced PAST this process (its overall
           // stage is higher than the process being viewed) must not be
