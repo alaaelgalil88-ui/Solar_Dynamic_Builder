@@ -4644,6 +4644,7 @@ function drawStatusFilterMap(){
   const trackerByCell=new Map(); (project.buildResult?.trackerMatches||[]).forEach(t=>t.units.forEach((u,i)=>{for(let r=u.r1;r<=u.r2;r++)for(let c=u.c1;c<=u.c2;c++)trackerByCell.set(project.wb.SheetNames[0]+'|'+r+'|'+c,{t,u,i});}));
 
   const {overlay,stages}=buildStatusOverlay();
+  const executionCellLabels=buildExecutionCellLabels();
   const stageRaw=neutralView?'all':String(mapFilterState.stage||'all');
   const planView=stageRaw==='plan';
   const notStartedView=stageRaw==='0';
@@ -4689,7 +4690,14 @@ function drawStatusFilterMap(){
           }
         }else{cls+=' unmatched';style='background:transparent!important;border:0!important;outline:0!important;box-shadow:none!important;color:transparent!important;opacity:1!important;pointer-events:none!important;';}
       }else cls+=' outside';
-      h+=`<td class="${cls}" rowspan="${rs}" colspan="${cs}" style="${style}" title="${esc(val)}"></td>`;
+      let executionLabel='';
+      if(owner && !planView){
+        const recLabel=executionCellLabels.get(cellKey);
+        if(stageFilterActive && selectedStage>0 && cellStage>=selectedStage) executionLabel=String(selectedStage);
+        else if(recLabel) executionLabel=String(recLabel.code);
+        else if(cellStage>0) executionLabel=String(cellStage);
+      }
+      h+=`<td class="${cls}" rowspan="${rs}" colspan="${cs}" style="${style}" title="${esc(val)}">${executionLabel?`<span class="exec-number">${esc(executionLabel)}</span>`:''}</td>`;
     }
     h+='</tr>';
   }
@@ -5887,6 +5895,53 @@ function isRammingMapFill(fill){
   return true;
 }
 
+// Build the exact process number/code shown on each physical EXCUTION cell.
+// Production is the primary source. Matching is by the same Tracker/Row/Unit
+// geometry used by the map, with physical coordinates as a final safety key.
+function buildExecutionCellLabels(){
+  const labels=new Map();
+  try{
+    const wb=project?.wb;
+    const sheet=wb?.SheetNames?.[0]||'';
+    const ts=project?.buildResult?.trackerMatches||[];
+    const byUnit=new Map();
+    for(const t of ts){
+      const row=String(t.row||'');
+      const tracker=String(t.label||'').toUpperCase();
+      (t.units||[]).forEach((u,i)=>byUnit.set(row+'|'+tracker+'|'+(i+1),u));
+    }
+    let rawStore={};
+    try{rawStore=JSON.parse(localStorage.getItem('DPB_SHARED_PRODUCTION_V2')||'{}')}catch(_){rawStore={};}
+    const activeProject=String(window.__dpbActiveProjectId||'').trim();
+    const allRecs=Array.isArray(rawStore.records)?rawStore.records:[];
+    const recs=allRecs.filter(r=>!activeProject || String(r?.projectId||activeProject)===activeProject);
+    for(const rec of recs){
+      const code=Number(rec?.code);
+      if(!Number.isFinite(code) || code<=0) continue;
+      let u=null;
+      const key=String(rec.row||'')+'|'+String(rec.tracker||rec.label||'').toUpperCase()+'|'+Number(rec.unit||0);
+      u=byUnit.get(key)||null;
+      // Exact physical coordinates are even stronger when the tracker/unit
+      // labels differ between imported source files.
+      if(!u && Number.isFinite(Number(rec.r1)) && Number.isFinite(Number(rec.c1))){
+        u=(ts.flatMap(t=>t.units||[])).find(x=>Number(x.r1)===Number(rec.r1)&&Number(x.c1)===Number(rec.c1)&&Number(x.r2)===Number(rec.r2)&&Number(x.c2)===Number(rec.c2))||null;
+      }
+      if(!u) continue;
+      const stamp=Date.parse(rec.updatedAt||rec.editedAt||rec.time||'')||0;
+      for(let r=u.r1;r<=u.r2;r++) for(let c=u.c1;c<=u.c2;c++){
+        const k=sheet+'|'+r+'|'+c;
+        const old=labels.get(k);
+        // For a cell that has multiple process records, keep the latest
+        // record of the same process and expose the highest completed process
+        // in the unfiltered EXCUTION view.
+        if(!old || code>old.code || (code===old.code && stamp>=old.stamp))
+          labels.set(k,{code,stamp});
+      }
+    }
+  }catch(e){ console.warn('Execution cell label build skipped:',e); }
+  return labels;
+}
+
 function drawStatusMap(options){
   const neutralView=!!(options&&options.neutral);
   const neutralOperation=options?.operation||null;
@@ -6141,28 +6196,22 @@ function drawStatusMap(options){
         : value;
 
       const showText=/^(ROW\b|T\d+$|L\d*$)/i.test(value);
-      // EXECUTION MAP NUMBERING: show the REAL process code on the physical
-      // production cell. If an operation is selected, its own code is shown
-      // only after that operation is completed for this exact unit. Otherwise
-      // show the highest completed process code. Plan/Site reference views stay
-      // unchanged and never receive these execution numbers.
+      // EXCUTION map: show the REAL process code on the exact completed
+      // Tracker/Unit cell. Example: T4 / ROW 1 / U7 completed Saddle (code 2)
+      // => the cell itself displays `2`. Plan/Site Color Code stays label-free.
       let executionLabel='';
-      if(tracker && !planView && !neutralView && cellStage>0){
-        let codeToShow=0;
+      if(tracker && !planView){
+        const k=mapSheetName+'|'+r+'|'+c;
+        const recLabel=executionCellLabels.get(k);
         if(stageFilterActive && selectedStage>0 && cellStage>=selectedStage){
-          codeToShow=selectedStage;
-        }else if(mapViewState && mapViewState!=='site' && mapViewState!=='notstarted'){
-          const opEntry=getAppliedProcessEntries().find(e=>e.id===mapViewState);
-          if(opEntry && Number.isFinite(Number(opEntry.code)) && cellStage>=Number(opEntry.code)) codeToShow=Number(opEntry.code);
+          executionLabel=String(selectedStage);
+        }else if(recLabel){
+          executionLabel=String(recLabel.code);
+        }else if(cellStage>0){
+          executionLabel=String(cellStage);
         }
-        if(!codeToShow) codeToShow=Number(cellStage)||0;
-        if(codeToShow) executionLabel=String(codeToShow);
       }
-      const label=showText?esc(value):executionLabel;
-      if(executionLabel && !showText){
-        style += 'color:#ffffff!important;font-weight:1000!important;text-shadow:0 1px 3px rgba(0,0,0,.9);font-size:14px!important;';
-        cls += ' execution-number-cell';
-      }
+      const label=showText?esc(value):(executionLabel?`<span class="exec-number">${esc(executionLabel)}</span>`:'');
 
       h+=`<td class="${cls}" data-dpb-r="${r}" data-dpb-c="${c}" data-map-tracker="${esc(tracker?.label||'')}" data-map-insite="${inSite?'1':'0'}" rowspan="${rs}" colspan="${cs}" title="${esc(title)}" style="${style}">${label}</td>`;
     }
@@ -8945,23 +8994,20 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     }
     return changed;
   }
-  function pendingRecords(){
-    const all=Array.isArray(readStore().records)?readStore().records:[];
-    // Send the active project only. A record without updatedAt is sent once;
-    // the server will stamp it and return the canonical version.
-    const active=pid();
-    return all.filter(r=>r&&r.id&&(!active||String(r.projectId||"")===active)).map(r=>{
-      const x=Object.assign({},r);
-      x.recordId=x.recordId||x.id;
-      x.projectId=x.projectId||active;
-      x.updatedAt=x.updatedAt||x.editedAt||x.time||new Date().toISOString();
-      x.editedAt=x.editedAt||x.updatedAt;
-      x.editedBy=x.editedBy||x.user||currentUser();
-      return x;
-    });
-  }
-  async function cloudSync(){
-    if(pushing||pulling||!pid()||!CLOUD_URL||CLOUD_URL.indexOf("PASTE_NEW")===0)return;
+  function resolveCloudProjectId(){
+      let active=pid();
+      if(active)return active;
+      try{const all=Array.isArray(readStore().records)?readStore().records:[];const ids=[...new Set(all.map(r=>String(r&&r.projectId||"").trim()).filter(Boolean))];if(ids.length===1){active=ids[0];window.__dpbActiveProjectId=active;return active;}}catch(_){ }
+      return "";
+    }
+    function pendingRecords(activeId){
+      const all=Array.isArray(readStore().records)?readStore().records:[];
+      const active=String(activeId||resolveCloudProjectId()||"").trim();
+      return all.filter(r=>r&&r.id&&(!active||String(r.projectId||"")===active)).map(r=>{const x=Object.assign({},r);x.recordId=x.recordId||x.id;x.projectId=x.projectId||active;x.updatedAt=x.updatedAt||x.editedAt||x.time||new Date().toISOString();x.editedAt=x.editedAt||x.updatedAt;x.editedBy=x.editedBy||x.user||currentUser();return x;});
+    }
+    async function cloudSync(){
+      const active=resolveCloudProjectId();
+      if(pushing||pulling||!active||!CLOUD_URL||CLOUD_URL.indexOf("PASTE_NEW")===0)return;
     pulling=true;
     try{
       const since=cursorGet();
@@ -11780,13 +11826,17 @@ body.dpbAdminHammerEntry #dpbAdminHammerBackBtn{display:flex!important}
   function setStore(x){localStorage.setItem(STORE,JSON.stringify(x));SHARED_STAGE_INDEX=null;PROCESS_STAGE_CELL_CACHE=null}
   function records(){return getStore().records||[]}
   function saveRecords(a){
-    const pid=window.__dpbActiveProjectId||'';
-    let raw={};try{raw=JSON.parse(localStorage.getItem(STORE)||"{}")}catch(_){raw={}}
-    const others=Array.isArray(raw.records)?raw.records.filter(r=>!pid || String(r.projectId||'')!==String(pid)):[];
-    const scoped=(a||[]).map(r=>({...r,projectId:r.projectId||pid}));
-    raw.records=others.concat(scoped);raw.updatedAt=new Date().toISOString();setStore(raw);SHARED_STAGE_INDEX=null;
-    try{if(typeof window.__dpbScheduleCloudSync==="function")window.__dpbScheduleCloudSync()}catch(_){}
-  }
+     let active=String(window.__dpbActiveProjectId||'').trim();
+     let raw={};try{raw=JSON.parse(localStorage.getItem(STORE)||"{}")}catch(_){raw={}}
+     if(!active){try{const ids=[...new Set((Array.isArray(raw.records)?raw.records:[]).map(r=>String(r&&r.projectId||'').trim()).filter(Boolean))];if(ids.length===1)active=ids[0];}catch(_){} }
+     if(!active)active='PRJ-001';
+     window.__dpbActiveProjectId=active;
+     const others=Array.isArray(raw.records)?raw.records.filter(r=>String(r.projectId||'')!==active):[];
+     const now=new Date().toISOString();
+     const scoped=(a||[]).map(r=>({...r,projectId:r.projectId||active,updatedAt:r.updatedAt||r.editedAt||r.time||now,editedAt:r.editedAt||r.updatedAt||now,editedBy:r.editedBy||r.user||''}));
+     raw.records=others.concat(scoped);raw.updatedAt=now;setStore(raw);SHARED_STAGE_INDEX=null;
+     try{if(typeof window.__dpbScheduleCloudSync==="function")window.__dpbScheduleCloudSync()}catch(_){}
+   }
 
   // Admin correction ledger: when Admin discovers that an Admin/Excel status
   // was entered incorrectly, the Admin can reopen that exact unit for a new
