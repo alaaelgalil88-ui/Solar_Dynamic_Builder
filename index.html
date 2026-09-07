@@ -9044,6 +9044,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   function scheduleSync(){clearTimeout(timer);timer=setTimeout(cloudSync,700)}
   window.__dpbCloudSync=cloudSync;
   window.__dpbScheduleCloudSync=scheduleSync;
+  // زرار "اختبار الاتصال بمزامنة السحابة" (dpbCloudSyncTestBtn) بيدوّر على
+  // window.DPB_CLOUD_PRODUCTION.cloudPull() تحديدًا — لازم نوفّرها هنا وإلا
+  // الزرار هيفضل يقول "غير محمّلة" حتى لو المزامنة نفسها شغالة تمام.
+  window.DPB_CLOUD_PRODUCTION={cloudPull:cloudSync,cloudSync:cloudSync};
   // Pull on open/project switch, push shortly after any local save, and keep
   // devices converged without hammering Apps Script.
   setTimeout(cloudSync,1200);
