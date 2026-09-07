@@ -9017,7 +9017,14 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       let active=pid();
       if(active)return active;
       try{const all=Array.isArray(readStore().records)?readStore().records:[];const ids=[...new Set(all.map(r=>String(r&&r.projectId||"").trim()).filter(Boolean))];if(ids.length===1){active=ids[0];window.__dpbActiveProjectId=active;return active;}}catch(_){ }
-      return "";
+      // FIX: مسار "Supervisor" السريع (dpbGateSupervisor) مبيحددش Project ID
+      // خالص قبل ما يفتح شاشة الإدخال، فكانت resolveCloudProjectId() بترجع
+      // فاضية دايمًا وcloudSync() كانت بتسكت وتوقف من غير أي خطأ ظاهر ومن
+      // غير ما تبعت أو تستقبل أي بيانات. هنا بنستخدم هوية افتراضية ثابتة
+      // بدل ما نوقف المزامنة بالكامل.
+      active="default-project";
+      window.__dpbActiveProjectId=active;
+      return active;
     }
     function pendingRecords(activeId){
       const all=Array.isArray(readStore().records)?readStore().records:[];
