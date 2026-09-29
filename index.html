@@ -4,6 +4,10 @@
 <meta name="theme-color" content="#0b1b3a">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Solar Dynamic Builder">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a1726">
 <title>Dynamic Plan Builder — v38 UI + Clean Map Geometry + Temporary Test Cache</title>
@@ -3904,11 +3908,22 @@ function dpbColorToRgb(css){
 // still read as the identical color on the map), so distance-based matching
 // is used everywhere an overlay color is checked against real cell colors,
 // not just byte-for-byte string equality.
-const DPB_COLOR_CLASH_THRESHOLD=60;
+// Perceptual (CIE Lab) distance instead of raw RGB: a vivid pink-red and a pure
+// red are ~72 apart in RGB but look nearly identical on the map. ΔE < 35 = clash.
+const DPB_COLOR_CLASH_THRESHOLD=35;
+function dpbRgbToLab(rgb){
+  const f=c=>{c/=255;return c>.04045?Math.pow((c+.055)/1.055,2.4):c/12.92;};
+  const r=f(rgb[0]),g=f(rgb[1]),b=f(rgb[2]);
+  const X=(r*.4124+g*.3576+b*.1805)/.95047,Y=(r*.2126+g*.7152+b*.0722),Z=(r*.0193+g*.1192+b*.9505)/1.08883;
+  const t=v=>v>.008856?Math.cbrt(v):7.787*v+16/116;
+  const x=t(X),y=t(Y),z=t(Z);
+  return [116*y-16,500*(x-y),200*(y-z)];
+}
 function dpbColorsClash(a,b){
   const ra=dpbColorToRgb(a), rb=dpbColorToRgb(b);
   if(!ra||!rb) return String(a||'').toLowerCase()===String(b||'').toLowerCase();
-  const d=Math.sqrt((ra[0]-rb[0])**2+(ra[1]-rb[1])**2+(ra[2]-rb[2])**2);
+  const la=dpbRgbToLab(ra), lb=dpbRgbToLab(rb);
+  const d=Math.sqrt((la[0]-lb[0])**2+(la[1]-lb[1])**2+(la[2]-lb[2])**2);
   return d<DPB_COLOR_CLASH_THRESHOLD;
 }
 function dpbColorClashesWithSet(css,usedSet){
@@ -4021,7 +4036,7 @@ function dpbSaveOverlayColorConfig(){
 // Curated, high-contrast palette offered for manual overlay-color picking —
 // distinct vivid hues, never a washed-out/near-white/near-black tone so the
 // overlay always stays readable against real Excel cell fills.
-const DPB_OV_PALETTE=['#39ff14','#00e5ff','#ffea00','#ff2bd6','#ff8a00','#7c4dff','#ff1744','#1de9b6','#f50057','#76ff03','#00b0ff','#ffd600','#d500f9','#ff6d00','#64ffda','#c6ff00'];
+const DPB_OV_PALETTE=['#39ff14','#00e5ff','#ffea00','#ff2bd6','#ff8a00','#7c4dff','#ff1744','#1de9b6','#f50057','#76ff03','#00b0ff','#ffd600','#d500f9','#ff6d00','#64ffda','#c6ff00','#00e676','#18ffff','#2979ff','#ea80fc','#b2ff59','#ffab40','#40c4ff','#ff9100'];
 // Live cell colors for ONE operation's own map only (not every map) — this is
 // what the swatch grid for that operation is filtered against, per the rule
 // that an overlay only needs to avoid colors that actually appear on ITS map.
@@ -8823,6 +8838,17 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
           <div class="dpbAdminForm">
             <div><label>اسم المستخدم</label><input id="dpbAdminSupName" placeholder="Alaa" autocomplete="off"></div>
             <div><label>الرقم السري — 4 أرقام</label><input id="dpbAdminSupPin" type="text" inputmode="numeric" maxlength="4" placeholder="1234" autocomplete="off"></div>
+            <div class="full dpbPhotoField">
+              <label>صورة المستخدم (اختياري)</label>
+              <div class="dpbPhotoRow">
+                <div id="dpbAdminSupPhotoPrev" class="dpbPhotoPrev"><span>👤</span></div>
+                <div class="dpbPhotoBtns">
+                  <label class="dpbAdminBtn" for="dpbAdminSupPhotoFile">📷 اختيار صورة</label>
+                  <input id="dpbAdminSupPhotoFile" type="file" accept="image/*" hidden>
+                  <button type="button" class="dpbAdminBtn" id="dpbAdminSupPhotoClear">حذف الصورة</button>
+                </div>
+              </div>
+            </div>
             <div class="full"><label>العمليات المسموح بها لهذا المشرف</label><div id="dpbAdminSupProcesses" class="dpbAdminProcessPicker"></div><span class="dpbAllProcessHint">يمكن اختيار عملية واحدة أو أكثر، أو اختيار <b>كل العمليات</b> لمنحه صلاحية كاملة.</span></div>
             <div class="full dpbAdminActions">
               <button class="dpbAdminBtn primary" id="dpbAdminSaveSup">حفظ الحساب</button>
@@ -9136,10 +9162,47 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     alert("تم إلغاء الإدخال. الوحدة الآن متاحة بدون أي حالة مسجلة.");
   }
 
-  function resetForm(){editingId=null;q("dpbAdminSupName").value="";q("dpbAdminSupPin").value="";refreshProcessSelect([]);q("dpbAdminSaveSup").textContent="حفظ الحساب";}
+  let adminPhoto="";
+  function setAdminPhoto(dataUrl){
+    adminPhoto=dataUrl||"";
+    const box=q("dpbAdminSupPhotoPrev"); if(!box)return;
+    box.innerHTML=adminPhoto?`<img src="${adminPhoto}" alt="">`:"<span>👤</span>";
+  }
+  // تصغير الصورة في المتصفح (مربع 160×160 JPEG) عشان تتحفظ خفيفة في الشيت
+  function resizePhotoFile(file){
+    return new Promise((resolve,reject)=>{
+      const fr=new FileReader();
+      fr.onerror=()=>reject(new Error("read"));
+      fr.onload=()=>{
+        const img=new Image();
+        img.onerror=()=>reject(new Error("img"));
+        img.onload=()=>{
+          const S=160,c=document.createElement("canvas");c.width=c.height=S;
+          const ctx=c.getContext("2d"),m=Math.min(img.width,img.height);
+          ctx.fillStyle="#0b1b2e";ctx.fillRect(0,0,S,S);
+          ctx.drawImage(img,(img.width-m)/2,(img.height-m)/2,m,m,0,0,S,S);
+          let quality=.82,out=c.toDataURL("image/jpeg",quality);
+          while(out.length>40000&&quality>.4){quality-=.1;out=c.toDataURL("image/jpeg",quality)}
+          resolve(out);
+        };
+        img.src=fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+  (function bindPhotoPicker(){
+    const f=q("dpbAdminSupPhotoFile"),clr=q("dpbAdminSupPhotoClear");
+    if(f)f.onchange=async()=>{
+      const file=f.files&&f.files[0]; if(!file)return;
+      try{setAdminPhoto(await resizePhotoFile(file))}catch(_){alert("تعذر قراءة الصورة، جرّب صورة تانية.")}
+      f.value="";
+    };
+    if(clr)clr.onclick=()=>setAdminPhoto("");
+  })();
+  function resetForm(){editingId=null;q("dpbAdminSupName").value="";q("dpbAdminSupPin").value="";setAdminPhoto("");refreshProcessSelect([]);q("dpbAdminSaveSup").textContent="حفظ الحساب";}
   function editAccount(id){
     const a=accounts().find(x=>x.id===id);if(!a)return;
-    editingId=id;q("dpbAdminSupName").value=a.name;q("dpbAdminSupPin").value=a.pin;
+    editingId=id;q("dpbAdminSupName").value=a.name;q("dpbAdminSupPin").value=a.pin;setAdminPhoto(a.photo||"");
     refreshProcessSelect(accountProcessIds(a));
     q("dpbAdminSaveSup").textContent="حفظ التعديل";q("dpbAdminSupName").focus()
   }
@@ -9149,7 +9212,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     // is also visible to anyone editing the Sheet directly. Never blocks
     // the local save — if the Sheet is unreachable this simply no-ops.
     if(!window.DPB_GS||typeof window.DPB_GS.pushUser!=="function"||!a||!a.name)return;
-    window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,active:a.active!==false});
+    window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,active:a.active!==false,photo:a.photo||""});
   }
   function toggleAccount(id){const a=accounts();const i=a.findIndex(x=>x.id===id);if(i<0)return;a[i].active=a[i].active===false;saveAccounts(a);pushAccountToSheet(a[i])}
   function deleteAccount(id){const a=accounts().find(x=>x.id===id);if(!a)return;if(!confirm(`حذف حساب المشرف ${a.name}؟`))return;saveAccounts(accounts().filter(x=>x.id!==id));if(editingId===id)resetForm();if(window.DPB_GS&&typeof window.DPB_GS.removeUser==="function")window.DPB_GS.removeUser(a.name)}
@@ -9166,7 +9229,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     if(!processIds.length){alert("اختار عملية واحدة على الأقل، أو اختر كل العمليات.");return}
     const a=accounts(),duplicate=a.find(x=>x.name.toLowerCase()===name.toLowerCase()&&x.id!==editingId);if(duplicate){alert("اسم المستخدم موجود بالفعل.");return}
     const all=processIds.includes("*");
-    const payload={name,pin,processIds,processId:all?"*":processIds[0],allProcesses:all,active:true,updatedAt:new Date().toISOString()};
+    const payload={name,pin,processIds,processId:all?"*":processIds[0],allProcesses:all,active:true,photo:adminPhoto||"",updatedAt:new Date().toISOString()};
     if(editingId){const i=a.findIndex(x=>x.id===editingId);if(i>=0)a[i]={...a[i],...payload}}
     else a.push({id:uid(),...payload,createdAt:new Date().toISOString()});
     saveAccounts(a);pushAccountToSheet(payload);resetForm();alert("تم حفظ حساب المشرف وتحديد صلاحيات العمليات.");
@@ -9957,6 +10020,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       allProcesses,
       isAdmin,
       active,
+      photo:String(u.photo||u.Photo||"").trim(),
       source:"sheet"
     };
   }
@@ -9971,6 +10035,15 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     return gsCall("getUsers",{}).then(res=>{
       if(!res||res.ok===false||!Array.isArray(res.users))return false;
       const accounts=res.users.map(rowToAccount).filter(a=>a.name);
+      // لو Apps Script لسه قديم (مش بيرجّع photo)، نحافظ على الصور المحلية بدل ما تضيع
+      try{
+        const sheetHasPhoto=res.users.some(u=>u&&Object.prototype.hasOwnProperty.call(u,"photo"));
+        if(!sheetHasPhoto){
+          const old=JSON.parse(localStorage.getItem(ACC_KEY)||"[]"),m={};
+          old.forEach(o=>{if(o&&o.name&&o.photo)m[String(o.name).toLowerCase()]=o.photo});
+          accounts.forEach(a=>{if(!a.photo&&m[a.name.toLowerCase()])a.photo=m[a.name.toLowerCase()]});
+        }
+      }catch(_){}
       try{
         localStorage.setItem(ACC_KEY,JSON.stringify(accounts.filter(a=>!a.isAdmin)));
         localStorage.setItem(ALL_USERS_KEY,JSON.stringify(accounts));
@@ -14903,6 +14976,18 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   }
 
   let selectedLoginAccount=null;
+  // نص الصلاحيات اللي بيظهر تحت الاسم في كارت الدخول
+  function accountPermLabel(a){
+    if(a.isAdmin)return "Admin · Full access";
+    const ids=supervisorAllowedProcessIds(a);
+    if(ids.includes("*"))return "كل العمليات";
+    if(!ids.length)return "بدون صلاحية";
+    let entries=[];
+    try{entries=typeof window.getAppliedProcessEntries==="function"?window.getAppliedProcessEntries():[]}catch(_){}
+    const names=ids.map(id=>(entries.find(e=>String(e.id)===String(id))||{}).name).filter(Boolean);
+    if(!names.length)return ids.length===1?"عملية واحدة":ids.length+" عمليات";
+    return names.length===1?names[0]:names[0]+" +"+(names.length-1);
+  }
   function renderLoginAccounts(){
     const root=q("dpbSupAccounts"); if(!root)return;
     const list=getSupervisorAccounts().filter(a=>a.active!==false);
@@ -14913,10 +14998,12 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       const icon=a.isAdmin
         ? `<svg class="dpbUserAvatarIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7.2" r="4.2"/><path d="M4.8 21c.7-4.1 3.1-6.4 7.2-6.4s6.5 2.3 7.2 6.4"/></svg><span class="dpbUserBadge">A</span>`
         : `<svg class="dpbUserAvatarIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7.2" r="4.2"/><path d="M4.8 21c.7-4.1 3.1-6.4 7.2-6.4s6.5 2.3 7.2 6.4"/></svg>`;
+      const photo=(typeof a.photo==="string"&&/^data:image\//.test(a.photo))?a.photo:"";
+      const perm=accountPermLabel(a);
       return `<button type="button" class="dpbSupAccountBtn ${isSelected?"active":""}" data-account-id="${escapeHtml(a.id)}">
-        <span class="dpbUserAvatar" aria-hidden="true">${icon}</span>
+        <span class="dpbUserAvatar ${photo?"hasPhoto":""}" aria-hidden="true">${photo?`<img class="dpbUserPhoto" src="${photo}" alt="">`:icon}</span>
         <b>${escapeHtml(a.name)}</b>
-        <small>${a.isAdmin?"Admin · Full access":"Supervisor account"}</small>
+        <small class="dpbUserPerm" title="${escapeHtml(perm)}">${escapeHtml(perm)}</small>
       </button>`
     }).join(""):'<div class="hint">لا توجد حسابات مشرفين مفعلة.</div>';
     root.querySelectorAll("[data-account-id]").forEach(btn=>btn.onclick=()=>{
@@ -17775,4 +17862,76 @@ button:not(:disabled):active,.btn:not(:disabled):active,
   transform:scale(.96)!important;
   filter:brightness(1.12)!important;
 }
+</style>
+
+<style id="DPB_ROUND_USER_CARDS_V1">
+/* Round user cards: big circular photo + name + permissions chip */
+#dpbSupLogin #dpbSupAccounts.dpbSupAccountGrid{gap:4px!important;padding:8px 2px 12px!important}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn{
+  width:98px!important;min-width:98px!important;padding:6px 4px 4px!important;
+  border:0!important;background:transparent!important;box-shadow:none!important;
+  border-radius:22px!important;opacity:.7!important;
+}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn:before,
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn:after{display:none!important}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active{
+  opacity:1!important;border:0!important;box-shadow:none!important;transform:translateY(-2px)!important;
+}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn .dpbUserAvatar{
+  position:relative!important;width:72px!important;height:72px!important;min-width:72px!important;
+  margin:0 0 8px!important;border-radius:50%!important;padding:0!important;overflow:visible!important;
+  border:3px solid var(--sc,#2196f3)!important;
+  box-shadow:0 0 0 3px rgba(2,12,28,.9),0 0 14px var(--sg,rgba(33,150,243,.5))!important;
+}
+/* Selected user: no outer ring — the circle itself lifts forward with a soft luminous glow. */
+#dpbSupLogin #dpbSupAccounts.dpbSupAccountGrid{padding-top:16px!important}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn .dpbUserAvatar{
+  isolation:isolate!important;
+  transition:transform .28s cubic-bezier(.2,.9,.3,1.25),box-shadow .28s ease,filter .28s ease!important;
+}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active{transform:translateY(-4px)!important}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active .dpbUserAvatar{
+  transform:scale(1.16)!important;
+  box-shadow:0 0 12px var(--sg,rgba(33,150,243,.7)),0 0 30px var(--sg,rgba(33,150,243,.6)),0 10px 24px rgba(0,0,0,.55)!important;
+  filter:brightness(1.08) saturate(1.1)!important;
+}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active .dpbUserAvatar:before{
+  content:"";position:absolute;inset:-16px;border-radius:50%;z-index:-1;pointer-events:none;
+  background:radial-gradient(circle,var(--sg,rgba(33,150,243,.6)) 0%,transparent 68%);
+  opacity:.75;animation:dpbUserGlow 2.4s ease-in-out infinite;
+}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active b{
+  text-shadow:0 0 12px var(--sg,rgba(33,150,243,.7))!important;
+}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active small.dpbUserPerm{
+  background:rgba(255,255,255,.1)!important;box-shadow:0 0 12px var(--sg,rgba(33,150,243,.5))!important;
+}
+@keyframes dpbUserGlow{0%,100%{opacity:.55;transform:scale(.94)}50%{opacity:.95;transform:scale(1.06)}}
+@media(prefers-reduced-motion:reduce){
+  #dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active .dpbUserAvatar:before{animation:none}
+}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active .dpbUserAvatar:after{
+  content:"✓";position:absolute;right:-4px;bottom:-4px;width:22px;height:22px;border-radius:50%;
+  background:var(--sc,#2196f3);color:#01141f;font-size:13px;font-weight:900;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px var(--sg);
+}
+#dpbSupLogin #dpbSupAccounts .dpbUserPhoto{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn small.dpbUserPerm{
+  display:block!important;max-width:100%!important;margin-top:5px!important;padding:2px 9px!important;
+  border-radius:99px!important;border:1px solid var(--sc,#2196f3)!important;
+  background:rgba(255,255,255,.05)!important;color:#dff4ff!important;
+  font-size:9.5px!important;font-weight:700!important;line-height:1.5!important;
+  white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;
+}
+@media(max-width:600px){
+  #dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn{width:92px!important;min-width:92px!important}
+  #dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn .dpbUserAvatar{width:66px!important;height:66px!important;min-width:66px!important}
+}
+/* Admin form: photo picker */
+.dpbPhotoRow{display:flex;align-items:center;gap:14px}
+.dpbPhotoPrev{width:72px;height:72px;border-radius:50%;overflow:hidden;flex:0 0 72px;
+  border:2px solid #29a3ff;background:#091625;display:flex;align-items:center;justify-content:center;font-size:30px}
+.dpbPhotoPrev img{width:100%;height:100%;object-fit:cover;display:block}
+.dpbPhotoBtns{display:flex;flex-wrap:wrap;gap:8px}
+.dpbPhotoBtns label.dpbAdminBtn{cursor:pointer;display:inline-flex;align-items:center}
 </style>

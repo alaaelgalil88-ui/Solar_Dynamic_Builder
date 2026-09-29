@@ -1,7 +1,7 @@
 /* DPB service worker: تخزين الصفحة على الجهاز عشان تفتح من غير نت.
    الشبكة أولًا (لحد 3.5 ثانية) عشان التحديثات توصل، وإلا النسخة المخزّنة.
    طلبات السيرفر (Apps Script) مش بتتخزّن أبدًا. */
-const CACHE='dpb-shell-v1';
+const CACHE='dpb-shell-v2';
 const SHELL=['./','index.html','manifest.json','icon-192.png','icon-512.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL).catch(()=>{})).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
