@@ -171,8 +171,10 @@
     var maxCode = 0, progAny = false, latest = null;
     Object.keys(recs).forEach(function (id) {
       var p = recs[id];
-      if (!p || String(p.sheet) !== String(cell.sheet) || Number(p.r1) !== Number(cell.r1) || Number(p.c1) !== Number(cell.c1)) return;
-      if (String(p.process || '') !== String(cell.process || '')) return;
+      // a cell is identified by (process, row, col). Name case and the 'sheet' text are NOT part of the identity
+      // (the app's own lock check ignores them too), otherwise a record can exist without counting on the map.
+      if (!p || Number(p.r1) !== Number(cell.r1) || Number(p.c1) !== Number(cell.c1)) return;
+      if (low(p.process) !== low(cell.process)) return;
       var ptab = p.processTab ? String(p.processTab) : '';
       if (cell.processTab && ptab && ptab !== String(cell.processTab)) return;
       var code = Number(p.code) || 0, dn = null;
@@ -662,6 +664,86 @@
     return prepareCaches().then(next);
   }
 
+
+  // records that exist but are not reflected on the map (cell value 0 / record sits outside its process shard)
+  function findOrphans() {
+    return prepareCaches().then(function () {
+      var rc = recCache[ns()] || {}, list = [], slugs = {};
+      Object.keys(rc).forEach(function (col) { Object.keys(rc[col]).forEach(function (ch) { Object.keys(rc[col][ch]).forEach(function (id) {
+        var p = rc[col][ch][id]; if (!p || !p.process || !isFinite(Number(p.r1)) || !isFinite(Number(p.c1))) return;
+        var v = progDone(p) ? Number(p.done) : Number(p.code);
+        if (!(v > 0)) return;
+        slugs[slug(p.process)] = 1; list.push({ id: id, col: col, chunk: ch, p: p });
+      }); }); });
+      return Promise.all(Object.keys(slugs).map(ensureGrid)).then(function () {
+        var gc = gridCache[ns()] || {}, out = [];
+        list.forEach(function (x) {
+          var sl = slug(x.p.process), chunk = String(Math.floor(Number(x.p.r1) / ROWS));
+          var cell = ((gc[sl] || {})[chunk] || {})[Number(x.p.r1) + '_' + Number(x.p.c1)];
+          var misplaced = x.col === 'rec__other';
+          if (!(Number(cell) > 0) || misplaced) out.push({ id: x.id, col: x.col, chunk: x.chunk, process: String(x.p.process), r1: Number(x.p.r1), c1: Number(x.p.c1), code: Number(x.p.code) || 0, sheet: String(x.p.sheet === undefined ? '(مفيش)' : x.p.sheet), why: misplaced ? 'برا مكانه' : 'مش ظاهر على الخريطة' });
+        });
+        return out;
+      });
+    });
+  }
+  function cleanOrphans(onP) {
+    return findOrphans().then(function (orph) {
+      var by = {}; orph.forEach(function (o) { var k = o.col + '/' + o.chunk; (by[k] = by[k] || { col: o.col, chunk: o.chunk, ids: [] }).ids.push(o.id); });
+      var jobs = Object.keys(by).map(function (k) { return by[k]; }), i = 0;
+      function next() {
+        if (i >= jobs.length) return Promise.resolve({ ok: true, removed: orph.length });
+        var j = jobs[i++];
+        return runPlan([{ col: j.col, chunk: j.chunk }], function (api) {
+          var sh = api.recs(j.col, j.chunk);
+          j.ids.forEach(function (id) { if (sh.recs[id]) { delete sh.recs[id]; sh.dirty = true; } });
+          return { cells: [] };
+        }).then(function () { if (onP) onP(i, jobs.length); return next(); });
+      }
+      return next();
+    });
+  }
+
+
+  // recompute EVERY cell value from the records (fixes cells whose saved value disagrees with their records)
+  function rebuildGrid(onP) {
+    return prepareCaches().then(function () {
+      var rc = recCache[ns()] || {}, byCell = {}, slugs = {};
+      Object.keys(rc).forEach(function (col) { Object.keys(rc[col]).forEach(function (ch) { Object.keys(rc[col][ch]).forEach(function (id) {
+        var p = rc[col][ch][id]; if (!p || !p.process || !isFinite(Number(p.r1)) || !isFinite(Number(p.c1))) return;
+        var sl = slug(p.process), k = sl + '|' + Number(p.r1) + '|' + Number(p.c1);
+        slugs[sl] = 1; (byCell[k] = byCell[k] || { sl: sl, r: Number(p.r1), c: Number(p.c1), process: String(p.process), recs: {} }).recs[id] = p;
+      }); }); });
+      return Promise.all(Object.keys(slugs).map(ensureGrid)).then(function () {
+        var gc = gridCache[ns()] || {}, docs = {};
+        function doc(sl, ch) { var k = sl + '/' + ch; return docs[k] || (docs[k] = { sl: sl, ch: ch, cells: {} }); }
+        Object.keys(gc).forEach(function (sl) { Object.keys(gc[sl]).forEach(function (ch) { Object.keys(gc[sl][ch]).forEach(function (ck) { doc(sl, ch).cells[ck] = 0; }); }); });
+        var changed = 0;
+        Object.keys(byCell).forEach(function (k) {
+          var b = byCell[k], ch = String(Math.floor(b.r / ROWS)), ck = b.r + '_' + b.c;
+          var v = cellValue(b.recs, { process: b.process, r1: b.r, c1: b.c });
+          var old = (((gc[b.sl] || {})[ch] || {})[ck]);
+          if (Number(old) !== v) changed++;
+          doc(b.sl, ch).cells[ck] = v;
+        });
+        Object.keys(gc).forEach(function (sl) { Object.keys(gc[sl]).forEach(function (ch) { Object.keys(gc[sl][ch]).forEach(function (ck) { var o = gc[sl][ch][ck]; if (Number(o) > 0 && doc(sl, ch).cells[ck] === 0 && !byCell[sl + '|' + ck.replace('_', '|')]) changed++; }); }); });
+        var list = Object.keys(docs).map(function (k) { return docs[k]; });
+        return getAdapter().then(function (a) {
+          var i = 0;
+          function next() {
+            if (i >= list.length) return Promise.resolve({ ok: true, docs: list.length, changed: changed });
+            var part = list.slice(i, i + 20); i += 20;
+            return a.batch(part.map(function (d) { return { path: gridPath(d.sl, d.ch), data: { cells: d.cells }, merge: false }; })).then(function () {
+              part.forEach(function (d) { var m = (gridCache[ns()] = gridCache[ns()] || {}); (m[d.sl] = m[d.sl] || {})[d.ch] = d.cells; });
+              if (onP) onP(Math.min(i, list.length), list.length); return next();
+            });
+          }
+          return next().then(function (r) { recVersion++; return r; });
+        });
+      });
+    });
+  }
+
   // quick health check of what Firestore holds: counts per process + cells with more than one record of the same stage
   function inspect() {
     return prepareCaches().then(function () {
@@ -671,7 +753,7 @@
         if (hasCell(r) && r.process) { var k = low(r.process) + '|' + r.r1 + '|' + r.c1; (seen[k] = seen[k] || []).push(r.id); }
       });
       Object.keys(seen).forEach(function (k) { if (seen[k].length > 1) dups.push({ cell: k, ids: seen[k] }); });
-      return { total: recs.length, per: per, dups: dups };
+      return findOrphans().then(function (orph) { return { total: recs.length, per: per, dups: dups, orphans: orph }; });
     });
   }
 
@@ -711,7 +793,9 @@
       '<button type="button" class="dpbAdminBtn" id="dpbFsImpPrev">📥 استيراد من الشيت (معاينة)</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsImpGo" style="display:none">✅ تأكيد الاستيراد</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsStruct">🔄 تحديث شكل الشيت</button>' +
-      '<button type="button" class="dpbAdminBtn" id="dpbFsInspect">🔎 فحص السجلات</button></div></div>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsInspect">🔎 فحص السجلات</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsRebuild">🔧 إعادة حساب الخريطة من السجلات</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsClean" style="display:none">🧹 حذف السجلات اللي مش ظاهرة على الخريطة</button></div></div>' +
       '<div class="hint" id="dpbFsMsg" style="margin-top:8px;white-space:pre-line"></div>';
     host.appendChild(c);
     var $ = function (id) { return document.getElementById(id); };
@@ -766,8 +850,22 @@
       inspect().then(function (r) {
         var lines = Object.keys(r.per).sort().map(function (k) { return '• ' + k + ': ' + r.per[k]; });
         var d = r.dups.slice(0, 12).map(function (x) { return '  - ' + x.cell + ' → ' + x.ids.join(' , '); });
-        msg('إجمالي السجلات: ' + r.total + '\n' + lines.join('\n') + '\n\nخلايا فيها أكتر من سجل لنفس المرحلة: ' + r.dups.length + (d.length ? '\n' + d.join('\n') : ''));
+        var o = r.orphans.slice(0, 15).map(function (x) { return '  - ' + x.process + ' صف' + x.r1 + ' عمود' + x.c1 + ' كود' + x.code + ' (' + x.why + ') id=' + x.id; });
+        $('dpbFsClean').style.display = r.orphans.length ? '' : 'none';
+        msg('إجمالي السجلات: ' + r.total + '\n' + lines.join('\n') + '\n\nخلايا فيها أكتر من سجل لنفس المرحلة: ' + r.dups.length + (d.length ? '\n' + d.join('\n') : '') + '\n\nسجلات موجودة بس مش ظاهرة على الخريطة: ' + r.orphans.length + (o.length ? '\n' + o.join('\n') : ''));
       }, function (e) { msg('❌ فشل الفحص: ' + (e && e.message || e)); });
+    };
+    $('dpbFsRebuild').onclick = function () {
+      if (!needOn()) return;
+      if (!confirm('هيتحسب قيمة كل خلية من السجلات الموجودة في Firestore (المشروع: ' + ns() + '). السجلات نفسها مش هتتغيّر. متأكد؟')) return;
+      msg('جاري إعادة الحساب...');
+      rebuildGrid(function (d, t) { msg('جاري إعادة الحساب... ' + d + ' / ' + t); }).then(function (r) { msg('✅ اتحسبت الخريطة من جديد (' + r.docs + ' وثيقة)، وفيه ' + r.changed + ' خلية قيمتها اتغيّرت.\nاقفل الخريطة وافتحها تاني.'); try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {} }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); });
+    };
+    $('dpbFsClean').onclick = function () {
+      if (!needOn()) return;
+      if (!confirm('هيتمسح من Firestore (المشروع: ' + ns() + ') كل سجل موجود بس مش ظاهر على الخريطة. متأكد؟')) return;
+      msg('جاري التنظيف...');
+      cleanOrphans(function (d, t) { msg('جاري التنظيف... ' + d + ' / ' + t); }).then(function (r) { $('dpbFsClean').style.display = 'none'; msg('✅ اتمسح ' + r.removed + ' سجل.'); try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {} }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); });
     };
     refresh();
   }
@@ -785,7 +883,7 @@
     setConfig: function (c) { lsSet(LS_CFG, typeof c === 'string' ? c : JSON.stringify(c)); adapter = null; adapterP = null; },
     hasConfig: function () { var c = cfg(); return !!(c && c.projectId); },
     lastError: function () { return adapterErr; },
-    seed: seed, seedFromDevice: seedFromDevice, test: test, refreshStructure: refreshStructure, importPreview: importPreview, importApply: importApply, inspect: inspect,
+    seed: seed, seedFromDevice: seedFromDevice, test: test, findOrphans: findOrphans, rebuildGrid: rebuildGrid, cleanOrphans: cleanOrphans, refreshStructure: refreshStructure, importPreview: importPreview, importApply: importApply, inspect: inspect,
     _internals: { upsertMany: upsertMany, deleteMany: deleteMany, getGrid: getGrid, getProduction: getProduction, cellValue: cellValue, slug: slug, setAdapter: function (a) { adapter = a; adapterP = null; }, ROWS: ROWS }
   };
 })();
