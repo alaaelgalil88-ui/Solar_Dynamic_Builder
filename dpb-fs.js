@@ -555,6 +555,126 @@
   }
 
 
+
+  /* ------------------------------------------- admin tools (Phase 1b) */
+  function sheetBase() { return window.DPB_getScriptUrl && window.DPB_getScriptUrl(); }
+  function liveNames() {
+    var out = [], seen = {};
+    try { (window.__dpbGetLiveGridProcessNames && window.__dpbGetLiveGridProcessNames() || []).forEach(function (n) { n = String(n || '').trim(); if (n && !seen[low(n)]) { seen[low(n)] = 1; out.push(n); } }); } catch (e) {}
+    return out;
+  }
+  function seq(list, fn) { var p = Promise.resolve(), res = []; list.forEach(function (x, i) { p = p.then(function () { return fn(x, i); }).then(function (r) { res.push(r); }); }); return p.then(function () { return res; }); }
+  function fetchSheetGrid(name) {
+    var base = sheetBase(); if (!base) return Promise.reject(new Error('مفيش رابط مشروع'));
+    return origFetch(base + '?action=getGrid&process=' + encodeURIComponent(name) + '&t=' + Date.now())
+      .then(function (r) { return r.json(); })
+      .then(function (g) { if (!g || !g.ok || !Array.isArray(g.values)) throw new Error('قراءة ' + name + ' من الشيت فشلت'); return g; });
+  }
+
+  // re-read the layout (merges / ranges / colors / size) of every live tab from the Sheet and overwrite the saved copy
+  function refreshStructure(onP) {
+    var names = liveNames(); if (!names.length) names = Object.keys(allProcNames()).map(function (k) { return knownProcs[k]; });
+    if (!names.length) return Promise.reject(new Error('مفيش عمليات معروفة'));
+    return getAdapter().then(function (a) {
+      var done = 0;
+      return seq(names, function (n) {
+        return fetchSheetGrid(n).then(function (g) {
+          var st = clone(g); delete st.values; delete st.liveColors;
+          return a.set(metaPath('struct_' + slug(n)), { json: JSON.stringify(st), at: new Date().toISOString() }, false).then(function () {
+            if (structFor.mem) delete structFor.mem[ns() + '|' + slug(n)];
+            delete lastDims[slug(n)]; done++; if (onP) onP(done, names.length, n);
+          });
+        });
+      }).then(function () { try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {} return { ok: true, count: done, names: names }; });
+    });
+  }
+
+  // compare the Sheet with Firestore and list what an import would change (nothing is written here)
+  function importPreview(opts, onP) {
+    opts = opts || {};
+    var only = (opts.only || []).map(low).filter(Boolean);
+    var names = liveNames().filter(function (n) { return !only.length || only.indexOf(low(n)) >= 0; });
+    if (!names.length) return Promise.reject(new Error('مفيش عمليات للاستيراد'));
+    var gcount = grouped([]).length || 3, items = [];
+    return seq(names, function (n, i) {
+      noteProc(n);
+      return fetchSheetGrid(n).then(function (g) {
+        return buildGrid(n, true).then(function (fsg) {
+          var maxCode = grouped([]).some(function (x) { return low(x) === low(n); }) ? gcount : 9;
+          var sets = [], clears = [], skipped = 0;
+          g.values.forEach(function (row, r) {
+            (row || []).forEach(function (v, c) {
+              var raw = String(v == null ? '' : v).trim();
+              var num = raw === '' ? 0 : Number(raw);
+              if (!isFinite(num)) return;
+              var cur = Number((fsg.values[r] || [])[c]) || 0;
+              if (num > 0) {
+                if (num !== Math.floor(num) || num > maxCode) { skipped++; return; }
+                if (num !== cur) sets.push([r, c, num, cur]);
+              } else if (cur > 0) clears.push([r, c, cur]);
+            });
+          });
+          items.push({ proc: n, sheet: g.sheet || n, sets: sets, clears: clears, skipped: skipped });
+          if (onP) onP(i + 1, names.length, n);
+        });
+      });
+    }).then(function () {
+      var tot = { sets: 0, clears: 0, skipped: 0 };
+      items.forEach(function (it) { tot.sets += it.sets.length; tot.clears += it.clears.length; tot.skipped += it.skipped; });
+      return { items: items, totals: tot };
+    });
+  }
+
+  // write the previewed changes. Each changed cell becomes ONE record (source SheetImport) so it follows the normal
+  // rules afterwards (delete, lock, recompute). No cascade is added: the Sheet is taken as it is.
+  function importApply(plan, onP) {
+    var jobs = [], nSet = 0, nClear = 0;
+    plan.items.forEach(function (it) {
+      var by = {};
+      it.sets.forEach(function (x) { var ch = String(Math.floor(x[0] / ROWS)); (by[ch] = by[ch] || { sets: [], clears: [] }).sets.push(x); });
+      it.clears.forEach(function (x) { var ch = String(Math.floor(x[0] / ROWS)); (by[ch] = by[ch] || { sets: [], clears: [] }).clears.push(x); });
+      Object.keys(by).forEach(function (ch) { jobs.push({ it: it, ch: ch, g: by[ch] }); });
+    });
+    var i = 0;
+    function next() {
+      if (i >= jobs.length) return Promise.resolve({ ok: true, sets: nSet, clears: nClear });
+      var j = jobs[i++], col = 'rec_' + slug(j.it.proc), now = new Date().toISOString();
+      return runPlan([{ col: col, chunk: j.ch }], function (api) {
+        var sh = api.recs(col, j.ch), cells = [];
+        function dropAt(r, c) {
+          Object.keys(sh.recs).forEach(function (id) {
+            var p = sh.recs[id];
+            if (p && Number(p.r1) === r && Number(p.c1) === c && low(p.process) === low(j.it.proc)) { delete sh.recs[id]; sh.dirty = true; }
+          });
+        }
+        j.g.sets.forEach(function (x) {
+          var r = x[0], c = x[1];
+          dropAt(r, c);
+          var id = 'import_' + slug(j.it.proc) + '_' + r + '_' + c;
+          sh.recs[id] = { id: id, time: now, user: 'Import', owner: 'Import', editedBy: 'Import', source: 'SheetImport', process: j.it.proc, code: x[2], sheet: j.it.sheet, r1: r, c1: c, r2: r, c2: c };
+          sh.dirty = true; nSet++;
+          cells.push({ process: j.it.proc, sheet: j.it.sheet, r1: r, c1: c, r2: r, c2: c });
+        });
+        j.g.clears.forEach(function (x) { dropAt(x[0], x[1]); nClear++; cells.push({ process: j.it.proc, sheet: j.it.sheet, r1: x[0], c1: x[1], r2: x[0], c2: x[1] }); });
+        return { cells: cells };
+      }).then(function () { if (onP) onP(i, jobs.length); return next(); });
+    }
+    return prepareCaches().then(next);
+  }
+
+  // quick health check of what Firestore holds: counts per process + cells with more than one record of the same stage
+  function inspect() {
+    return prepareCaches().then(function () {
+      var recs = allRecordsFromCache(), per = {}, seen = {}, dups = [];
+      recs.forEach(function (r) {
+        var p = String(r.process || '(بدون عملية)'); per[p] = (per[p] || 0) + 1;
+        if (hasCell(r) && r.process) { var k = low(r.process) + '|' + r.r1 + '|' + r.c1; (seen[k] = seen[k] || []).push(r.id); }
+      });
+      Object.keys(seen).forEach(function (k) { if (seen[k].length > 1) dups.push({ cell: k, ids: seen[k] }); });
+      return { total: recs.length, per: per, dups: dups };
+    });
+  }
+
   /* ------------------------------------------------------------- admin UI */
   function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function badge() {
@@ -583,6 +703,15 @@
       '<button type="button" class="dpbAdminBtn" id="dpbFsTest">اختبار الاتصال</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsSeed">رفع بيانات الجهاز لـ Firestore</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsToggle"></button></div>' +
+      '<div style="margin-top:12px;border-top:1px solid rgba(128,128,128,.3);padding-top:10px">' +
+      '<div class="hint">أدوات الأدمن</div>' +
+      '<label class="hint" style="display:block;margin-top:6px">استيراد من الشيت لمراحل معينة (سيبه فاضي = كل المراحل، أو اكتب الأسماء بفاصلة)</label>' +
+      '<input id="dpbFsOnly" style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px" placeholder="Ramming, Saddle, Bearing">' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsImpPrev">📥 استيراد من الشيت (معاينة)</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsImpGo" style="display:none">✅ تأكيد الاستيراد</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsStruct">🔄 تحديث شكل الشيت</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsInspect">🔎 فحص السجلات</button></div></div>' +
       '<div class="hint" id="dpbFsMsg" style="margin-top:8px;white-space:pre-line"></div>';
     host.appendChild(c);
     var $ = function (id) { return document.getElementById(id); };
@@ -609,6 +738,37 @@
         test().then(function () { lsSet(LS_MODE, 'on'); refresh(); msg('✅ شغّال على Firestore (' + ns() + '). اقفل واحتح الخريطة.'); }, function (e) { msg('❌ مش هشغّل: الاتصال فشل - ' + (e && e.message || e)); });
       } else { lsSet(LS_MODE, 'off'); refresh(); msg('رجعنا للنظام القديم (Google Sheet).'); }
     };
+    var lastPlan = null;
+    function needOn() { if (!mode()) { msg('❌ شغّل Firestore الأول.'); return false; } if (!save()) return false; return true; }
+    $('dpbFsStruct').onclick = function () {
+      if (!needOn()) return; msg('جاري قراءة شكل الشيت...');
+      refreshStructure(function (d, t, n) { msg('جاري التحديث... ' + d + ' / ' + t + ' (' + n + ')'); }).then(function (r) { msg('✅ اتحدّث شكل ' + r.count + ' مرحلة: ' + r.names.join('، ') + '\nاقفل الخريطة وافتحها تاني.'); }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); });
+    };
+    $('dpbFsImpPrev').onclick = function () {
+      if (!needOn()) return; $('dpbFsImpGo').style.display = 'none'; lastPlan = null; msg('جاري المقارنة بين الشيت و Firestore...');
+      var only = $('dpbFsOnly').value.split(/[,،]/).map(function (x) { return x.trim(); }).filter(Boolean);
+      importPreview({ only: only }, function (d, t, n) { msg('بيقرا ' + d + ' / ' + t + ' (' + n + ')...'); }).then(function (p) {
+        lastPlan = p;
+        var lines = p.items.map(function (it) { return '• ' + it.proc + ': هيضيف/يغيّر ' + it.sets.length + ' خلية، وهيفضّي ' + it.clears.length + (it.skipped ? ' (اتجاهل ' + it.skipped + ' رقم برا النطاق)' : ''); });
+        if (!p.totals.sets && !p.totals.clears) { msg('✅ مفيش فرق بين الشيت و Firestore.\n' + lines.join('\n')); return; }
+        msg('المعاينة (لسه ما اتكتبش حاجة):\n' + lines.join('\n') + '\n\nالإجمالي: ' + p.totals.sets + ' إضافة/تغيير، ' + p.totals.clears + ' تفضية.\nلو ماشي اضغط "تأكيد الاستيراد".');
+        $('dpbFsImpGo').style.display = '';
+      }, function (e) { msg('❌ فشلت المعاينة: ' + (e && e.message || e)); });
+    };
+    $('dpbFsImpGo').onclick = function () {
+      if (!lastPlan) return;
+      if (!confirm('هيتكتب في Firestore (المشروع: ' + ns() + '): ' + lastPlan.totals.sets + ' إضافة/تغيير و' + lastPlan.totals.clears + ' تفضية. الشيت نفسه مش هيتغيّر. متأكد؟')) return;
+      var plan = lastPlan; lastPlan = null; $('dpbFsImpGo').style.display = 'none'; msg('جاري الاستيراد...');
+      importApply(plan, function (d, t) { msg('جاري الاستيراد... ' + d + ' / ' + t); }).then(function (r) { msg('✅ تم الاستيراد: ' + r.sets + ' إضافة/تغيير، ' + r.clears + ' تفضية.'); try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {} }, function (e) { msg('❌ فشل الاستيراد: ' + (e && e.message || e)); });
+    };
+    $('dpbFsInspect').onclick = function () {
+      if (!needOn()) return; msg('جاري الفحص...');
+      inspect().then(function (r) {
+        var lines = Object.keys(r.per).sort().map(function (k) { return '• ' + k + ': ' + r.per[k]; });
+        var d = r.dups.slice(0, 12).map(function (x) { return '  - ' + x.cell + ' → ' + x.ids.join(' , '); });
+        msg('إجمالي السجلات: ' + r.total + '\n' + lines.join('\n') + '\n\nخلايا فيها أكتر من سجل لنفس المرحلة: ' + r.dups.length + (d.length ? '\n' + d.join('\n') : ''));
+      }, function (e) { msg('❌ فشل الفحص: ' + (e && e.message || e)); });
+    };
     refresh();
   }
   function boot() {
@@ -625,7 +785,7 @@
     setConfig: function (c) { lsSet(LS_CFG, typeof c === 'string' ? c : JSON.stringify(c)); adapter = null; adapterP = null; },
     hasConfig: function () { var c = cfg(); return !!(c && c.projectId); },
     lastError: function () { return adapterErr; },
-    seed: seed, seedFromDevice: seedFromDevice, test: test,
+    seed: seed, seedFromDevice: seedFromDevice, test: test, refreshStructure: refreshStructure, importPreview: importPreview, importApply: importApply, inspect: inspect,
     _internals: { upsertMany: upsertMany, deleteMany: deleteMany, getGrid: getGrid, getProduction: getProduction, cellValue: cellValue, slug: slug, setAdapter: function (a) { adapter = a; adapterP = null; }, ROWS: ROWS }
   };
 })();
