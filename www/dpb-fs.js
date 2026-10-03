@@ -57,6 +57,8 @@
   function metaPath(n) { return 'dpb/' + ns() + '/meta/' + n; }
 
   /* --------------------------------------------------------------- adapters */
+  var LS_AUTH = 'dpb_fs_auth';
+  function authCfg() { try { var o = JSON.parse(lsGet(LS_AUTH, '') || 'null'); return o && o.email && o.password ? o : null; } catch (e) { return null; } }
   var adapter = null, adapterP = null, adapterErr = null;
 
   function firebaseAdapter(conf) {
@@ -68,7 +70,15 @@
       var app = appM.getApps().length ? appM.getApp() : appM.initializeApp(conf);
       var db = fsM.getFirestore(app);
       var auth = authM.getAuth(app);
-      var ready = auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth);
+      var ac = authCfg();
+      var ready;
+      if (ac) {
+        // Email/Password: if the current session is another account (e.g. the old anonymous one), sign in again with the saved one
+        ready = (auth.currentUser && !auth.currentUser.isAnonymous && String(auth.currentUser.email || '').toLowerCase() === ac.email.toLowerCase())
+          ? Promise.resolve() : authM.signInWithEmailAndPassword(auth, ac.email, ac.password);
+      } else {
+        ready = auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth);
+      }
       function dref(path) { var p = path.split('/'); return fsM.doc.apply(null, [db].concat(p)); }
       function cref(path) { var p = path.split('/'); return fsM.collection.apply(null, [db].concat(p)); }
       return ready.then(function () {
@@ -435,17 +445,71 @@
   }
   var lastDims = {};
 
-  // live Sheet colors (optional feature): fetched from Apps Script at most once a minute, read-only
+  // live cell colors: kept in Firestore (copied from the Sheet by "تحديث شكل الشيت"); Apps Script only as a first-time fallback
   var colorMemo = {};
   function liveColorsFor(procName) {
     var m = colorMemo[procName];
-    if (m && Date.now() - m.at < 60000) return Promise.resolve(m.v);
-    var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
-    if (!base) return Promise.resolve(m ? m.v : null);
-    return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getGridBatch', processes: [procName], includeColors: true, light: true }) })
-      .then(function (r) { return r.json(); })
-      .then(function (j) { var g = j && j.grids && j.grids[procName]; var v = g && g.liveColors || null; colorMemo[procName] = { at: Date.now(), v: v }; return v; })
-      .catch(function () { return m ? m.v : null; });
+    if (m && Date.now() - m.at < 20000) return Promise.resolve(m.v);
+    return getAdapter().then(function (a) {
+      return a.get(metaPath('colors_' + slug(procName))).then(function (d) {
+        if (d && d.json) { var v = JSON.parse(d.json); colorMemo[procName] = { at: Date.now(), v: v }; return v; }
+        return null;
+      });
+    }).then(function (v) {
+      if (v) return v;
+      var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
+      if (!base) return m ? m.v : null;
+      return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getGridBatch', processes: [procName], includeColors: true, light: true }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { var g = j && j.grids && j.grids[procName]; var c = g && g.liveColors || null; colorMemo[procName] = { at: Date.now(), v: c }; return c; });
+    }).catch(function () { return m ? m.v : null; });
+  }
+
+  /* ------------------------------------------- KV store (map catalog / snapshots) in Firestore */
+  var KV_PART = 600000;
+  function kvGetStr(key) {
+    var k = 'kv_' + slug(key);
+    return getAdapter().then(function (a) {
+      return a.get(metaPath(k)).then(function (h) {
+        if (!h) return null;
+        var n = Number(h.n) || 0; if (!n) return h.json != null ? String(h.json) : null;
+        var jobs = []; for (var i = 0; i < n; i++) jobs.push(a.get(metaPath(k + '_' + i)));
+        return Promise.all(jobs).then(function (parts) { return parts.map(function (x) { return (x && x.t) || ''; }).join(''); });
+      });
+    });
+  }
+  function kvSetStr(key, str) {
+    var k = 'kv_' + slug(key);
+    return getAdapter().then(function (a) {
+      var parts = []; for (var i = 0; i < str.length; i += KV_PART) parts.push(str.slice(i, i + KV_PART));
+      if (!parts.length) parts.push('');
+      return Promise.all(parts.map(function (t, i) { return a.set(metaPath(k + '_' + i), { t: t }, false); }))
+        .then(function () { return a.set(metaPath(k), { n: parts.length, len: str.length, at: new Date().toISOString() }, false); });
+    });
+  }
+  function kvGetOp(body) {
+    return kvGetStr(body.key).then(function (str) {
+      if (str != null) return { ok: true, json: str };
+      // first read in Firestore mode: copy once from the old Apps Script KV
+      var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
+      if (!base) return { ok: true, json: '{}' };
+      return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'kvGet', key: body.key }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.ok && j.json && j.json !== '{}') return kvSetStr(body.key, String(j.json)).then(function () { return { ok: true, json: String(j.json) }; });
+          return { ok: true, json: '{}' };
+        }, function () { return { ok: true, json: '{}' }; });
+    });
+  }
+  function kvPatchOp(body) {
+    var set = body.set || {};
+    if (body.replace) return kvSetStr(body.key, JSON.stringify(set)).then(function () { return { ok: true }; });
+    return kvGetStr(body.key).then(function (str) {
+      var cur = {}; try { cur = JSON.parse(str || '{}') || {}; } catch (e) { cur = {}; }
+      Object.keys(set).forEach(function (k) { cur[k] = set[k]; });
+      (body.unset || body.remove || []).forEach(function (k) { delete cur[k]; });
+      return kvSetStr(body.key, JSON.stringify(cur));
+    }).then(function () { return { ok: true }; });
   }
 
   function getGrid(procName, includeColors, light) {
@@ -473,6 +537,95 @@
     });
   }
 
+
+  /* ------------------------- users / login / build result / history in Firestore */
+  function sha256(str) {
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function (b) {
+      return Array.prototype.map.call(new Uint8Array(b), function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+    });
+  }
+  function pinHash(name, pin) { return sha256('dpbfs|' + String(name || '').trim().toLowerCase() + '|' + String(pin == null ? '' : pin).trim()); }
+  function uName(u) { return String((u && (u.username || u.name || u.UserID || u.user)) || '').trim(); }
+  function usersLoad() {
+    return getAdapter().then(function (a) { return a.get(metaPath('users')).then(function (d) { return d && d.json ? JSON.parse(d.json) : null; }); });
+  }
+  function usersSave(list) {
+    return getAdapter().then(function (a) { return a.set(metaPath('users'), { json: JSON.stringify(list), at: new Date().toISOString() }, false); });
+  }
+  function pubUser(u) { var c = clone(u); delete c.passHash; delete c.password; delete c.pin; return c; }
+  function isActive(u) { var v = u.active; return !(v === false || String(v).toLowerCase() === 'false' || String(v).toLowerCase() === 'no'); }
+  // returns null when users were not moved to Firestore yet (the request then goes to Apps Script as before)
+  function usersOp(body) {
+    return usersLoad().then(function (list) {
+      if (!list) return null;
+      var find = function (n) { n = String(n || '').trim().toLowerCase(); for (var i = 0; i < list.length; i++) if (uName(list[i]).toLowerCase() === n) return i; return -1; };
+      switch (body.action) {
+        case 'login':
+          var i = find(body.username); if (i < 0) return { ok: false, error: 'wrong' };
+          var u = list[i];
+          return pinHash(uName(u), body.password).then(function (h) {
+            if (!u.passHash || u.passHash !== h || !isActive(u)) return { ok: false, error: 'wrong' };
+            return { ok: true, user: pubUser(u) };
+          });
+        case 'getUsers': return { ok: true, users: list.map(pubUser), pinsHidden: true };
+        case 'renewToken': return { ok: true };
+        case 'saveUser':
+          var nu = clone(body.user || {}), nm = uName(nu); if (!nm) return { ok: false, error: 'no username' };
+          var pw = nu.password != null ? nu.password : nu.pin; delete nu.password; delete nu.pin;
+          var k = find(nm), old = k >= 0 ? list[k] : null;
+          var hp = (pw != null && String(pw).trim() !== '') ? pinHash(nm, pw) : Promise.resolve(old ? old.passHash : '');
+          return hp.then(function (h) {
+            nu.passHash = h || '';
+            if (k >= 0) list[k] = Object.assign({}, old, nu); else list.push(nu);
+            return usersSave(list).then(function () { return { ok: true }; });
+          });
+        case 'deleteUser':
+          var d = find(body.username); if (d >= 0) list.splice(d, 1);
+          return usersSave(list).then(function () { return { ok: true }; });
+      }
+      return null;
+    });
+  }
+  // one-time: copy the accounts from the Sheet's Users tab into Firestore (passwords stored only as hashes)
+  function seedUsers() {
+    var base = sheetBase(); if (!base) return Promise.reject(new Error('مفيش رابط مشروع'));
+    var pin = lsGet('DPB_ADMIN_PIN_V1', ''); if (!pin) return Promise.reject(new Error('مفيش PIN أدمن محفوظ على الجهاز — سجّل دخول الأدمن الأول'));
+    return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getUsers', auth: { username: 'Admin', password: pin } }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res || !res.ok || !Array.isArray(res.users)) throw new Error('قراءة المستخدمين من الشيت فشلت' + (res && res.error ? ': ' + res.error : ''));
+        if (res.pinsHidden === true) throw new Error('السيرفر خبّى الباسوردات — سجّل دخول الأدمن بالـ PIN وجرّب تاني');
+        return Promise.all(res.users.map(function (u) {
+          var c = clone(u), pw = c.password != null ? c.password : c.pin; delete c.password; delete c.pin;
+          return (pw != null && String(pw).trim() !== '' ? pinHash(uName(c), pw) : Promise.resolve('')).then(function (h) { c.passHash = h; return c; });
+        })).then(function (list) { return usersSave(list).then(function () { return { ok: true, count: list.length }; }); });
+      });
+  }
+  function histOp(body) {
+    return getAdapter().then(function (a) {
+      var e = clone(body); delete e.action;
+      return a.set('dpb/' + ns() + '/hist/' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), e, false).then(function () { return { ok: true }; });
+    });
+  }
+  function copyFromScript(body, key) {
+    var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl(); if (!base) return Promise.resolve(null);
+    return origFetch(base, { method: 'POST', body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok !== false && j.json) { return kvSetStr(key, JSON.stringify({ json: j.json, updated: j.updated || new Date().toISOString() })).then(function () { return { json: j.json, updated: j.updated || '' }; }); }
+      return null;
+    }, function () { return null; });
+  }
+  function buildGetOp(body) {
+    return kvGetStr('buildresult').then(function (str) {
+      var o = null; try { o = str ? JSON.parse(str) : null; } catch (e) { o = null; }
+      return o || copyFromScript({ action: 'getBuildResult' }, 'buildresult');
+    }).then(function (o) {
+      if (!o) return { ok: true, json: '', updated: '' };
+      return body.metaOnly ? { ok: true, updated: o.updated || '' } : { ok: true, json: o.json, updated: o.updated || '' };
+    });
+  }
+  function buildSetOp(body) { return kvSetStr('buildresult', JSON.stringify({ json: String(body.json || ''), updated: new Date().toISOString() })).then(function () { return { ok: true }; }); }
+  function unitMapSetOp(body) { return kvSetStr('unitmap', JSON.stringify(body.rows || [])).then(function () { return { ok: true }; }); }
+
   /* ------------------------------------------------------------ fetch shim */
   function jsonRes(obj) { return new Response(JSON.stringify(obj), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
   function fail(e) { return jsonRes({ ok: false, error: 'Firestore: ' + String(e && e.message || e) }); }
@@ -493,6 +646,14 @@
           case 'deleteMany': return deleteMany(body).then(jsonRes, fail);
           case 'getGrid': return getGrid(body.process || body.sheet, false, false).then(jsonRes, fail);
           case 'getGridBatch': return getGridBatch(body.processes, !!body.includeColors, !!body.light).then(jsonRes, fail);
+          case 'login': case 'getUsers': case 'saveUser': case 'deleteUser': case 'renewToken':
+            return usersOp(body).then(function (r) { return r ? jsonRes(r) : origFetch(input, init); }, function () { return origFetch(input, init); });
+          case 'logHistory': return histOp(body).then(jsonRes, fail);
+          case 'getBuildResult': return buildGetOp(body).then(jsonRes, fail);
+          case 'saveBuildResult': return buildSetOp(body).then(jsonRes, fail);
+          case 'saveUnitMap': return unitMapSetOp(body).then(jsonRes, fail);
+          case 'kvGet': return kvGetOp(body).then(jsonRes, fail);
+          case 'kvPatch': return kvPatchOp(body).then(jsonRes, fail);
           case 'logProductivity': case 'sync': return Promise.resolve(jsonRes({ ok: true, skipped: 'firestore-mode' }));
           default: return origFetch(input, init);
         }
@@ -542,6 +703,35 @@
     });
   }
 
+
+  /* --------------- phase 3: one-time migration of the REAL data from the Sheet into the current namespace */
+  function fetchSheetProduction() {
+    var base = sheetBase(); if (!base) return Promise.reject(new Error('مفيش رابط مشروع'));
+    return origFetch(base + '?t=' + Date.now()).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || j.ok === false || !Array.isArray(j.data)) throw new Error('قراءة الإنتاج من الشيت فشلت' + (j && j.error ? ': ' + j.error : ''));
+      return j.data;
+    });
+  }
+  function migrateAll(onMsg) {
+    onMsg = onMsg || function () {};
+    var out = { ns: ns() };
+    onMsg('1/4 بقرا سجلات الإنتاج من الشيت...');
+    return fetchSheetProduction().then(function (rows) {
+      out.sheetRecords = rows.length;
+      var gn = []; try { gn = (window.DPB_groupedProcessNames && window.DPB_groupedProcessNames()) || []; } catch (e) {}
+      var procs = []; try { procs = window.__dpbGetLiveGridProcessNames ? window.__dpbGetLiveGridProcessNames() : []; } catch (e) {}
+      onMsg('2/4 برفع ' + rows.length + ' سجل على Firestore (' + ns() + ')...');
+      return seed(rows, { grouped: gn, processes: procs, onProgress: function (d, t) { onMsg('2/4 رفع السجلات... ' + d + ' / ' + t); } });
+    }).then(function (r) {
+      out.seeded = r.records; out.docs = r.docs;
+      onMsg('3/4 بنسخ شكل الشيت وألوانه...');
+      return refreshStructure(function (d, t, n) { onMsg('3/4 شكل الشيت... ' + d + ' / ' + t + ' (' + n + ')'); }).then(function (x) { out.structs = x.count; }, function (e) { out.structErr = String(e && e.message || e); });
+    }).then(function () {
+      onMsg('4/4 بنقل المستخدمين...');
+      return seedUsers().then(function (x) { out.users = x.count; }, function (e) { out.usersErr = String(e && e.message || e); });
+    }).then(function () { return out; });
+  }
+
   function seedFromDevice(onProgress) {
     var store = {}; try { store = JSON.parse(localStorage.getItem('DPB_SHARED_PRODUCTION_V2') || '{}'); } catch (e) {}
     var gn = []; try { gn = (window.DPB_groupedProcessNames && window.DPB_groupedProcessNames()) || []; } catch (e) {}
@@ -552,7 +742,7 @@
   function test() {
     return getAdapter().then(function (a) {
       var t0 = Date.now();
-      return a.set(metaPath('ping'), { at: new Date().toISOString() }, true).then(function () { return a.get(metaPath('ping')); }).then(function () { return { ok: true, ms: Date.now() - t0, ns: ns() }; });
+      return a.set(metaPath('ping'), { at: new Date().toISOString() }, true).then(function () { return a.get(metaPath('ping')); }).then(function () { return { ok: true, ms: Date.now() - t0, ns: ns(), auth: authCfg() ? 'email' : 'anonymous' }; });
     });
   }
 
@@ -566,11 +756,15 @@
     return out;
   }
   function seq(list, fn) { var p = Promise.resolve(), res = []; list.forEach(function (x, i) { p = p.then(function () { return fn(x, i); }).then(function (r) { res.push(r); }); }); return p.then(function () { return res; }); }
-  function fetchSheetGrid(name) {
+  function fetchSheetGrid(name, withColors) {
     var base = sheetBase(); if (!base) return Promise.reject(new Error('مفيش رابط مشروع'));
-    return origFetch(base + '?action=getGrid&process=' + encodeURIComponent(name) + '&t=' + Date.now())
+    return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getGridBatch', processes: [name], includeColors: !!withColors, light: false }) })
       .then(function (r) { return r.json(); })
-      .then(function (g) { if (!g || !g.ok || !Array.isArray(g.values)) throw new Error('قراءة ' + name + ' من الشيت فشلت'); return g; });
+      .then(function (j) {
+        var g = j && j.grids && j.grids[name];
+        if (!g || g.ok === false || !Array.isArray(g.values)) throw new Error('قراءة ' + name + ' من الشيت فشلت');
+        return g;
+      });
   }
 
   // re-read the layout (merges / ranges / colors / size) of every live tab from the Sheet and overwrite the saved copy
@@ -580,9 +774,11 @@
     return getAdapter().then(function (a) {
       var done = 0;
       return seq(names, function (n) {
-        return fetchSheetGrid(n).then(function (g) {
-          var st = clone(g); delete st.values; delete st.liveColors;
-          return a.set(metaPath('struct_' + slug(n)), { json: JSON.stringify(st), at: new Date().toISOString() }, false).then(function () {
+        return fetchSheetGrid(n, true).then(function (g) {
+          var st = clone(g); delete st.values; var lc = st.liveColors; delete st.liveColors;
+          var saveColors = lc ? a.set(metaPath('colors_' + slug(n)), { json: JSON.stringify(lc), at: new Date().toISOString() }, false) : Promise.resolve();
+          return saveColors.then(function () { return a.set(metaPath('struct_' + slug(n)), { json: JSON.stringify(st), at: new Date().toISOString() }, false); }).then(function () {
+            delete colorMemo[n];
             if (structFor.mem) delete structFor.mem[ns() + '|' + slug(n)];
             delete lastDims[slug(n)]; done++; if (onP) onP(done, names.length, n);
           });
@@ -780,6 +976,9 @@
       '<input id="dpbFsNs" style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px" value="' + esc(ns()) + '">' +
       '<label class="hint" style="display:block;margin-top:8px">Firebase config (JSON: apiKey, authDomain, projectId, appId ...)</label>' +
       '<textarea id="dpbFsCfg" rows="4" style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px;direction:ltr;font:12px monospace" placeholder="{&quot;apiKey&quot;:&quot;...&quot;,&quot;projectId&quot;:&quot;...&quot;}">' + esc(lsGet(LS_CFG, '')) + '</textarea>' +
+      '<label class=\"hint\" style=\"display:block;margin-top:8px\">حساب Firebase (Email/Password) — سيبه فاضي = دخول مجهول (للتجربة بس)</label>' +
+      '<input id=\"dpbFsEmail\" type=\"email\" autocomplete=\"off\" style=\"width:100%;box-sizing:border-box;padding:8px;border-radius:8px;direction:ltr\" placeholder=\"app@yourdomain.com\" value=\"' + esc((authCfg() || {}).email || '') + '\">' +
+      '<input id=\"dpbFsPass\" type=\"password\" autocomplete=\"off\" style=\"width:100%;box-sizing:border-box;padding:8px;border-radius:8px;margin-top:6px;direction:ltr\" placeholder=\"' + (authCfg() ? '•••••• (محفوظ — اكتب باسورد جديد لتغييره)' : 'password') + '\">' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsSave">حفظ الإعدادات</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsTest">اختبار الاتصال</button>' +
@@ -793,6 +992,8 @@
       '<button type="button" class="dpbAdminBtn" id="dpbFsImpPrev">📥 استيراد من الشيت (معاينة)</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsImpGo" style="display:none">✅ تأكيد الاستيراد</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsStruct">🔄 تحديث شكل الشيت</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsMigrate">🚀 نقل كل بيانات الشيت الحقيقية (مرة واحدة)</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsUsers">👤 نقل المستخدمين لـ Firestore</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsInspect">🔎 فحص السجلات</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsRebuild">🔧 إعادة حساب الخريطة من السجلات</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsClean" style="display:none">🧹 حذف السجلات اللي مش ظاهرة على الخريطة</button></div></div>' +
@@ -805,10 +1006,18 @@
       var raw = $('dpbFsCfg').value.trim();
       if (raw) { try { var o = JSON.parse(raw); if (!o.projectId) throw new Error('projectId ناقص'); lsSet(LS_CFG, JSON.stringify(o)); adapter = null; adapterP = null; } catch (e) { msg('❌ الـ config مش JSON صحيح: ' + e.message); return false; } }
       lsSet(LS_NS, ($('dpbFsNs').value.trim() || 'test'));
+      var em = $('dpbFsEmail').value.trim(), pw = $('dpbFsPass').value;
+      if (!em) { try { localStorage.removeItem(LS_AUTH); } catch (e) {} adapter = null; adapterP = null; }
+      else {
+        var prev = authCfg();
+        if (!pw && prev && prev.email.toLowerCase() === em.toLowerCase()) pw = prev.password;
+        if (!pw) { msg('❌ اكتب باسورد حساب Firebase'); return false; }
+        lsSet(LS_AUTH, JSON.stringify({ email: em, password: pw })); $('dpbFsPass').value = ''; adapter = null; adapterP = null;
+      }
       return true;
     }
     $('dpbFsSave').onclick = function () { if (save()) msg('✅ اتحفظ. المشروع: ' + ns()); };
-    $('dpbFsTest').onclick = function () { if (!save()) return; msg('جاري الاختبار...'); test().then(function (r) { msg('✅ الاتصال شغال (' + r.ms + ' ms) على المشروع: ' + r.ns); }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); }); };
+    $('dpbFsTest').onclick = function () { if (!save()) return; msg('جاري الاختبار...'); test().then(function (r) { msg('✅ الاتصال شغال (' + r.ms + ' ms) على المشروع: ' + r.ns + ' — الدخول: ' + (r.auth === 'email' ? 'Email/Password 🔒' : 'مجهول (مش آمن)')); }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); }); };
     $('dpbFsSeed').onclick = function () {
       if (!save()) return;
       if (!confirm('هيترفع كل سجلات الإنتاج الموجودة على الجهاز ده لـ Firestore (المشروع: ' + ns() + ') وتتبني الخلايا منها. متأكد؟')) return;
@@ -824,6 +1033,20 @@
     };
     var lastPlan = null;
     function needOn() { if (!mode()) { msg('❌ شغّل Firestore الأول.'); return false; } if (!save()) return false; return true; }
+    $('dpbFsMigrate').onclick = function () {
+      if (!needOn()) return;
+      if (!window.confirm('هينقل كل سجلات الإنتاج من الشيت إلى Firestore في الـ namespace: ' + ns() + '\nلو فيه بيانات هناك هتتكتب فوقها. ينفع نكمل؟')) return;
+      migrateAll(msg).then(function (o) {
+        msg('✅ خلص النقل في (' + o.ns + ')\nسجلات الشيت: ' + o.sheetRecords + ' ← اترفع: ' + o.seeded + ' سجل في ' + o.docs + ' وثيقة' +
+          '\nشكل وألوان الشيت: ' + (o.structs != null ? o.structs + ' مرحلة' : '❌ ' + o.structErr) +
+          '\nالمستخدمين: ' + (o.users != null ? o.users : '❌ ' + o.usersErr) +
+          (o.seeded !== o.sheetRecords ? '\n⚠️ العدد مختلف — شغّل 🔎 فحص السجلات' : '\nاضغط 🔎 فحص السجلات للتأكد، واقفل الخريطة وافتحها.'));
+      }, function (e) { msg('❌ ' + (e && e.message || e)); });
+    };
+    $('dpbFsUsers').onclick = function () {
+      if (!needOn()) return; msg('جاري نقل المستخدمين...');
+      seedUsers().then(function (r) { msg('✅ اتنقل ' + r.count + ' مستخدم. الباسوردات متخزنة كبصمة بس، والدخول بقى من Firestore.'); }, function (e) { msg('❌ ' + (e && e.message || e)); });
+    };
     $('dpbFsStruct').onclick = function () {
       if (!needOn()) return; msg('جاري قراءة شكل الشيت...');
       refreshStructure(function (d, t, n) { msg('جاري التحديث... ' + d + ' / ' + t + ' (' + n + ')'); }).then(function (r) { msg('✅ اتحدّث شكل ' + r.count + ' مرحلة: ' + r.names.join('، ') + '\nاقفل الخريطة وافتحها تاني.'); }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); });
@@ -883,7 +1106,7 @@
     setConfig: function (c) { lsSet(LS_CFG, typeof c === 'string' ? c : JSON.stringify(c)); adapter = null; adapterP = null; },
     hasConfig: function () { var c = cfg(); return !!(c && c.projectId); },
     lastError: function () { return adapterErr; },
-    seed: seed, seedFromDevice: seedFromDevice, test: test, findOrphans: findOrphans, rebuildGrid: rebuildGrid, cleanOrphans: cleanOrphans, refreshStructure: refreshStructure, importPreview: importPreview, importApply: importApply, inspect: inspect,
+    seed: seed, seedFromDevice: seedFromDevice, test: test, findOrphans: findOrphans, rebuildGrid: rebuildGrid, cleanOrphans: cleanOrphans, refreshStructure: refreshStructure, seedUsers: seedUsers, migrateAll: migrateAll, importPreview: importPreview, importApply: importApply, inspect: inspect,
     _internals: { upsertMany: upsertMany, deleteMany: deleteMany, getGrid: getGrid, getProduction: getProduction, cellValue: cellValue, slug: slug, setAdapter: function (a) { adapter = a; adapterP = null; }, ROWS: ROWS }
   };
 })();
