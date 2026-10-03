@@ -94,7 +94,7 @@
             return fsM.onSnapshot(cref(path), function (q) { cb(q.docs.map(function (d) { return { id: d.id, data: d.data() }; }), q.metadata.hasPendingWrites); }, onErr);
           },
           listenDoc: function (path, cb, onErr) {
-            return fsM.onSnapshot(dref(path), function (snap) { cb(snap.exists() ? snap.data() : null); }, onErr);
+            return fsM.onSnapshot(dref(path), function (d) { cb(d.exists() ? d.data() : null, d.metadata.hasPendingWrites); }, onErr);
           },
           runTx: function (fn) {
             return fsM.runTransaction(db, function (t) {
@@ -412,18 +412,22 @@ var upsertQ = Promise.resolve();
       Object.keys(known).forEach(function (sl) { if (gset[low(known[sl])]) Object.keys(blocks).forEach(function (b) { want('rec_' + sl, b); }); });
       if (!wanted.length) return;
       return runPlan(wanted, function (api) {
-        var recsG = [];
+        var recsG = [], sc = {};
+        if (body.stageCodes && typeof body.stageCodes === 'object') Object.keys(body.stageCodes).forEach(function (k) { sc[low(k)] = Number(body.stageCodes[k]) || 0; });
+        // a leftover record only counts as "this stage was executed" when its code reaches its own stage's code
+        // (same rule the map overlay uses: value >= stage code). Without stageCodes the old behaviour is kept.
+        function reached(p) { var st = sc[low(p.process)]; return !(st > 0) || (Number(p.code) || 0) >= st; }
         wanted.forEach(function (w) {
           if (w.col === 'rec__other') return;
           var sh = api.recs(w.col, w.chunk);
           Object.keys(sh.recs).forEach(function (id) {
             var p = sh.recs[id]; if (!p || p.r1 === undefined || p.c1 === undefined) return;
             if (!gset[low(p.process)]) return;
-            recsG.push({ id: id, p: p, code: Number(p.code) || 0, key: Number(p.r1) + '|' + Number(p.c1) });
+            recsG.push({ id: id, p: p, code: Number(p.code) || 0, real: reached(p), key: Number(p.r1) + '|' + Number(p.c1) });
           });
         });
         var maxRemaining = {}, blocked = {};
-        recsG.forEach(function (r) { if (idsSet[r.id]) return; var cur = maxRemaining[r.key]; if (!cur || r.code > cur.code) maxRemaining[r.key] = { code: r.code, name: String(r.p.process || '') }; });
+        recsG.forEach(function (r) { if (idsSet[r.id] || !r.real) return; var cur = maxRemaining[r.key]; if (!cur || r.code > cur.code) maxRemaining[r.key] = { code: r.code, name: String(r.p.process || '') }; });
         recsG.forEach(function (r) { if (!idsSet[r.id]) return; var m = maxRemaining[r.key]; if (m && m.code > r.code) blocked[r.id] = { id: r.id, process: String(r.p.process || ''), r1: Number(r.p.r1), c1: Number(r.p.c1), lockedBy: m.name }; });
         var cells = {}; res.deleted = 0;
         wanted.forEach(function (w) {
@@ -513,59 +517,53 @@ var upsertQ = Promise.resolve();
   }
   var lastDims = {};
 
-  // live cell colors: kept in Firestore (copied from the Sheet by "تحديث شكل الشيت"); Apps Script only as a first-time fallback
+  // live cell colors: kept in Firestore (copied from the Sheet by the admin's "سحب من الشيت" / "تحديث شكل الشيت");
+  // Apps Script only as a first-time fallback. A tiny doc (colors_rev) changes whenever colors are re-pulled, and every
+  // device listens to it, so colors are re-read only when they really changed (no polling reads).
   var colorMemo = {};
-  // Colours are re-read from Firestore ONLY when the admin pulled new ones. A tiny document (meta/colors_ver)
-  // is watched with a live listener: zero reads while nothing changes, one small read per change per device.
-  var colorWatch = null, colorWatchNs = null, colorWatchOk = false, colorWatchUnsub = null, colorVerSeen = null, colorRefreshT = null;
-  function colorsVerBump() {
-    return getAdapter().then(function (a) {
-      return a.set(metaPath('colors_ver'), { v: Date.now() + '-' + Math.random().toString(36).slice(2, 6), at: new Date().toISOString() }, false);
-    });
-  }
+  var COLOR_REV = 'colors_rev', colorRev = null, colorRevOn = false, colorRevP = null, colorRefreshT = null;
   function scheduleColorRefresh() {
     clearTimeout(colorRefreshT);
-    colorRefreshT = setTimeout(function () {
-      try { if (typeof window.__dpbForcePoll === 'function') window.__dpbForcePoll(); else if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {}
-    }, 400);
+    colorRefreshT = setTimeout(function () { try { if (typeof window.__dpbForcePoll === 'function') window.__dpbForcePoll(); } catch (e) {} }, 400);
   }
-  function ensureColorWatch() {
-    if (colorWatch && colorWatchNs === ns()) return colorWatch;
-    if (colorWatchUnsub) { try { colorWatchUnsub(); } catch (e) {} colorWatchUnsub = null; }
-    colorWatchNs = ns(); colorWatchOk = false; colorVerSeen = null; colorMemo = {};
-    colorWatch = getAdapter().then(function (a) {
-      if (!a.listenDoc) return;
+  function ensureColorRev() {
+    if (colorRevP) return colorRevP;
+    colorRevP = getAdapter().then(function (a) {
+      if (!a.listenDoc) return false;
       return new Promise(function (resolve) {
         var first = true;
-        try {
-          colorWatchUnsub = a.listenDoc(metaPath('colors_ver'), function (d) {
-            var v = d && d.v ? String(d.v) : '';
-            colorWatchOk = true;
-            if (first) { first = false; colorVerSeen = v; resolve(); return; }
-            if (v !== colorVerSeen) { colorVerSeen = v; colorMemo = {}; scheduleColorRefresh(); }
-          }, function (err) { colorWatchOk = false; noteErr('colors watch', err); colorWatch = null; if (first) { first = false; resolve(); } });
-        } catch (e) { colorWatchOk = false; colorWatch = null; resolve(); }
+        a.listenDoc(metaPath(COLOR_REV), function (d) {
+          var n = d && d.n != null ? Number(d.n) : 0, changed = colorRev !== null && n !== colorRev;
+          colorRev = n; colorRevOn = true;
+          if (first) { first = false; resolve(true); }
+          if (changed) { colorMemo = {}; scheduleColorRefresh(); }
+        }, function (err) {
+          colorRevOn = false; colorRevP = null;
+          if (first) { first = false; resolve(false); }
+        });
       });
-    }).catch(function () { colorWatch = null; });
-    return colorWatch;
+    }).catch(function () { colorRevP = null; return false; });
+    return colorRevP;
+  }
+  function bumpColorRev() {
+    return getAdapter().then(function (a) { return a.set(metaPath(COLOR_REV), { n: Date.now(), at: new Date().toISOString() }, false); });
   }
   function liveColorsFor(procName) {
-    return ensureColorWatch().then(function () {
-      var m = colorMemo[procName];
-      // with a working watcher a stored colour set stays valid until the version changes; otherwise 20 s like before
-      if (m && (m.v && colorWatchOk || Date.now() - m.at < 20000)) return m.v;
-      return getAdapter().then(function (a) {
-        return bigGet('colors_' + slug(procName)).then(function (v) {
-          if (v) { colorMemo[procName] = { at: Date.now(), v: v }; return v; }
-          return null;
-        });
+    var m = colorMemo[procName];
+    return ensureColorRev().then(function () {
+      m = colorMemo[procName];
+      if (m && ((colorRevOn && m.v && m.rev === colorRev) || Date.now() - m.at < 20000)) return m.v;
+      var rev0 = colorRev;
+      return bigGet('colors_' + slug(procName)).then(function (v) {
+        if (v) { colorMemo[procName] = { at: Date.now(), v: v, rev: rev0 }; return v; }
+        return null;
       }).then(function (v) {
         if (v) return v;
         var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
         if (!base) return m ? m.v : null;
         return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getGridBatch', processes: [procName], includeColors: true, light: true }) })
           .then(function (r) { return r.json(); })
-          .then(function (j) { var g = j && j.grids && j.grids[procName]; var c = g && g.liveColors || null; colorMemo[procName] = { at: Date.now(), v: c }; return c; });
+          .then(function (j) { var g = j && j.grids && j.grids[procName]; var c = g && g.liveColors || null; colorMemo[procName] = { at: Date.now(), v: c, rev: rev0 }; return c; });
       }).catch(function () { return m ? m.v : null; });
     });
   }
@@ -904,9 +902,9 @@ var upsertQ = Promise.resolve();
     return out;
   }
   function seq(list, fn) { var p = Promise.resolve(), res = []; list.forEach(function (x, i) { p = p.then(function () { return fn(x, i); }).then(function (r) { res.push(r); }); }); return p.then(function () { return res; }); }
-  function fetchSheetGrid(name, withColors) {
+  function fetchSheetGrid(name, withColors, light) {
     var base = sheetBase(); if (!base) return Promise.reject(new Error('مفيش رابط مشروع'));
-    return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getGridBatch', processes: [name], includeColors: !!withColors, light: false }) })
+    return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getGridBatch', processes: [name], includeColors: !!withColors, light: !!light }) })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         var g = j && j.grids && j.grids[name];
@@ -931,8 +929,46 @@ var upsertQ = Promise.resolve();
             delete lastDims[slug(n)]; done++; if (onP) onP(done, names.length, n);
           });
         });
-      }).then(function () { try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {} return { ok: true, count: done, names: names }; });
+      }).then(function () { return bumpColorRev().catch(function () {}); }).then(function () { try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {} return { ok: true, count: done, names: names }; });
     });
+  }
+
+  // ---- pull the cell COLORS from the Sheet (only what changed is written; the other devices are told through colors_rev)
+  function cnorm(x) { x = String(x == null ? '' : x).toLowerCase().replace(/\s/g, ''); return (x === '#ffffff' || x === 'white' || x === '#fff') ? '' : x; }
+  function diffColors(oldC, newC) {
+    var a = Array.isArray(oldC) ? oldC : [], b = Array.isArray(newC) ? newC : [], n = 0, R = Math.max(a.length, b.length);
+    for (var r = 0; r < R; r++) {
+      var ra = Array.isArray(a[r]) ? a[r] : [], rb = Array.isArray(b[r]) ? b[r] : [], C = Math.max(ra.length, rb.length);
+      for (var c = 0; c < C; c++) if (cnorm(ra[c]) !== cnorm(rb[c])) n++;
+    }
+    return n;
+  }
+  var pullBusy = false;
+  function pullColors(onP) {
+    if (pullBusy) return Promise.reject(new Error('فيه سحب شغال دلوقتي، استنى يخلص'));
+    pullBusy = true;
+    var names = liveNames(); if (!names.length) names = Object.keys(allProcNames()).map(function (k) { return knownProcs[k]; });
+    var out = { checked: 0, changed: [], cells: {}, failed: [] };
+    if (!names.length) { pullBusy = false; return Promise.reject(new Error('مفيش عمليات معروفة')); }
+    return getAdapter().then(function () {
+      return seq(names, function (n, i) {
+        if (onP) onP(i, names.length, n);
+        return fetchSheetGrid(n, true, true).then(function (g) {
+          var lc = g.liveColors;
+          if (!Array.isArray(lc)) { out.failed.push(n + ': الشيت مرجعش ألوان'); return; }
+          return bigGet('colors_' + slug(n)).catch(function () { return null; }).then(function (old) {
+            out.checked++;
+            var d = old ? diffColors(old, lc) : Math.max(1, diffColors([], lc));   // nothing stored yet -> always write once
+            if (!d) return;
+            return bigSet('colors_' + slug(n), lc).then(function () { out.changed.push(n); out.cells[n] = d; delete colorMemo[n]; });
+          });
+        }, function (e) { out.failed.push(n + ': ' + (e && e.message || e)); });
+      });
+    }).then(function () {
+      if (!out.changed.length) return out;
+      colorMemo = {};
+      return bumpColorRev().then(function () { return out; });
+    }).then(function (r) { pullBusy = false; return r; }, function (e) { pullBusy = false; throw e; });
   }
 
   // compare the Sheet with Firestore and list what an import would change (nothing is written here)
@@ -969,94 +1005,6 @@ var upsertQ = Promise.resolve();
       items.forEach(function (it) { tot.sets += it.sets.length; tot.clears += it.clears.length; tot.skipped += it.skipped; });
       return { items: items, totals: tot };
     });
-  }
-
-  /* ------------------------------------------- pull from the Sheet (admin only): colours + numbers in one step */
-  function isWhite(h) { h = String(h == null ? '' : h).trim().toLowerCase(); return !h || h === '#fff' || h === '#ffffff'; }
-  function colorDiffCount(cur, nw) {
-    var n = 0, R = Math.max((cur || []).length, (nw || []).length);
-    for (var r = 0; r < R; r++) {
-      var a = (cur && cur[r]) || [], b = (nw && nw[r]) || [], C = Math.max(a.length, b.length);
-      for (var c = 0; c < C; c++) {
-        var x = isWhite(a[c]) ? '' : String(a[c]).trim().toLowerCase(), y = isWhite(b[c]) ? '' : String(b[c]).trim().toLowerCase();
-        if (x !== y) n++;
-      }
-    }
-    return n;
-  }
-  // same rules as importPreview, but on a grid that was already read (so the Sheet is asked once per tab)
-  function numbersDiff(n, g, fsg, gcount) {
-    var maxCode = grouped([]).some(function (x) { return low(x) === low(n); }) ? gcount : 9;
-    var sets = [], clears = [], skipped = 0;
-    g.values.forEach(function (row, r) {
-      (row || []).forEach(function (v, c) {
-        var raw = String(v == null ? '' : v).trim();
-        var num = raw === '' ? 0 : Number(raw);
-        if (!isFinite(num)) return;
-        var cur = Number((fsg.values[r] || [])[c]) || 0;
-        if (num > 0) {
-          if (num !== Math.floor(num) || num > maxCode) { skipped++; return; }
-          if (num !== cur) sets.push([r, c, num, cur]);
-        } else if (cur > 0) clears.push([r, c, cur]);
-      });
-    });
-    return { proc: n, sheet: g.sheet || n, sets: sets, clears: clears, skipped: skipped };
-  }
-  // reads the Sheet and lists what would change in Firestore (nothing is written here)
-  function pullPreview(opts, onP) {
-    opts = opts || {};
-    var withNums = opts.numbers !== false;
-    var only = (opts.only || []).map(low).filter(Boolean);
-    var names = liveNames().filter(function (n) { return !only.length || only.indexOf(low(n)) >= 0; });
-    if (!names.length) return Promise.reject(new Error('مفيش عمليات للسحب'));
-    var gcount = grouped([]).length || 3, items = [], colorItems = [];
-    return seq(names, function (n, i) {
-      noteProc(n);
-      return fetchSheetGrid(n, true).then(function (g) {
-        var lc = g.liveColors || null;
-        return Promise.all([
-          withNums ? buildGrid(n, true) : null,
-          lc ? bigGet('colors_' + slug(n)).catch(function () { return null; }) : null
-        ]).then(function (r) {
-          if (lc) colorItems.push({ proc: n, lc: lc, changed: colorDiffCount(r[1], lc) });
-          if (withNums) items.push(numbersDiff(n, g, r[0], gcount));
-          if (onP) onP(i + 1, names.length, n);
-        });
-      });
-    }).then(function () {
-      var tot = { sets: 0, clears: 0, skipped: 0, colors: 0 };
-      items.forEach(function (it) { tot.sets += it.sets.length; tot.clears += it.clears.length; tot.skipped += it.skipped; });
-      colorItems.forEach(function (c) { tot.colors += c.changed; });
-      return { items: items, colorItems: colorItems, totals: tot };
-    });
-  }
-  // writes only the differences: changed colour sets (+ bumps the version so every device reloads them) and changed numbers
-  function pullApply(plan, onP) {
-    var ch = (plan.colorItems || []).filter(function (c) { return c.changed > 0; });
-    var p = Promise.resolve();
-    ch.forEach(function (c) { p = p.then(function () { return bigSet('colors_' + slug(c.proc), c.lc); }).then(function () { delete colorMemo[c.proc]; }); });
-    return p.then(function () { return ch.length ? colorsVerBump() : null; }).then(function () {
-      var tot = plan.totals || {};
-      return (tot.sets || tot.clears) ? importApply(plan, onP) : { ok: true, sets: 0, clears: 0 };
-    }).then(function (r) {
-      try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {}
-      return { ok: true, colorSets: ch.length, colorCells: (plan.totals || {}).colors || 0, sets: r.sets, clears: r.clears };
-    });
-  }
-  // automatic colours-only pull on THIS device while the admin screen is open (numbers are never pulled automatically)
-  var LS_AUTO = 'dpb_fs_autopull', autoT = null, autoBusy = false, autoNote = '';
-  function autoPullTick() {
-    if (autoBusy || document.hidden || !mode()) return;
-    var card = document.getElementById('dpbFsCard'); if (!card || !card.offsetParent) return;
-    autoBusy = true;
-    pullPreview({ numbers: false }).then(function (plan) { return pullApply(plan); }).then(function (r) {
-      autoNote = new Date().toLocaleTimeString() + (r.colorSets ? ' — اتسحب ' + r.colorCells + ' خلية متغيّرة' : ' — مفيش تغيير');
-    }, function (e) { autoNote = new Date().toLocaleTimeString() + ' — فشل: ' + (e && e.message || e); }).then(function () {
-      autoBusy = false; var el = document.getElementById('dpbFsAutoMsg'); if (el) el.textContent = autoNote;
-    });
-  }
-  function autoPullSet(on) {
-    lsSet(LS_AUTO, on ? '1' : '0'); clearInterval(autoT); autoT = on ? setInterval(autoPullTick, 120000) : null;
   }
 
   // write the previewed changes. Each changed cell becomes ONE record (source SheetImport) so it follows the normal
@@ -1189,6 +1137,56 @@ var upsertQ = Promise.resolve();
     });
   }
 
+  // ---- one-cell diagnosis: what the app shows vs what Firestore holds for this cell
+  function showDiag(text) {
+    if (typeof document === 'undefined') return;
+    var old = document.getElementById('dpbFsDiag'); if (old) old.remove();
+    var o = document.createElement('div'); o.id = 'dpbFsDiag';
+    o.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;z-index:2147483100;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:12px';
+    var b = document.createElement('div');
+    b.style.cssText = 'background:#0d2233;color:#dceafa;border:1px solid #31516d;border-radius:14px;max-width:600px;width:100%;max-height:85vh;overflow:auto;padding:14px;direction:rtl;font:13px system-ui';
+    var pre = document.createElement('pre'); pre.style.cssText = 'white-space:pre-wrap;margin:0 0 10px;font:12px/1.7 system-ui;user-select:text;-webkit-user-select:text'; pre.textContent = text;
+    var x = document.createElement('button'); x.type = 'button'; x.textContent = 'إغلاق';
+    x.style.cssText = 'padding:8px 18px;border-radius:10px;border:0;background:#2b6cb0;color:#fff;font:700 13px system-ui';
+    x.onclick = function () { o.remove(); }; o.onclick = function (e) { if (e.target === o) o.remove(); };
+    b.appendChild(pre); b.appendChild(x); o.appendChild(b); document.body.appendChild(o);
+  }
+  function diagCell(info) {
+    info = info || {};
+    var r1 = Number(info.r1), c1 = Number(info.c1), L = [];
+    L.push('الخلية: ' + (info.label || '?') + (info.post ? ' — ' + info.post : '') + (info.rowLabel ? ' (' + info.rowLabel + ')' : '') + '   [صف ' + r1 + ' / عمود ' + c1 + ']');
+    if (info.appLines && info.appLines.length) { L.push('', '— اللي التطبيق شايفه —'); info.appLines.forEach(function (x) { L.push(x); }); }
+    function fin() { var t = L.join('\n'); showDiag(t); return t; }
+    if (!mode()) { L.push('', 'Firestore مقفول دلوقتي (النظام القديم شغال) فمفيش بيانات Firestore تتعرض.'); return Promise.resolve(fin()); }
+    return prepareCaches().then(function () {
+      var recs = allRecordsFromCache().filter(function (p) { return p && Number(p.r1) === r1 && Number(p.c1) === c1; });
+      var procs = {}; recs.forEach(function (p) { if (p.process) procs[low(p.process)] = String(p.process); });
+      (info.processes || []).forEach(function (n) { procs[low(n)] = String(n); });
+      var names = Object.keys(procs).map(function (k) { return procs[k]; });
+      var chunk = String(Math.floor(r1 / ROWS));
+      return Promise.all(names.map(function (n) {
+        return ensureGrid(slug(n)).then(function () {
+          var gv = (((gridCache[ns()] || {})[slug(n)] || {})[chunk] || {})[r1 + '_' + c1];
+          return bigGet('colors_' + slug(n)).then(function (cl) { return { n: n, gv: gv, col: cl ? ((cl[r1] || [])[c1] || '(أبيض/فاضي)') : '(مفيش ألوان محفوظة)' }; }, function () { return { n: n, gv: gv, col: '(فشلت القراءة)' }; });
+        });
+      })).then(function (rows) {
+        L.push('', '— اللي Firestore شايله —');
+        rows.forEach(function (x) {
+          var mine = recs.filter(function (p) { return low(p.process) === low(x.n); });
+          var maxCode = mine.reduce(function (m, p) { return Math.max(m, Number(p.code) || 0); }, 0);
+          L.push('• ' + x.n + ': قيمة الخلية = ' + (x.gv == null || x.gv === '' ? '0 (مفيش)' : x.gv) + '  |  لونها المحفوظ = ' + x.col + '  |  سجلات: ' + mine.length + (mine.length ? ' (أعلى كود ' + maxCode + ')' : ''));
+          if (mine.length && (Number(x.gv) || 0) !== maxCode) L.push('   ⚠️ القيمة مختلفة عن أعلى كود في السجلات — جرّب 🔧 إعادة حساب الخريطة');
+        });
+        if (recs.length) {
+          L.push('', 'السجلات:');
+          recs.slice(0, 12).forEach(function (p) { L.push('  - ' + p.process + ' | كود ' + p.code + ' | ' + (p.source || '—') + ' | ' + (p.user || p.editedBy || '—') + ' | ' + String(p.time || '').slice(0, 16).replace('T', ' ') + ' | id=' + p.id); });
+          if (recs.length > 12) L.push('  ... و ' + (recs.length - 12) + ' كمان');
+        } else L.push('', 'مفيش أي سجل في Firestore للخلية دي.');
+        return fin();
+      });
+    }, function (e) { L.push('', '❌ فشلت قراءة Firestore: ' + (e && e.message || e)); return fin(); });
+  }
+
   /* ------------------------------------------------------------- admin UI */
   function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function badge() {
@@ -1226,19 +1224,16 @@ var upsertQ = Promise.resolve();
       '<label class="hint" style="display:block;margin-top:6px">استيراد من الشيت لمراحل معينة (سيبه فاضي = كل المراحل، أو اكتب الأسماء بفاصلة)</label>' +
       '<input id="dpbFsOnly" style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px" placeholder="Ramming, Saddle, Bearing">' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
-      '<button type="button" class="dpbAdminBtn" id="dpbFsImpPrev">📥 استيراد من الشيت (معاينة)</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsPull">⬇️ سحب من الشيت (ألوان + أرقام)</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsImpPrev">📥 استيراد الأرقام بس (معاينة)</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsImpGo" style="display:none">✅ تأكيد الاستيراد</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsStruct">🔄 تحديث شكل الشيت</button>' +
-      '<button type="button" class="dpbAdminBtn" id="dpbFsPullPrev">⬇️ سحب من الشيت (ألوان + أرقام) — معاينة</button>' +
-      '<button type="button" class="dpbAdminBtn" id="dpbFsPullGo" style="display:none">✅ تأكيد السحب</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsMigrate">🚀 نقل كل بيانات الشيت الحقيقية (مرة واحدة)</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsUsers">👤 نقل المستخدمين لـ Firestore</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsInspect">🔎 فحص السجلات</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsRebuild">🔧 إعادة حساب الخريطة من السجلات</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsClean" style="display:none">🧹 حذف السجلات اللي مش ظاهرة على الخريطة</button></div></div>' +
-      '<label class="hint" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="dpbFsPullColorsOnly"> السحب بالزرار: ألوان فقط (بدون أرقام)</label>' +
-      '<label class="hint" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="dpbFsAuto"> سحب الألوان تلقائياً كل دقيقتين (على الجهاز ده بس، طول ما الشاشة دي مفتوحة)</label>' +
-      '<div class="hint" id="dpbFsAutoMsg" style="margin-top:2px"></div>' +
+      '<label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="dpbFsAuto"> سحب الألوان تلقائياً كل دقيقتين على الجهاز ده (شغّلها على جهاز الأدمن بس. الأرقام مش بتتسحب تلقائي)</label>' +
       '<div class="hint" id="dpbFsMsg" style="margin-top:8px;white-space:pre-line"></div>';
     host.appendChild(c);
     var $ = function (id) { return document.getElementById(id); };
@@ -1293,51 +1288,36 @@ var upsertQ = Promise.resolve();
       if (!needOn()) return; msg('جاري قراءة شكل الشيت...');
       refreshStructure(function (d, t, n) { msg('جاري التحديث... ' + d + ' / ' + t + ' (' + n + ')'); }).then(function (r) { msg('✅ اتحدّث شكل ' + r.count + ' مرحلة: ' + r.names.join('، ') + '\nاقفل الخريطة وافتحها تاني.'); }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); });
     };
-    $('dpbFsImpPrev').onclick = function () {
-      if (!needOn()) return; $('dpbFsImpGo').style.display = 'none'; lastPlan = null; msg('جاري المقارنة بين الشيت و Firestore...');
+    function doPreview(prefix) {
+      $('dpbFsImpGo').style.display = 'none'; lastPlan = null; msg(prefix + 'جاري مقارنة الأرقام بين الشيت و Firestore...');
       var only = $('dpbFsOnly').value.split(/[,،]/).map(function (x) { return x.trim(); }).filter(Boolean);
-      importPreview({ only: only }, function (d, t, n) { msg('بيقرا ' + d + ' / ' + t + ' (' + n + ')...'); }).then(function (p) {
+      return importPreview({ only: only }, function (d, t, n) { msg(prefix + 'بيقرا الأرقام ' + d + ' / ' + t + ' (' + n + ')...'); }).then(function (p) {
         lastPlan = p;
         var lines = p.items.map(function (it) { return '• ' + it.proc + ': هيضيف/يغيّر ' + it.sets.length + ' خلية، وهيفضّي ' + it.clears.length + (it.skipped ? ' (اتجاهل ' + it.skipped + ' رقم برا النطاق)' : ''); });
-        if (!p.totals.sets && !p.totals.clears) { msg('✅ مفيش فرق بين الشيت و Firestore.\n' + lines.join('\n')); return; }
-        msg('المعاينة (لسه ما اتكتبش حاجة):\n' + lines.join('\n') + '\n\nالإجمالي: ' + p.totals.sets + ' إضافة/تغيير، ' + p.totals.clears + ' تفضية.\nلو ماشي اضغط "تأكيد الاستيراد".');
+        if (!p.totals.sets && !p.totals.clears) { msg(prefix + '✅ الأرقام: مفيش فرق بين الشيت و Firestore.\n' + lines.join('\n')); return; }
+        msg(prefix + 'معاينة الأرقام (لسه ما اتكتبش حاجة):\n' + lines.join('\n') + '\n\nالإجمالي: ' + p.totals.sets + ' إضافة/تغيير، ' + p.totals.clears + ' تفضية.\n⚠️ "التفضية" = خلايا فيها رقم في Firestore (ممكن يكون من التطبيق) وفاضية في الشيت. راجع الرقم قبل التأكيد.\nلو ماشي اضغط "تأكيد الاستيراد".');
         $('dpbFsImpGo').style.display = '';
-      }, function (e) { msg('❌ فشلت المعاينة: ' + (e && e.message || e)); });
+      }, function (e) { msg(prefix + '❌ فشلت معاينة الأرقام: ' + (e && e.message || e)); });
+    }
+    $('dpbFsImpPrev').onclick = function () { if (!needOn()) return; doPreview(''); };
+    $('dpbFsPull').onclick = function () {
+      if (!needOn()) return; $('dpbFsImpGo').style.display = 'none'; lastPlan = null; msg('جاري سحب الألوان من الشيت...');
+      pullColors(function (d, t, n) { msg('جاري سحب الألوان... ' + (d + 1) + ' / ' + t + ' (' + n + ')'); }).then(function (r) {
+        var cl = r.changed.length
+          ? '✅ الألوان: اتحدّث ' + r.changed.map(function (n) { return n + ' (' + r.cells[n] + ' خلية)'; }).join('، ') + ' — وصلت لكل الأجهزة.'
+          : '✅ الألوان: مفيش فرق عن Firestore.';
+        if (r.failed.length) cl += '\n⚠️ فشل: ' + r.failed.join(' | ');
+        return doPreview(cl + '\n\n');
+      }, function (e) { msg('❌ فشل سحب الألوان: ' + (e && e.message || e)); });
     };
+    var auto = $('dpbFsAuto'); auto.checked = lsGet(LS_AUTO, 'off') === 'on';
+    auto.onchange = function () { lsSet(LS_AUTO, auto.checked ? 'on' : 'off'); msg(auto.checked ? '✅ السحب التلقائي للألوان شغّال على الجهاز ده (كل دقيقتين، وانت فاتح التطبيق).' : 'السحب التلقائي اتقفل.'); };
     $('dpbFsImpGo').onclick = function () {
       if (!lastPlan) return;
       if (!confirm('هيتكتب في Firestore (المشروع: ' + ns() + '): ' + lastPlan.totals.sets + ' إضافة/تغيير و' + lastPlan.totals.clears + ' تفضية. الشيت نفسه مش هيتغيّر. متأكد؟')) return;
       var plan = lastPlan; lastPlan = null; $('dpbFsImpGo').style.display = 'none'; msg('جاري الاستيراد...');
       importApply(plan, function (d, t) { msg('جاري الاستيراد... ' + d + ' / ' + t); }).then(function (r) { msg('✅ تم الاستيراد: ' + r.sets + ' إضافة/تغيير، ' + r.clears + ' تفضية.'); try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {} }, function (e) { msg('❌ فشل الاستيراد: ' + (e && e.message || e)); });
     };
-    var lastPull = null;
-    $('dpbFsPullPrev').onclick = function () {
-      if (!needOn()) return; $('dpbFsPullGo').style.display = 'none'; lastPull = null; msg('جاري قراءة الشيت (ألوان وأرقام)... ممكن ياخد وقت');
-      var only = $('dpbFsOnly').value.split(/[,،]/).map(function (x) { return x.trim(); }).filter(Boolean);
-      var colorsOnly = $('dpbFsPullColorsOnly').checked;
-      pullPreview({ only: only, numbers: !colorsOnly }, function (d, t, n) { msg('بيقرا ' + d + ' / ' + t + ' (' + n + ')...'); }).then(function (p) {
-        lastPull = p;
-        var lines = p.colorItems.map(function (c) { return '• ' + c.proc + ': ' + c.changed + ' خلية لون متغيّرة'; });
-        p.items.forEach(function (it) { lines.push('• ' + it.proc + ' أرقام: هيضيف/يغيّر ' + it.sets.length + '، وهيفضّي ' + it.clears.length + (it.skipped ? ' (اتجاهل ' + it.skipped + ' برا النطاق)' : '')); });
-        var t = p.totals;
-        if (!t.colors && !t.sets && !t.clears) { msg('✅ مفيش فرق بين الشيت و Firestore.\n' + lines.join('\n')); return; }
-        msg('المعاينة (لسه ما اتكتبش حاجة):\n' + lines.join('\n') + '\n\nالإجمالي: ' + t.colors + ' لون، ' + t.sets + ' رقم إضافة/تغيير، ' + t.clears + ' تفضية.' +
-          (t.clears ? '\n⚠️ التفضية = خلية فيها رقم في Firestore ومفيهاش رقم في الشيت (ممكن تكون شغل مشرفين لسه ما اتسجلش في الشيت). لو مش عايزها اختار \"ألوان فقط\".' : '') + '\nلو ماشي اضغط \"تأكيد السحب\".');
-        $('dpbFsPullGo').style.display = '';
-      }, function (e) { msg('❌ فشلت القراءة: ' + (e && e.message || e)); });
-    };
-    $('dpbFsPullGo').onclick = function () {
-      if (!lastPull) return; var plan = lastPull, t = plan.totals;
-      if (!confirm('هيتكتب في Firestore (' + ns() + '): ' + t.colors + ' لون، ' + t.sets + ' رقم، و' + t.clears + ' تفضية. الشيت نفسه مش هيتغيّر. متأكد؟')) return;
-      lastPull = null; $('dpbFsPullGo').style.display = 'none'; msg('جاري الكتابة...');
-      pullApply(plan, function (d, tt) { msg('جاري الكتابة... ' + d + ' / ' + tt); }).then(function (r) { msg('✅ تم السحب: ' + r.colorCells + ' لون (' + r.colorSets + ' مرحلة)، ' + r.sets + ' رقم، ' + r.clears + ' تفضية.\nالمشرفين هيشوفوا التغيير لحظياً.'); }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); });
-    };
-    $('dpbFsAuto').checked = lsGet(LS_AUTO, '0') === '1';
-    $('dpbFsAuto').onchange = function () {
-      if (this.checked && !needOn()) { this.checked = false; return; }
-      autoPullSet(this.checked); $('dpbFsAutoMsg').textContent = this.checked ? 'شغّال — أول سحب بعد دقيقتين' : 'متوقف';
-    };
-    if (autoNote) $('dpbFsAutoMsg').textContent = autoNote;
     $('dpbFsInspect').onclick = function () {
       if (!needOn()) return; msg('جاري الفحص...');
       inspect().then(function (r) {
@@ -1362,10 +1342,17 @@ var upsertQ = Promise.resolve();
     };
     refresh();
   }
+  var LS_AUTO = 'dpb_fs_autocolors';
+  function autoTick() {
+    if (lsGet(LS_AUTO, 'off') !== 'on' || !mode() || pullBusy) return Promise.resolve(null);
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return Promise.resolve(null);
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve(null);
+    return pullColors().then(function (r) { if (r.failed.length) noteErr('auto colors', new Error(r.failed[0])); return r; }, function (e) { noteErr('auto colors', e); return null; });
+  }
   function boot() {
-    if (lsGet(LS_AUTO, '0') === '1' && !autoT) autoPullSet(true);
     badge();
     mountPanel();
+    try { setInterval(autoTick, 120000); } catch (e) {}
     try { new MutationObserver(function () { mountPanel(); }).observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
   }
   if (typeof document !== 'undefined') { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot(); }
@@ -1377,7 +1364,7 @@ var upsertQ = Promise.resolve();
     setConfig: function (c) { lsSet(LS_CFG, typeof c === 'string' ? c : JSON.stringify(c)); adapter = null; adapterP = null; },
     hasConfig: function () { var c = cfg(); return !!(c && c.projectId); },
     lastError: function () { return lastErr || adapterErr; },
-    seed: seed, seedFromDevice: seedFromDevice, test: test, findOrphans: findOrphans, rebuildGrid: rebuildGrid, cleanOrphans: cleanOrphans, refreshStructure: refreshStructure, seedUsers: seedUsers, migrateAll: migrateAll, importPreview: importPreview, importApply: importApply, pullPreview: pullPreview, pullApply: pullApply, inspect: inspect,
-    _internals: { upsertMany: upsertMany, deleteMany: deleteMany, getGrid: getGrid, getProduction: getProduction, cellValue: cellValue, slug: slug, setAdapter: function (a) { adapter = a; adapterP = null; }, ROWS: ROWS }
+    seed: seed, seedFromDevice: seedFromDevice, test: test, findOrphans: findOrphans, rebuildGrid: rebuildGrid, cleanOrphans: cleanOrphans, refreshStructure: refreshStructure, seedUsers: seedUsers, migrateAll: migrateAll, importPreview: importPreview, importApply: importApply, inspect: inspect, pullColors: pullColors, diagCell: diagCell,
+    _internals: { diffColors: diffColors, autoTick: autoTick, liveColorsFor: liveColorsFor, bumpColorRev: bumpColorRev, upsertMany: upsertMany, deleteMany: deleteMany, getGrid: getGrid, getProduction: getProduction, cellValue: cellValue, slug: slug, setAdapter: function (a) { adapter = a; adapterP = null; }, ROWS: ROWS }
   };
 })();
