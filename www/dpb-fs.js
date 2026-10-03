@@ -87,6 +87,7 @@
         return {
           kind: 'firebase',
           get: function (path) { return fsM.getDoc(dref(path)).then(function (s) { return s.exists() ? s.data() : null; }); },
+          del: function (path) { return fsM.deleteDoc(dref(path)); },
           set: function (path, data, merge) { return fsM.setDoc(dref(path), clean(data), merge ? { merge: true } : {}); },
           list: function (path) { return fsM.getDocs(cref(path)).then(function (q) { return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }); },
           listen: function (path, cb, onErr) {
@@ -267,7 +268,7 @@
   }
 
   /* ----------------------------------------------------------- upsertMany */
-  function upsertMany(body) {
+  function upsertCore(body) {
     var incoming = Array.isArray(body.records) ? body.records.map(clone) : [];
     if (!incoming.length) return Promise.resolve({ ok: true });
     var order = body.noCascade ? [] : grouped(body.groupedProcessNames); // client sends them in process order
@@ -345,6 +346,44 @@
     }).then(function () {
       return { ok: true, stale: stale, serverTime: new Date().toISOString() };
     });
+  }
+
+var upsertQ = Promise.resolve();
+  // The app pushes EVERY unsynced record in one call. One Firestore transaction can't take that (10 MB / 500 writes),
+  // so a big push is cut into small transactions: records already stored (same or newer time) are skipped, the rest go
+  // in a few shards at a time, one after another. Pushes never overlap.
+  function upsertMany(body) {
+    var incoming = Array.isArray(body.records) ? body.records : [];
+    if (incoming.length <= 40) return upsertCore(body);
+    var run = upsertQ.catch(function () {}).then(function () {
+      return prepareCaches().catch(function () {}).then(function () {
+        var rc = recCache[ns()] || {}, idx = idIndex(), stale = [], groups = {}, order = [];
+        incoming.forEach(function (r) {
+          var id = String((r && (r.id || r.recordId)) || ''); if (!id) return;
+          var t = String(r.time || r.updatedAt || r.editedAt || '');
+          var l = idx[id], old = l && rc[l.col] && rc[l.col][l.chunk] && rc[l.col][l.chunk][id];
+          if (old && t) { var ot = isoOf(old.time); if (ot >= t) { if (ot > t) stale.push({ id: id, serverTime: ot }); return; } }
+          var sh = shardOf(r), k = sh.col + '/' + sh.chunk;
+          if (!groups[k]) { groups[k] = []; order.push(k); }
+          groups[k].push(r);
+        });
+        var batches = [], cur = [], curG = 0;
+        order.forEach(function (k) {
+          if (curG >= 3 || cur.length >= 200) { batches.push(cur); cur = []; curG = 0; }
+          cur = cur.concat(groups[k]); curG++;
+        });
+        if (cur.length) batches.push(cur);
+        var p = Promise.resolve();
+        batches.forEach(function (b) {
+          p = p.then(function () {
+            return upsertCore({ records: b, groupedProcessNames: body.groupedProcessNames, noCascade: body.noCascade }).then(function (r) { (r.stale || []).forEach(function (x) { stale.push(x); }); });
+          });
+        });
+        return p.then(function () { return { ok: true, stale: stale, serverTime: new Date().toISOString() }; });
+      });
+    });
+    upsertQ = run;
+    return run;
   }
 
   function idIndex() {
@@ -513,19 +552,31 @@
       return a.get(metaPath(k)).then(function (h) {
         if (!h) return null;
         var n = Number(h.n) || 0; if (!n) return h.json != null ? String(h.json) : null;
-        var jobs = []; for (var i = 0; i < n; i++) jobs.push(a.get(metaPath(k + '_' + i)));
-        return Promise.all(jobs).then(function (parts) { return gunz(parts.map(function (x) { return (x && x.t) || ''; }).join('')); });
+        var base = k + '_' + (h.g ? h.g + '_' : '');
+        var jobs = []; for (var i = 0; i < n; i++) jobs.push(a.get(metaPath(base + i)));
+        return Promise.all(jobs).then(function (parts) {
+          return gunz(parts.map(function (x) { return (x && x.t) || ''; }).join(''));
+        }).catch(function (e) { noteErr('kv decode ' + key, e); return null; });
       });
     });
   }
   function kvSetStr(key, str) {
-    var k = 'kv_' + slug(key);
+    var k = 'kv_' + slug(key), g = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     return Promise.all([getAdapter(), gz(str)]).then(function (ar) {
       var a = ar[0], packed = ar[1], parts = []; for (var i = 0; i < packed.length; i += KV_PART) parts.push(packed.slice(i, i + KV_PART));
       if (!parts.length) parts.push('');
-      var chain = Promise.resolve();
-      parts.forEach(function (t, i) { chain = chain.then(function () { return a.set(metaPath(k + '_' + i), { t: t }, false); }); });
-      return chain.then(function () { return a.set(metaPath(k), { n: parts.length, len: str.length, at: new Date().toISOString() }, false); });
+      return a.get(metaPath(k)).catch(function () { return null; }).then(function (prev) {
+        // parts of this write live under their own generation id; the header flips to it only when ALL parts are in,
+        // so a reader (or a second writer) can never glue pieces of two different writes together
+        var chain = Promise.resolve();
+        parts.forEach(function (t, i) { chain = chain.then(function () { return a.set(metaPath(k + '_' + g + '_' + i), { t: t }, false); }); });
+        return chain.then(function () { return a.set(metaPath(k), { n: parts.length, len: str.length, g: g, at: new Date().toISOString() }, false); }).then(function () {
+          if (prev && Number(prev.n) > 0 && a.del) {   // best-effort: drop the previous version's parts
+            var old = k + '_' + (prev.g ? prev.g + '_' : ''), c2 = Promise.resolve();
+            for (var x = 0; x < Number(prev.n); x++) (function (x) { c2 = c2.then(function () { return a.del(metaPath(old + x)); }).catch(function () {}); })(x);
+          }
+        });
+      });
     });
   }
   var kvCopying = {};
@@ -661,10 +712,13 @@
       return null;
     }, function () { return null; });
   }
+  var buildCopy = null;
   function buildGetOp(body) {
     return kvGetStr('buildresult').then(function (str) {
       var o = null; try { o = str ? JSON.parse(str) : null; } catch (e) { o = null; }
-      return o || copyFromScript({ action: 'getBuildResult' }, 'buildresult');
+      if (o) return o;
+      if (!buildCopy) buildCopy = copyFromScript({ action: 'getBuildResult' }, 'buildresult').then(function (r) { buildCopy = null; return r; }, function (e) { buildCopy = null; throw e; });
+      return buildCopy;
     }).then(function (o) {
       if (!o) return { ok: true, json: '', updated: '' };
       return body.metaOnly ? { ok: true, updated: o.updated || '' } : { ok: true, json: o.json, updated: o.updated || '' };
