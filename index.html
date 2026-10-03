@@ -5259,6 +5259,7 @@ async function deleteMark(){
   const res=await kvCall({action:'deleteMany',ids:cleanIds,siblings,groupedProcessNames:spec.op.grouped?groupedProcessNames():[],stageCodes:spec.op.grouped?dpbStageCodes():undefined});
   if(!res||res.ok===false){toast('فشل الحذف: '+(res&&res.error||'تعذر الاتصال بالسيرفر.'),4000);return;}
   const srvBlocked=(res.blocked||[]).length;
+  try{const bl=new Set((res.blocked||[]).map(b=>String(b.id)));if(window.DPB_CLOUD_PRODUCTION&&window.DPB_CLOUD_PRODUCTION.forgetLocal)window.DPB_CLOUD_PRODUCTION.forgetLocal(cleanIds.filter(id=>!bl.has(String(id))));}catch(_){}
   toast(srvBlocked?('تم حذف '+(cleanIds.length-srvBlocked)+' سجل — و🔒 '+srvBlocked+' اتمنع لأن مرحلة لاحقة اتنفذت عليهم.'):('تم حذف '+cleanIds.length+' سجل، والخلايا رجعت فاضية ✓'),4000);
   clearMarkSelection();
   try{if(typeof window.__dpbFetchLiveGrid==='function')await window.__dpbFetchLiveGrid();}catch(_){}
@@ -11383,7 +11384,22 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // ونص)، مش المصدر الأساسي للتحديث.
   setInterval(scheduleSync,150000);
 
-  window.DPB_CLOUD_PRODUCTION={cloudPush,cloudPull,cloudDelete,scheduleSync};
+  /* v74: a delete made from the MAP goes straight to the server (kvCall), so this device's own copy of the
+     record stayed in DPB_SHARED_PRODUCTION_V2 and, when it was not marked as synced, the next cloudPush sent it
+     back up with its OLD time (cells "came back" a few seconds later). Forget the ids locally + leave a tombstone. */
+  function forgetLocal(ids){
+    try{
+      ids=(ids||[]).map(String).filter(Boolean); if(!ids.length) return;
+      const gone=new Set(ids);
+      const store=readStore();
+      if(Array.isArray(store.records)){ store.records=store.records.filter(r=>!(r&&gone.has(String(r.id)))); store.updatedAt=new Date().toISOString(); writeStoreDirect(store); }
+      const synced=getSyncedMap(), deleted=getDeletedMap(), now=Date.now();
+      ids.forEach(id=>{ delete synced[id]; deleted[id]=now; });
+      setSyncedMap(synced); setDeletedMap(deleted);
+      if(typeof window.__dpbMarkDataChanged==="function") window.__dpbMarkDataChanged();
+    }catch(e){ console.warn("[CloudSync] forgetLocal failed",e); }
+  }
+  window.DPB_CLOUD_PRODUCTION={cloudPush,cloudPull,cloudDelete,scheduleSync,forgetLocal};
 })();
 </script>
 <style id="dpbSupervisorMapAndCompactPatch">
