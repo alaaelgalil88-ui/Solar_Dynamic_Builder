@@ -3672,14 +3672,57 @@ function cssColor(name){
   // a blank/white swatch.
   return tryOne(n) || tryOne(n.replace(/[\s_-]+/g,'')) || null;
 }
+// Resolve a free-text colour name from the Plan's site_color_code table.
+// Handles: CSS names, hex (with/without #), "light green" / "Dark Yellow" /
+// "light_brown" style names (CSS keyword, or base colour lightened/darkened).
+function colorFromName(name){
+  const n=String(name||'').trim();if(!n)return null;
+  if(/^[0-9a-f]{6}$/i.test(n))return '#'+n.toLowerCase();
+  const d=cssColor(n);if(d)return d;
+  const w=n.toLowerCase().replace(/[_\-]+/g,' ').split(/\s+/).filter(Boolean);
+  const MODS={light:.45,pale:.6,bright:.15,dark:-.4,deep:-.45};
+  let mod=0,found=false;const rest=[];
+  for(const x of w){if(MODS[x]!==undefined&&!found){mod=MODS[x];found=true;}else rest.push(x);}
+  if(!found||!rest.length)return null;
+  const base=cssColor(rest.join(' '));if(!base)return null;
+  const rr=parseInt(base.slice(1,3),16),gg=parseInt(base.slice(3,5),16),bb=parseInt(base.slice(5,7),16);
+  const f=v=>Math.max(0,Math.min(255,Math.round(mod>=0?v+(255-v)*mod:v*(1+mod))));
+  const h=v=>('0'+f(v).toString(16)).slice(-2);
+  return '#'+h(rr)+h(gg)+h(bb);
+}
 function readSiteCodes(wb,sheetName,groups){
   const g=groups.get('site_color_code');const out=[];if(!g)return out;
   const ws=wb.Sheets[sheetName];
+  const HEAD=/^(process|colou?r|name|code|site|tracker|type|legend|لون|كود)/i;
+  const codeLike=t=>/^[a-z0-9]{1,3}$/i.test(t);
   for(const a of g.areas)for(let r=a.r1;r<=a.r2;r++){
-    const name=txt(ws,r,a.c1),code=txt(ws,r,a.c1+1);
-    if(!name||!code)continue;
-    if(/^(process|color|colour|name)/i.test(name)&&/code/i.test(code))continue;
-    out.push([code.toLowerCase(),{name:name.toLowerCase(),css:cssColor(name)}]);
+    // every non-empty text in the row + every fill, wherever the cells are
+    // (merged cells / extra columns / colour swatch cells do not break it)
+    const texts=[];let fill=null;
+    for(let c=a.c1;c<=a.c2;c++){
+      const x=ws[addr(r,c)];if(!x)continue;
+      const t=x.v!=null?String(x.v).trim():'';
+      const f=cellFill(x);if(f&&!fill&&f!=='#ffffff')fill=f;
+      if(t)texts.push(t);
+    }
+    if(!texts.length)continue;
+    if(texts.every(t=>HEAD.test(t)&&!colorFromName(t)))continue;           // header row
+    let name='',codeStr='';
+    if(texts.length===1){codeStr=texts[0];name='';}
+    else{
+      const t1=texts[0],t2=texts[1];
+      const c1=colorFromName(t1),c2=colorFromName(t2);
+      if(c1&&codeLike(t2))      {name=t1;codeStr=t2;}
+      else if(c2&&codeLike(t1)) {name=t2;codeStr=t1;}                    // code first, colour second
+      else                      {name=t1;codeStr=t2;}
+    }
+    let css=name?colorFromName(name):null;
+    if(!css&&fill)css=fill;                                               // colour given by the cell fill itself
+    if(!name&&!css)continue;
+    const label=(name||css||'').toLowerCase();
+    // one colour may serve several codes: "a,b" / "a / b" / "a b"
+    for(const code of String(codeStr).toLowerCase().split(/[,;\/\s]+/).filter(Boolean))
+      out.push([code,{name:label,css}]);
   }
   return out;
 }
@@ -4520,6 +4563,11 @@ function colorOf(spec,model,u){
   if(spec.color==='siteCode'){
     const code=typeOf(u).toLowerCase();const row=code&&model.siteCodes.get(code);
     if(row&&row.css)return{css:row.css,src:'code',code:code.toUpperCase(),name:row.name};
+    // Site Color Code colours come ONLY from the Plan's site_color_code table.
+    // Table present but this code (or its colour name) is not understood ->
+    // neutral grey + a visible warning (never the Excel fill, which made this
+    // map look identical to the Ramming map). No table at all -> Excel fill.
+    if(model.siteCodes.size)return{css:'#9aa0a6',src:'unmapped',code:code.toUpperCase(),name:row?row.name:''};
     return{css:u.fill||'#ffffff',src:'unmapped',code:code.toUpperCase()};
   }
   return u.fill?{css:u.fill,src:'fill'}:{css:'#ffffff',src:'blank'};
@@ -4830,6 +4878,10 @@ function renderNow(){
     [...counts].sort((a,b)=>b[1]-a[1]).slice(0,10).forEach(([css,n])=>{listh+='<span class="me-chip"><i style="background:'+css+'"></i>'+(css==='#ffffff'?'No fill':esc(colorNameOf(css)||css))+' · '+n+'</span>';});
   }
   if(spec.legendOv)listh+='<span class="me-chip" style="color:'+spec.legendOv.css+'"><i class="ov" style="background:'+spec.legendOv.css+'"></i><span style="color:inherit">'+esc(spec.legendOv.label)+(prog?progLegend(progSumDone,progSumTotal):' · '+doneCount+' / '+model.units.length)+'</span></span>';
+  if(spec.color==='siteCode'){
+    if(!model.siteCodes.size)lgh+='<span class="pill" style="background:#7a1f1f;color:#fff">⚠ جدول site_color_code مش مقروء من الـ Plan — الألوان من الإكسل</span>';
+    else if(unmapped.size)lgh+='<span class="pill" style="background:#7a1f1f;color:#fff">⚠ أكواد/ألوان مش معروفة في site_color_code: '+esc([...unmapped].join(', '))+'</span>';
+  }
   lgh+='<span class="me-chip-list">'+listh+'</span>';
   lg.innerHTML=lgh;
   if(state.selected&&model.unitById.has(state.selected))details(state.selected);else state.selected=null;
