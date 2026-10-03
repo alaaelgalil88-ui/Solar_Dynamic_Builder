@@ -469,7 +469,7 @@
   }
 
   /* ------------------------------------------- KV store (map catalog / snapshots) in Firestore */
-  var KV_PART = 600000;
+  var KV_PART = 200000;
   function kvGetStr(key) {
     var k = 'kv_' + slug(key);
     return getAdapter().then(function (a) {
@@ -486,10 +486,12 @@
     return getAdapter().then(function (a) {
       var parts = []; for (var i = 0; i < str.length; i += KV_PART) parts.push(str.slice(i, i + KV_PART));
       if (!parts.length) parts.push('');
-      return Promise.all(parts.map(function (t, i) { return a.set(metaPath(k + '_' + i), { t: t }, false); }))
-        .then(function () { return a.set(metaPath(k), { n: parts.length, len: str.length, at: new Date().toISOString() }, false); });
+      var chain = Promise.resolve();
+      parts.forEach(function (t, i) { chain = chain.then(function () { return a.set(metaPath(k + '_' + i), { t: t }, false); }); });
+      return chain.then(function () { return a.set(metaPath(k), { n: parts.length, len: str.length, at: new Date().toISOString() }, false); });
     });
   }
+  var kvCopying = {};
   function kvGetOp(body) {
     return kvGetStr(body.key).then(function (str) {
       if (str != null) return { ok: true, json: str };
@@ -499,7 +501,12 @@
       return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'kvGet', key: body.key }) })
         .then(function (r) { return r.json(); })
         .then(function (j) {
-          if (j && j.ok && j.json && j.json !== '{}') return kvSetStr(body.key, String(j.json)).then(function () { return { ok: true, json: String(j.json) }; });
+          if (j && j.ok && j.json && j.json !== '{}') {
+            if (!kvCopying[body.key]) {
+              kvCopying[body.key] = kvSetStr(body.key, String(j.json)).catch(function (e) { noteErr('kv copy ' + body.key, e); }).then(function () { delete kvCopying[body.key]; });
+            }
+            return { ok: true, json: String(j.json) };
+          }
           return { ok: true, json: '{}' };
         }, function () { return { ok: true, json: '{}' }; });
     });
@@ -637,7 +644,8 @@
     try { badge(); } catch (x) {}
   }
   function jsonRes(obj) { return new Response(JSON.stringify(obj), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
-  function fail(e) { noteErr('request', e); return jsonRes({ ok: false, error: 'Firestore: ' + String(e && e.message || e) }); }
+  function failFor(name) { return function (e) { return fail(e, name); }; }
+  function fail(e, name) { noteErr(name || 'request', e); return jsonRes({ ok: false, error: 'Firestore: ' + String(e && e.message || e) }); }
 
   window.fetch = function (input, init) {
     try {
@@ -651,25 +659,25 @@
       if (method === 'POST') {
         var body = {}; try { body = JSON.parse((init && init.body) || '{}'); } catch (e) { body = {}; }
         switch (body.action) {
-          case 'upsertMany': return upsertMany(body).then(jsonRes, fail);
-          case 'deleteMany': return deleteMany(body).then(jsonRes, fail);
-          case 'getGrid': return getGrid(body.process || body.sheet, false, false).then(jsonRes, fail);
-          case 'getGridBatch': return getGridBatch(body.processes, !!body.includeColors, !!body.light).then(jsonRes, fail);
+          case 'upsertMany': return upsertMany(body).then(jsonRes, failFor(body.action));
+          case 'deleteMany': return deleteMany(body).then(jsonRes, failFor(body.action));
+          case 'getGrid': return getGrid(body.process || body.sheet, false, false).then(jsonRes, failFor(body.action));
+          case 'getGridBatch': return getGridBatch(body.processes, !!body.includeColors, !!body.light).then(jsonRes, failFor(body.action));
           case 'login': case 'getUsers': case 'saveUser': case 'deleteUser': case 'renewToken':
             return usersOp(body).then(function (r) { return r ? jsonRes(r) : origFetch(input, init); }, function () { return origFetch(input, init); });
-          case 'logHistory': return histOp(body).then(jsonRes, fail);
-          case 'getBuildResult': return buildGetOp(body).then(jsonRes, fail);
-          case 'saveBuildResult': return buildSetOp(body).then(jsonRes, fail);
-          case 'saveUnitMap': return unitMapSetOp(body).then(jsonRes, fail);
-          case 'kvGet': return kvGetOp(body).then(jsonRes, fail);
-          case 'kvPatch': return kvPatchOp(body).then(jsonRes, fail);
+          case 'logHistory': return histOp(body).then(jsonRes, failFor(body.action));
+          case 'getBuildResult': return buildGetOp(body).then(jsonRes, failFor(body.action));
+          case 'saveBuildResult': return buildSetOp(body).then(jsonRes, failFor(body.action));
+          case 'saveUnitMap': return unitMapSetOp(body).then(jsonRes, failFor(body.action));
+          case 'kvGet': return kvGetOp(body).then(jsonRes, failFor(body.action));
+          case 'kvPatch': return kvPatchOp(body).then(jsonRes, failFor(body.action));
           case 'logProductivity': case 'sync': return Promise.resolve(jsonRes({ ok: true, skipped: 'firestore-mode' }));
           default: return origFetch(input, init);
         }
       }
-      if (q.action === 'getGrid') return getGrid(q.process || q.sheet, false, false).then(jsonRes, fail);
-      if (q.action === 'getGridBatch') return getGridBatch(String(q.processes || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean), q.includeColors === '1' || q.includeColors === 'true', false).then(jsonRes, fail);
-      if (!q.action && !q.debug) return getProduction(q.rev).then(jsonRes, fail);
+      if (q.action === 'getGrid') return getGrid(q.process || q.sheet, false, false).then(jsonRes, failFor(q.action || 'pull'));
+      if (q.action === 'getGridBatch') return getGridBatch(String(q.processes || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean), q.includeColors === '1' || q.includeColors === 'true', false).then(jsonRes, failFor(q.action || 'pull'));
+      if (!q.action && !q.debug) return getProduction(q.rev).then(jsonRes, failFor(q.action || 'pull'));
       return origFetch(input, init);
     } catch (e) { return origFetch(input, init); }
   };
