@@ -5314,8 +5314,26 @@ function details(id){
   if(tType)cards+=item('TRACKER TYPE',esc(tType)+(tinfo?' (range '+esc(tinfo.rangeNames.join(', '))+')':''),true);
   if(u.letter&&u.letter!==String(tType).toUpperCase())cards+=item('CELL LETTER',u.letter);
   const cname=colorNameOf(col.css)||(col.css==='#ffffff'?'No fill':col.css);
-  const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?' · no fill':col.src==='unmapped'?' · unmapped code':' · Excel fill';
+  const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?' · no fill':col.src==='unmapped'?' · unmapped code':col.src==='liveSheet'?' · Google Sheet (live)':' · Excel fill';
   cards+=item('COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true);
+  // LAYERS: every colour source that can paint THIS cell, side by side, so it is clear which one is on screen.
+  try{
+    const sw=(hex)=>hex?'<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+hex+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(colorNameOf(hex)||hex):'—';
+    let sheetHex=null,sheetTab='';
+    if(spec.mode==='dynamic'&&spec.op){
+      const by=window.__dpbLiveGridByProcess||{};
+      const key=Object.keys(by).find(k=>k.toLowerCase()===String(spec.op.name).trim().toLowerCase());
+      const cbc=key&&by[key]&&by[key].colorByCoord;sheetTab=key||spec.op.name;
+      sheetHex=cbc?(cbc.get(u.r1+'|'+u.c1)||null):null;
+    }
+    const code=typeOf(u).toLowerCase(),srow=code&&model.siteCodes.get(code);
+    const lay=[];
+    lay.push('Plan fill: '+(u.fill&&u.fill!=='#ffffff'?sw(u.fill):'none'));
+    if(spec.mode==='dynamic')lay.push('Sheet tab '+esc(sheetTab)+': '+(sheetHex?sw(sheetHex):'no colour'));
+    lay.push('Site code '+esc(code.toUpperCase()||'?')+': '+(srow&&srow.css?sw(srow.css):'none'));
+    lay.push('Shown now: '+esc(col.src));
+    cards+='<div class="map-detail-item map-detail-wide"><div class="k">COLOR LAYERS (r'+(u.r1+1)+' c'+(u.c1+1)+')</div><div class="v">'+lay.join('<br>')+'</div></div>';
+  }catch(_){}
   const ops=(currentCatalog()||{maps:[]}).maps.filter(m=>m.op&&m.op.name&&m.op.kind!=='notstarted').map(m=>m.op);
   const progHere=(spec.op&&spec.op.kind!=='notstarted'&&progressInfoOfModel(model))?spec.op:null;
   const done=ops.filter(o=>isDone(o,u)&&!(progHere&&o.id===progHere.id));
