@@ -46,6 +46,8 @@
   function isoOf(v) { return v ? String(v) : ''; }
   function progDone(r) { return r && r.done !== undefined && r.done !== null && r.done !== '' && isFinite(Number(r.done)); }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  // Firestore rejects `undefined` anywhere in a document; a JSON round-trip drops those keys
+  function clean(o) { return o === undefined ? o : JSON.parse(JSON.stringify(o)); }
 
   // shard for a record: (process slug, row block) | other bucket
   function shardOf(rec) {
@@ -85,7 +87,7 @@
         return {
           kind: 'firebase',
           get: function (path) { return fsM.getDoc(dref(path)).then(function (s) { return s.exists() ? s.data() : null; }); },
-          set: function (path, data, merge) { return fsM.setDoc(dref(path), data, merge ? { merge: true } : {}); },
+          set: function (path, data, merge) { return fsM.setDoc(dref(path), clean(data), merge ? { merge: true } : {}); },
           list: function (path) { return fsM.getDocs(cref(path)).then(function (q) { return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }); },
           listen: function (path, cb, onErr) {
             return fsM.onSnapshot(cref(path), function (q) { cb(q.docs.map(function (d) { return { id: d.id, data: d.data() }; }), q.metadata.hasPendingWrites); }, onErr);
@@ -94,13 +96,13 @@
             return fsM.runTransaction(db, function (t) {
               return fn({
                 get: function (path) { return t.get(dref(path)).then(function (s) { return s.exists() ? s.data() : null; }); },
-                set: function (path, data, merge) { t.set(dref(path), data, merge ? { merge: true } : {}); }
+                set: function (path, data, merge) { t.set(dref(path), clean(data), merge ? { merge: true } : {}); }
               });
             });
           },
           batch: function (ops) { // ops: [{path,data,merge}] up to 450
             var b = fsM.writeBatch(db);
-            ops.forEach(function (o) { b.set(dref(o.path), o.data, o.merge ? { merge: true } : {}); });
+            ops.forEach(function (o) { b.set(dref(o.path), clean(o.data), o.merge ? { merge: true } : {}); });
             return b.commit();
           }
         };
@@ -285,6 +287,7 @@
         });
       }
     });
+    cascade = cascade.map(clean);
     var progRecs = incoming.filter(function (r) { return progDone(r) && hasCell(r); });
     var all = incoming.concat(cascade);
     all.forEach(function (r) { if (r.process) noteProc(r.process); });
