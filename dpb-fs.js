@@ -281,6 +281,10 @@
       var idx = -1;
       for (var i = 0; i < order.length; i++) if (low(order[i]) === low(rec.process)) { idx = i; break; }
       if (idx <= 0) return;
+      // v-fix: a record only drags the earlier stages along when it really REACHES its own stage (code >= its stage code).
+      // A leftover Bearing record with code 1/2 (e.g. from a Sheet import) used to re-create cascade_saddle / cascade_ramming
+      // (code 2 / 1) on every push, so cells deleted in Saddle came back a few seconds later.
+      if (Number(rec.code) < idx + 1 || String(rec.source || '') === 'Cascade') return;
       for (var k = 0; k < idx; k++) {
         cascade.push({
           id: 'cascade_' + low(order[k]) + '_' + rec.sheet + '_' + rec.r1 + '_' + rec.c1,
