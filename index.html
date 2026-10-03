@@ -4558,12 +4558,6 @@ function colorOf(spec,model,u){
     if(cbc){
       const live=cbc.get(u.r1+'|'+u.c1);
       if(live) return{css:live,src:'liveSheet'};
-      // ONE layer only: once this operation's sheet colours have been read,
-      // a cell with no colour in the sheet is simply blank. It must NOT fall
-      // back to the Plan's Excel fill (that was the second, Ramming-looking layer
-      // showing through the sheet colours). Before the first read (or if the
-      // read failed) cbc is empty, so the Plan fill is still used as a fallback.
-      if(cbc.size>0) return{css:'#ffffff',src:'blank'};
     }
   }
   if(spec.color==='siteCode'){
@@ -5001,7 +4995,7 @@ async function loadLocks(useLocal){
   const fresh=new Map();
   grids.forEach((g,i)=>{
     const code=Number(later[i].code),name=later[i].name;
-    const put=(k,n)=>{if(Number.isFinite(n)&&n>0){const prev=fresh.get(k);if(!prev||code>prev.code)fresh.set(k,{name,code});}};
+    const put=(k,n)=>{if(Number.isFinite(n)&&n>0&&(!(code>0)||n>=code)){const prev=fresh.get(k);if(!prev||code>prev.code)fresh.set(k,{name,code,val:n});}}; // v73: same rule as the overlay (isDone): value >= stage code
     if(g.valuesByCoord){g.valuesByCoord.forEach((n,k)=>put(k,Number(n)));return;}
     (g.values||[]).forEach((row,r)=>(row||[]).forEach((v,c)=>put(r+'|'+c,Number(v))));
   });
@@ -5074,6 +5068,7 @@ function renderMarkBar(){
     '<span id="dpbMarkCount" style="color:#dceafa;font-weight:900;font-size:12px;white-space:nowrap">'+n+' خلية محددة</span>'+
     '<button type="button" id="dpbMarkCancel" title="إلغاء التحديد" style="'+iconBtnCss('neutral')+'"'+(n?'':' disabled')+'>↺</button>'+
     '<button type="button" id="dpbMarkDelete" title="حذف" style="'+iconBtnCss('danger')+'"'+(n?'':' disabled')+'>🗑️</button>'+
+    '<button type="button" id="dpbMarkDiag" title="تشخيص الخلية المحددة" style="'+iconBtnCss('neutral')+'">🩺</button>'+
     '<button type="button" id="dpbMarkApply" title="تطبيق وحفظ" style="'+iconBtnCss('primary')+'"'+(canApply?'':' disabled')+'>✓</button>';
 }
 function iconBtnCss(kind){
@@ -5093,7 +5088,7 @@ function toggleUnit(id){
   const td=document.querySelector('#excelMapShell td[data-u="'+id+'"]');
   if(mark.sel.has(id)){mark.sel.delete(id);if(td)td.classList.remove('me-mark');renderMarkBar();return;}
   const lock=mark.locks.get(u.r1+'|'+u.c1);
-  if(lock){toast('الخلية دي اتنفذت في '+lock.name+' — لازم تتحذف من هناك الأول.');return;}
+  if(lock){toast('🔒 '+(u.label||'الخلية')+(u.post?' — '+u.post:'')+' قيمتها '+lock.val+' في '+lock.name+' (كود '+lock.code+') — لازم تتحذف من هناك الأول. (🩺 للتفاصيل)',5000);return;}
   mark.sel.set(id,u);if(td)td.classList.add('me-mark');
   renderMarkBar();
 }
@@ -5182,18 +5177,6 @@ async function obPump(){
       try{if(typeof window.__dpbFetchLiveGrid==='function')await window.__dpbFetchLiveGrid();}catch(_){}
       try{await loadLocks();}catch(_){}
       refresh();
-      // Read-back check: the server said "ok", so prove the cells really came back
-      // in the process grid. If not, say exactly which cells and why (instead of silence).
-      try{
-        const by=window.__dpbLiveGridByProcess||{};
-        const key=Object.keys(by).find(k=>k.trim().toLowerCase()===String(job.opName).trim().toLowerCase());
-        const vm=key&&by[key]&&by[key].valuesByCoord;
-        const miss=vm?job.units.filter(u=>!(Number(vm.get(u.r1+'|'+u.c1))>0)):job.units.slice();
-        if(miss.length){
-          console.warn('[DPB apply read-back] missing after save',{process:job.opName,gridKey:key||null,gridCells:vm?vm.size:null,missing:miss.map(u=>[u.r1,u.c1])});
-          toast('⚠️ الحفظ رجّع "تم" لكن '+miss.length+' خلية مش ظاهرة في '+job.opName+' (أول واحدة: صف '+(miss[0].r1+1)+' / عمود '+(miss[0].c1+1)+')'+(vm?'':' — جريد '+job.opName+' مش محمّل على الجهاز')+'. اضغط 🔄 مرة، ولو فضلت كده ابعتلي الرسالة دي.',9000);
-        }
-      }catch(_){}
     }
   }finally{obBusy=false;obBadge();obPaint();}
   if(wait){clearTimeout(obTimer);obTimer=setTimeout(obPump,wait);}
@@ -5220,13 +5203,30 @@ setInterval(()=>{if(obLoad().some(j=>!j.failed))obPump();},20000);
 /* v71: قاعدة القفل للعمليات المجمّعة. خلية عليها مرحلة لاحقة (code أكبر) منفّذة
    مينفعش تتحذف/تتفضّى منها المرحلة الأسبق. الحساب من سجلات Production نفسها
    (مش من قراءة الشيت اللي ممكن تفشل)، والسيرفر بيعيد التحقق برضه. */
-function dpbBlockedUnitsByLater(units,all,laterNames){
+function dpbStageCodes(){const m={};groupedOps().forEach(o=>{m[String(o.name).trim().toLowerCase()]=Number(o.code)||0;});return m;}
+function dpbBlockedUnitsByLater(units,all,laterNames,codeByName){
   const later=new Set((laterNames||[]).map(n=>String(n).trim().toLowerCase()));
   const hit=new Map();
-  (all||[]).forEach(r=>{if(!r||!later.has(String(r.process||'').trim().toLowerCase()))return;hit.set(Number(r.r1)+'|'+Number(r.c1),String(r.process));});
+  // v73: a record counts only when it reaches its stage's code (same as the overlay), so a leftover 1/2 in Bearing no longer blocks
+  (all||[]).forEach(r=>{if(!r)return;const pn=String(r.process||'').trim().toLowerCase();if(!later.has(pn))return;const need=Number(codeByName&&codeByName[pn])||0;if(need>0&&(Number(r.code)||0)<need)return;hit.set(Number(r.r1)+'|'+Number(r.c1),String(r.process));});
   const blocked=[],free=[];
   units.forEach(u=>{const by=hit.get(u.r1+'|'+u.c1);if(by)blocked.push({u,by});else free.push(u);});
   return {blocked,free};
+}
+function dpbDiagSelected(){
+  const s=state.last;
+  const sel=[...mark.sel.values()];
+  const u=sel.length?sel[sel.length-1]:(s&&state.selected?s.model.unitById.get(state.selected):null);
+  if(!u){toast('اختار خلية الأول (اضغط عليها في الخريطة).');return;}
+  const g=groupedOps(),lines=[];
+  const spec=markableSpec();
+  g.forEach(o=>{lines.push('• '+o.name+' (كود '+o.code+'): القيمة '+stageValue(o,u)+' → '+(isDone(o,u)?'منفّذة (الخريطة بتلونها overlay)':'مش منفّذة'));});
+  const lk=mark.locks&&mark.locks.get(u.r1+'|'+u.c1);
+  if(spec&&spec.op&&spec.op.grouped)lines.push('قفل الخلية للمرحلة الحالية ('+spec.op.name+'): '+(lk?'مقفولة بسبب '+lk.name+' (قيمة '+lk.val+')':'مش مقفولة'));
+  try{if(spec&&state.last)lines.push('اللون الأساسي على الخريطة: '+String(colorOf(spec,state.last.model,u)));}catch(_){}
+  if(!window.DPB_FS||typeof window.DPB_FS.diagCell!=='function'){toast('التشخيص مش متاح.');return;}
+  toast('جاري التشخيص…',20000);
+  window.DPB_FS.diagCell({r1:u.r1,c1:u.c1,label:u.label,rowLabel:u.rowLabel,post:u.post,processes:g.map(o=>o.name),appLines:lines}).then(()=>{toast('تم',600);},e=>toast('فشل التشخيص: '+(e&&e.message||e),4000));
 }
 async function deleteMark(){
   const spec=markableSpec();if(!spec||!mark.sel.size)return;
@@ -5237,7 +5237,7 @@ async function deleteMark(){
   let units=[...mark.sel.values()];
   if(spec.op.grouped){
     const laterNames=groupedOps().filter(o=>Number(o.code)>Number(spec.op.code)).map(o=>o.name);
-    const chk=dpbBlockedUnitsByLater(units,all,laterNames);
+    const chk=dpbBlockedUnitsByLater(units,all,laterNames,dpbStageCodes());
     if(chk.blocked.length){
       chk.blocked.forEach(b=>{mark.sel.delete(b.u.id);const td=document.querySelector('#excelMapShell td[data-u="'+b.u.id+'"]');if(td)td.classList.remove('me-mark');});
       renderMarkBar();
@@ -5256,7 +5256,7 @@ async function deleteMark(){
     const gone=new Set(cleanIds);
     siblings=all.filter(r=>r&&r.id&&!gone.has(String(r.id))&&gset.has(String(r.process||'').trim().toLowerCase())&&units.some(u=>Number(r.r1)===u.r1&&Number(r.c1)===u.c1));
   }
-  const res=await kvCall({action:'deleteMany',ids:cleanIds,siblings,groupedProcessNames:spec.op.grouped?groupedProcessNames():[]});
+  const res=await kvCall({action:'deleteMany',ids:cleanIds,siblings,groupedProcessNames:spec.op.grouped?groupedProcessNames():[],stageCodes:spec.op.grouped?dpbStageCodes():undefined});
   if(!res||res.ok===false){toast('فشل الحذف: '+(res&&res.error||'تعذر الاتصال بالسيرفر.'),4000);return;}
   const srvBlocked=(res.blocked||[]).length;
   toast(srvBlocked?('تم حذف '+(cleanIds.length-srvBlocked)+' سجل — و🔒 '+srvBlocked+' اتمنع لأن مرحلة لاحقة اتنفذت عليهم.'):('تم حذف '+cleanIds.length+' سجل، والخلايا رجعت فاضية ✓'),4000);
@@ -5286,6 +5286,7 @@ document.addEventListener('click',ev=>{
   }
   if(t.id==='dpbMarkCancel'){clearMarkSelection();return;}
   if(t.id==='dpbMarkDelete'){deleteMark();return;}
+  if(t.id==='dpbMarkDiag'){dpbDiagSelected();return;}
   if(t.id==='dpbMarkApply'){applyMark();return;}
   if(t.id==='dpbProgSave'){progSaveFromMap();return;}
 });
@@ -5314,26 +5315,8 @@ function details(id){
   if(tType)cards+=item('TRACKER TYPE',esc(tType)+(tinfo?' (range '+esc(tinfo.rangeNames.join(', '))+')':''),true);
   if(u.letter&&u.letter!==String(tType).toUpperCase())cards+=item('CELL LETTER',u.letter);
   const cname=colorNameOf(col.css)||(col.css==='#ffffff'?'No fill':col.css);
-  const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?' · no fill':col.src==='unmapped'?' · unmapped code':col.src==='liveSheet'?' · Google Sheet (live)':' · Excel fill';
+  const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?' · no fill':col.src==='unmapped'?' · unmapped code':' · Excel fill';
   cards+=item('COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true);
-  // LAYERS: every colour source that can paint THIS cell, side by side, so it is clear which one is on screen.
-  try{
-    const sw=(hex)=>hex?'<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+hex+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(colorNameOf(hex)||hex):'—';
-    let sheetHex=null,sheetTab='';
-    if(spec.mode==='dynamic'&&spec.op){
-      const by=window.__dpbLiveGridByProcess||{};
-      const key=Object.keys(by).find(k=>k.toLowerCase()===String(spec.op.name).trim().toLowerCase());
-      const cbc=key&&by[key]&&by[key].colorByCoord;sheetTab=key||spec.op.name;
-      sheetHex=cbc?(cbc.get(u.r1+'|'+u.c1)||null):null;
-    }
-    const code=typeOf(u).toLowerCase(),srow=code&&model.siteCodes.get(code);
-    const lay=[];
-    lay.push('Plan fill: '+(u.fill&&u.fill!=='#ffffff'?sw(u.fill):'none'));
-    if(spec.mode==='dynamic')lay.push('Sheet tab '+esc(sheetTab)+': '+(sheetHex?sw(sheetHex):'no colour'));
-    lay.push('Site code '+esc(code.toUpperCase()||'?')+': '+(srow&&srow.css?sw(srow.css):'none'));
-    lay.push('Shown now: '+esc(col.src));
-    cards+='<div class="map-detail-item map-detail-wide"><div class="k">COLOR LAYERS (r'+(u.r1+1)+' c'+(u.c1+1)+')</div><div class="v">'+lay.join('<br>')+'</div></div>';
-  }catch(_){}
   const ops=(currentCatalog()||{maps:[]}).maps.filter(m=>m.op&&m.op.name&&m.op.kind!=='notstarted').map(m=>m.op);
   const progHere=(spec.op&&spec.op.kind!=='notstarted'&&progressInfoOfModel(model))?spec.op:null;
   const done=ops.filter(o=>isDone(o,u)&&!(progHere&&o.id===progHere.id));
