@@ -134,7 +134,7 @@
         listeners[key] = a.listen('dpb/' + ns() + '/' + col, function (docs, pending) {
           onDocs(docs);
           if (first) { first = false; resolve(); } else if (!pending) scheduleNotify();
-        }, function (err) { delete ready[key]; if (first) { first = false; reject(err); } });
+        }, function (err) { noteErr('listen ' + col, err); delete ready[key]; if (first) { first = false; reject(err); } });
       });
     });
     ready[key].catch(function () { delete ready[key]; });
@@ -431,7 +431,7 @@
 
   function buildGrid(procName, light) {
     var sl = slug(procName); noteProc(procName);
-    return Promise.all([ensureGrid(sl), light ? Promise.resolve(null) : structFor(procName), ensureRecs('rec_' + sl)]).then(function (r) {
+    return Promise.all([ensureGrid(sl), light ? Promise.resolve(null) : structFor(procName)]).then(function (r) {
       var st = r[1] || {};
       var gc = ((gridCache[ns()] || {})[sl]) || {};
       var rows = st.rows || 0, cols = st.cols || 0;
@@ -525,7 +525,7 @@
     var grids = {};
     return Promise.all((names || []).map(function (n) {
       n = String(n || '').trim(); if (!n) return null;
-      return getGrid(n, includeColors, light).then(function (g) { grids[n] = g; }, function (e) { grids[n] = { ok: false, error: String(e && e.message || e) }; });
+      return getGrid(n, includeColors, light).then(function (g) { grids[n] = g; }, function (e) { noteErr('grid ' + n, e); grids[n] = { ok: false, error: String(e && e.message || e) }; });
     })).then(function () { return { ok: true, grids: grids }; });
   }
 
@@ -630,8 +630,14 @@
   function unitMapSetOp(body) { return kvSetStr('unitmap', JSON.stringify(body.rows || [])).then(function () { return { ok: true }; }); }
 
   /* ------------------------------------------------------------ fetch shim */
+  var lastErr = '';
+  function noteErr(where, e) {
+    lastErr = where + ': ' + String((e && (e.code || e.name)) || '') + ' ' + String((e && e.message) || e || '');
+    try { console.warn('[DPB_FS]', lastErr, e); } catch (x) {}
+    try { badge(); } catch (x) {}
+  }
   function jsonRes(obj) { return new Response(JSON.stringify(obj), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
-  function fail(e) { return jsonRes({ ok: false, error: 'Firestore: ' + String(e && e.message || e) }); }
+  function fail(e) { noteErr('request', e); return jsonRes({ ok: false, error: 'Firestore: ' + String(e && e.message || e) }); }
 
   window.fetch = function (input, init) {
     try {
@@ -966,7 +972,8 @@
       b.style.cssText = 'position:fixed;left:6px;top:calc(env(safe-area-inset-top,0px) + 4px);z-index:2147483000;padding:2px 8px;border-radius:999px;font:700 10px system-ui;background:#b3261e;color:#fff;opacity:.92;pointer-events:none';
       (document.body || document.documentElement).appendChild(b);
     }
-    b.textContent = '🔥 Firestore: ' + ns();
+    b.textContent = '🔥 Firestore: ' + ns() + (lastErr ? '  ⚠️ ' + lastErr.slice(0, 90) : '');
+    b.style.background = lastErr ? '#8a1c14' : '#b3261e';
   }
   function mountPanel() {
     var host = document.querySelector('.dpbAdminTabPanel[data-tab="sync"]');
@@ -1108,7 +1115,7 @@
     setNs: function (n) { lsSet(LS_NS, String(n || 'test')); },
     setConfig: function (c) { lsSet(LS_CFG, typeof c === 'string' ? c : JSON.stringify(c)); adapter = null; adapterP = null; },
     hasConfig: function () { var c = cfg(); return !!(c && c.projectId); },
-    lastError: function () { return adapterErr; },
+    lastError: function () { return lastErr || adapterErr; },
     seed: seed, seedFromDevice: seedFromDevice, test: test, findOrphans: findOrphans, rebuildGrid: rebuildGrid, cleanOrphans: cleanOrphans, refreshStructure: refreshStructure, seedUsers: seedUsers, migrateAll: migrateAll, importPreview: importPreview, importApply: importApply, inspect: inspect,
     _internals: { upsertMany: upsertMany, deleteMany: deleteMany, getGrid: getGrid, getProduction: getProduction, cellValue: cellValue, slug: slug, setAdapter: function (a) { adapter = a; adapterP = null; }, ROWS: ROWS }
   };
