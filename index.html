@@ -4558,6 +4558,12 @@ function colorOf(spec,model,u){
     if(cbc){
       const live=cbc.get(u.r1+'|'+u.c1);
       if(live) return{css:live,src:'liveSheet'};
+      // ONE layer only: once this operation's sheet colours have been read,
+      // a cell with no colour in the sheet is simply blank. It must NOT fall
+      // back to the Plan's Excel fill (that was the second, Ramming-looking layer
+      // showing through the sheet colours). Before the first read (or if the
+      // read failed) cbc is empty, so the Plan fill is still used as a fallback.
+      if(cbc.size>0) return{css:'#ffffff',src:'blank'};
     }
   }
   if(spec.color==='siteCode'){
@@ -5176,6 +5182,18 @@ async function obPump(){
       try{if(typeof window.__dpbFetchLiveGrid==='function')await window.__dpbFetchLiveGrid();}catch(_){}
       try{await loadLocks();}catch(_){}
       refresh();
+      // Read-back check: the server said "ok", so prove the cells really came back
+      // in the process grid. If not, say exactly which cells and why (instead of silence).
+      try{
+        const by=window.__dpbLiveGridByProcess||{};
+        const key=Object.keys(by).find(k=>k.trim().toLowerCase()===String(job.opName).trim().toLowerCase());
+        const vm=key&&by[key]&&by[key].valuesByCoord;
+        const miss=vm?job.units.filter(u=>!(Number(vm.get(u.r1+'|'+u.c1))>0)):job.units.slice();
+        if(miss.length){
+          console.warn('[DPB apply read-back] missing after save',{process:job.opName,gridKey:key||null,gridCells:vm?vm.size:null,missing:miss.map(u=>[u.r1,u.c1])});
+          toast('⚠️ الحفظ رجّع "تم" لكن '+miss.length+' خلية مش ظاهرة في '+job.opName+' (أول واحدة: صف '+(miss[0].r1+1)+' / عمود '+(miss[0].c1+1)+')'+(vm?'':' — جريد '+job.opName+' مش محمّل على الجهاز')+'. اضغط 🔄 مرة، ولو فضلت كده ابعتلي الرسالة دي.',9000);
+        }
+      }catch(_){}
     }
   }finally{obBusy=false;obBadge();obPaint();}
   if(wait){clearTimeout(obTimer);obTimer=setTimeout(obPump,wait);}

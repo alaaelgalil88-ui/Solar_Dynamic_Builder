@@ -93,6 +93,9 @@
           listen: function (path, cb, onErr) {
             return fsM.onSnapshot(cref(path), function (q) { cb(q.docs.map(function (d) { return { id: d.id, data: d.data() }; }), q.metadata.hasPendingWrites); }, onErr);
           },
+          listenDoc: function (path, cb, onErr) {
+            return fsM.onSnapshot(dref(path), function (snap) { cb(snap.exists() ? snap.data() : null); }, onErr);
+          },
           runTx: function (fn) {
             return fsM.runTransaction(db, function (t) {
               return fn({
@@ -512,22 +515,59 @@ var upsertQ = Promise.resolve();
 
   // live cell colors: kept in Firestore (copied from the Sheet by "تحديث شكل الشيت"); Apps Script only as a first-time fallback
   var colorMemo = {};
-  function liveColorsFor(procName) {
-    var m = colorMemo[procName];
-    if (m && Date.now() - m.at < 20000) return Promise.resolve(m.v);
+  // Colours are re-read from Firestore ONLY when the admin pulled new ones. A tiny document (meta/colors_ver)
+  // is watched with a live listener: zero reads while nothing changes, one small read per change per device.
+  var colorWatch = null, colorWatchNs = null, colorWatchOk = false, colorWatchUnsub = null, colorVerSeen = null, colorRefreshT = null;
+  function colorsVerBump() {
     return getAdapter().then(function (a) {
-      return bigGet('colors_' + slug(procName)).then(function (v) {
-        if (v) { colorMemo[procName] = { at: Date.now(), v: v }; return v; }
-        return null;
+      return a.set(metaPath('colors_ver'), { v: Date.now() + '-' + Math.random().toString(36).slice(2, 6), at: new Date().toISOString() }, false);
+    });
+  }
+  function scheduleColorRefresh() {
+    clearTimeout(colorRefreshT);
+    colorRefreshT = setTimeout(function () {
+      try { if (typeof window.__dpbForcePoll === 'function') window.__dpbForcePoll(); else if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {}
+    }, 400);
+  }
+  function ensureColorWatch() {
+    if (colorWatch && colorWatchNs === ns()) return colorWatch;
+    if (colorWatchUnsub) { try { colorWatchUnsub(); } catch (e) {} colorWatchUnsub = null; }
+    colorWatchNs = ns(); colorWatchOk = false; colorVerSeen = null; colorMemo = {};
+    colorWatch = getAdapter().then(function (a) {
+      if (!a.listenDoc) return;
+      return new Promise(function (resolve) {
+        var first = true;
+        try {
+          colorWatchUnsub = a.listenDoc(metaPath('colors_ver'), function (d) {
+            var v = d && d.v ? String(d.v) : '';
+            colorWatchOk = true;
+            if (first) { first = false; colorVerSeen = v; resolve(); return; }
+            if (v !== colorVerSeen) { colorVerSeen = v; colorMemo = {}; scheduleColorRefresh(); }
+          }, function (err) { colorWatchOk = false; noteErr('colors watch', err); colorWatch = null; if (first) { first = false; resolve(); } });
+        } catch (e) { colorWatchOk = false; colorWatch = null; resolve(); }
       });
-    }).then(function (v) {
-      if (v) return v;
-      var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
-      if (!base) return m ? m.v : null;
-      return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getGridBatch', processes: [procName], includeColors: true, light: true }) })
-        .then(function (r) { return r.json(); })
-        .then(function (j) { var g = j && j.grids && j.grids[procName]; var c = g && g.liveColors || null; colorMemo[procName] = { at: Date.now(), v: c }; return c; });
-    }).catch(function () { return m ? m.v : null; });
+    }).catch(function () { colorWatch = null; });
+    return colorWatch;
+  }
+  function liveColorsFor(procName) {
+    return ensureColorWatch().then(function () {
+      var m = colorMemo[procName];
+      // with a working watcher a stored colour set stays valid until the version changes; otherwise 20 s like before
+      if (m && (m.v && colorWatchOk || Date.now() - m.at < 20000)) return m.v;
+      return getAdapter().then(function (a) {
+        return bigGet('colors_' + slug(procName)).then(function (v) {
+          if (v) { colorMemo[procName] = { at: Date.now(), v: v }; return v; }
+          return null;
+        });
+      }).then(function (v) {
+        if (v) return v;
+        var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
+        if (!base) return m ? m.v : null;
+        return origFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getGridBatch', processes: [procName], includeColors: true, light: true }) })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { var g = j && j.grids && j.grids[procName]; var c = g && g.liveColors || null; colorMemo[procName] = { at: Date.now(), v: c }; return c; });
+      }).catch(function () { return m ? m.v : null; });
+    });
   }
 
   /* ------------------------------------------- KV store (map catalog / snapshots) in Firestore */
@@ -931,6 +971,94 @@ var upsertQ = Promise.resolve();
     });
   }
 
+  /* ------------------------------------------- pull from the Sheet (admin only): colours + numbers in one step */
+  function isWhite(h) { h = String(h == null ? '' : h).trim().toLowerCase(); return !h || h === '#fff' || h === '#ffffff'; }
+  function colorDiffCount(cur, nw) {
+    var n = 0, R = Math.max((cur || []).length, (nw || []).length);
+    for (var r = 0; r < R; r++) {
+      var a = (cur && cur[r]) || [], b = (nw && nw[r]) || [], C = Math.max(a.length, b.length);
+      for (var c = 0; c < C; c++) {
+        var x = isWhite(a[c]) ? '' : String(a[c]).trim().toLowerCase(), y = isWhite(b[c]) ? '' : String(b[c]).trim().toLowerCase();
+        if (x !== y) n++;
+      }
+    }
+    return n;
+  }
+  // same rules as importPreview, but on a grid that was already read (so the Sheet is asked once per tab)
+  function numbersDiff(n, g, fsg, gcount) {
+    var maxCode = grouped([]).some(function (x) { return low(x) === low(n); }) ? gcount : 9;
+    var sets = [], clears = [], skipped = 0;
+    g.values.forEach(function (row, r) {
+      (row || []).forEach(function (v, c) {
+        var raw = String(v == null ? '' : v).trim();
+        var num = raw === '' ? 0 : Number(raw);
+        if (!isFinite(num)) return;
+        var cur = Number((fsg.values[r] || [])[c]) || 0;
+        if (num > 0) {
+          if (num !== Math.floor(num) || num > maxCode) { skipped++; return; }
+          if (num !== cur) sets.push([r, c, num, cur]);
+        } else if (cur > 0) clears.push([r, c, cur]);
+      });
+    });
+    return { proc: n, sheet: g.sheet || n, sets: sets, clears: clears, skipped: skipped };
+  }
+  // reads the Sheet and lists what would change in Firestore (nothing is written here)
+  function pullPreview(opts, onP) {
+    opts = opts || {};
+    var withNums = opts.numbers !== false;
+    var only = (opts.only || []).map(low).filter(Boolean);
+    var names = liveNames().filter(function (n) { return !only.length || only.indexOf(low(n)) >= 0; });
+    if (!names.length) return Promise.reject(new Error('مفيش عمليات للسحب'));
+    var gcount = grouped([]).length || 3, items = [], colorItems = [];
+    return seq(names, function (n, i) {
+      noteProc(n);
+      return fetchSheetGrid(n, true).then(function (g) {
+        var lc = g.liveColors || null;
+        return Promise.all([
+          withNums ? buildGrid(n, true) : null,
+          lc ? bigGet('colors_' + slug(n)).catch(function () { return null; }) : null
+        ]).then(function (r) {
+          if (lc) colorItems.push({ proc: n, lc: lc, changed: colorDiffCount(r[1], lc) });
+          if (withNums) items.push(numbersDiff(n, g, r[0], gcount));
+          if (onP) onP(i + 1, names.length, n);
+        });
+      });
+    }).then(function () {
+      var tot = { sets: 0, clears: 0, skipped: 0, colors: 0 };
+      items.forEach(function (it) { tot.sets += it.sets.length; tot.clears += it.clears.length; tot.skipped += it.skipped; });
+      colorItems.forEach(function (c) { tot.colors += c.changed; });
+      return { items: items, colorItems: colorItems, totals: tot };
+    });
+  }
+  // writes only the differences: changed colour sets (+ bumps the version so every device reloads them) and changed numbers
+  function pullApply(plan, onP) {
+    var ch = (plan.colorItems || []).filter(function (c) { return c.changed > 0; });
+    var p = Promise.resolve();
+    ch.forEach(function (c) { p = p.then(function () { return bigSet('colors_' + slug(c.proc), c.lc); }).then(function () { delete colorMemo[c.proc]; }); });
+    return p.then(function () { return ch.length ? colorsVerBump() : null; }).then(function () {
+      var tot = plan.totals || {};
+      return (tot.sets || tot.clears) ? importApply(plan, onP) : { ok: true, sets: 0, clears: 0 };
+    }).then(function (r) {
+      try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {}
+      return { ok: true, colorSets: ch.length, colorCells: (plan.totals || {}).colors || 0, sets: r.sets, clears: r.clears };
+    });
+  }
+  // automatic colours-only pull on THIS device while the admin screen is open (numbers are never pulled automatically)
+  var LS_AUTO = 'dpb_fs_autopull', autoT = null, autoBusy = false, autoNote = '';
+  function autoPullTick() {
+    if (autoBusy || document.hidden || !mode()) return;
+    var card = document.getElementById('dpbFsCard'); if (!card || !card.offsetParent) return;
+    autoBusy = true;
+    pullPreview({ numbers: false }).then(function (plan) { return pullApply(plan); }).then(function (r) {
+      autoNote = new Date().toLocaleTimeString() + (r.colorSets ? ' — اتسحب ' + r.colorCells + ' خلية متغيّرة' : ' — مفيش تغيير');
+    }, function (e) { autoNote = new Date().toLocaleTimeString() + ' — فشل: ' + (e && e.message || e); }).then(function () {
+      autoBusy = false; var el = document.getElementById('dpbFsAutoMsg'); if (el) el.textContent = autoNote;
+    });
+  }
+  function autoPullSet(on) {
+    lsSet(LS_AUTO, on ? '1' : '0'); clearInterval(autoT); autoT = on ? setInterval(autoPullTick, 120000) : null;
+  }
+
   // write the previewed changes. Each changed cell becomes ONE record (source SheetImport) so it follows the normal
   // rules afterwards (delete, lock, recompute). No cascade is added: the Sheet is taken as it is.
   function importApply(plan, onP) {
@@ -1101,11 +1229,16 @@ var upsertQ = Promise.resolve();
       '<button type="button" class="dpbAdminBtn" id="dpbFsImpPrev">📥 استيراد من الشيت (معاينة)</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsImpGo" style="display:none">✅ تأكيد الاستيراد</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsStruct">🔄 تحديث شكل الشيت</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsPullPrev">⬇️ سحب من الشيت (ألوان + أرقام) — معاينة</button>' +
+      '<button type="button" class="dpbAdminBtn" id="dpbFsPullGo" style="display:none">✅ تأكيد السحب</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsMigrate">🚀 نقل كل بيانات الشيت الحقيقية (مرة واحدة)</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsUsers">👤 نقل المستخدمين لـ Firestore</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsInspect">🔎 فحص السجلات</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsRebuild">🔧 إعادة حساب الخريطة من السجلات</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsClean" style="display:none">🧹 حذف السجلات اللي مش ظاهرة على الخريطة</button></div></div>' +
+      '<label class="hint" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="dpbFsPullColorsOnly"> السحب بالزرار: ألوان فقط (بدون أرقام)</label>' +
+      '<label class="hint" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="dpbFsAuto"> سحب الألوان تلقائياً كل دقيقتين (على الجهاز ده بس، طول ما الشاشة دي مفتوحة)</label>' +
+      '<div class="hint" id="dpbFsAutoMsg" style="margin-top:2px"></div>' +
       '<div class="hint" id="dpbFsMsg" style="margin-top:8px;white-space:pre-line"></div>';
     host.appendChild(c);
     var $ = function (id) { return document.getElementById(id); };
@@ -1177,6 +1310,34 @@ var upsertQ = Promise.resolve();
       var plan = lastPlan; lastPlan = null; $('dpbFsImpGo').style.display = 'none'; msg('جاري الاستيراد...');
       importApply(plan, function (d, t) { msg('جاري الاستيراد... ' + d + ' / ' + t); }).then(function (r) { msg('✅ تم الاستيراد: ' + r.sets + ' إضافة/تغيير، ' + r.clears + ' تفضية.'); try { if (window.__dpbFetchLiveGrid) window.__dpbFetchLiveGrid(); } catch (e) {} }, function (e) { msg('❌ فشل الاستيراد: ' + (e && e.message || e)); });
     };
+    var lastPull = null;
+    $('dpbFsPullPrev').onclick = function () {
+      if (!needOn()) return; $('dpbFsPullGo').style.display = 'none'; lastPull = null; msg('جاري قراءة الشيت (ألوان وأرقام)... ممكن ياخد وقت');
+      var only = $('dpbFsOnly').value.split(/[,،]/).map(function (x) { return x.trim(); }).filter(Boolean);
+      var colorsOnly = $('dpbFsPullColorsOnly').checked;
+      pullPreview({ only: only, numbers: !colorsOnly }, function (d, t, n) { msg('بيقرا ' + d + ' / ' + t + ' (' + n + ')...'); }).then(function (p) {
+        lastPull = p;
+        var lines = p.colorItems.map(function (c) { return '• ' + c.proc + ': ' + c.changed + ' خلية لون متغيّرة'; });
+        p.items.forEach(function (it) { lines.push('• ' + it.proc + ' أرقام: هيضيف/يغيّر ' + it.sets.length + '، وهيفضّي ' + it.clears.length + (it.skipped ? ' (اتجاهل ' + it.skipped + ' برا النطاق)' : '')); });
+        var t = p.totals;
+        if (!t.colors && !t.sets && !t.clears) { msg('✅ مفيش فرق بين الشيت و Firestore.\n' + lines.join('\n')); return; }
+        msg('المعاينة (لسه ما اتكتبش حاجة):\n' + lines.join('\n') + '\n\nالإجمالي: ' + t.colors + ' لون، ' + t.sets + ' رقم إضافة/تغيير، ' + t.clears + ' تفضية.' +
+          (t.clears ? '\n⚠️ التفضية = خلية فيها رقم في Firestore ومفيهاش رقم في الشيت (ممكن تكون شغل مشرفين لسه ما اتسجلش في الشيت). لو مش عايزها اختار \"ألوان فقط\".' : '') + '\nلو ماشي اضغط \"تأكيد السحب\".');
+        $('dpbFsPullGo').style.display = '';
+      }, function (e) { msg('❌ فشلت القراءة: ' + (e && e.message || e)); });
+    };
+    $('dpbFsPullGo').onclick = function () {
+      if (!lastPull) return; var plan = lastPull, t = plan.totals;
+      if (!confirm('هيتكتب في Firestore (' + ns() + '): ' + t.colors + ' لون، ' + t.sets + ' رقم، و' + t.clears + ' تفضية. الشيت نفسه مش هيتغيّر. متأكد؟')) return;
+      lastPull = null; $('dpbFsPullGo').style.display = 'none'; msg('جاري الكتابة...');
+      pullApply(plan, function (d, tt) { msg('جاري الكتابة... ' + d + ' / ' + tt); }).then(function (r) { msg('✅ تم السحب: ' + r.colorCells + ' لون (' + r.colorSets + ' مرحلة)، ' + r.sets + ' رقم، ' + r.clears + ' تفضية.\nالمشرفين هيشوفوا التغيير لحظياً.'); }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); });
+    };
+    $('dpbFsAuto').checked = lsGet(LS_AUTO, '0') === '1';
+    $('dpbFsAuto').onchange = function () {
+      if (this.checked && !needOn()) { this.checked = false; return; }
+      autoPullSet(this.checked); $('dpbFsAutoMsg').textContent = this.checked ? 'شغّال — أول سحب بعد دقيقتين' : 'متوقف';
+    };
+    if (autoNote) $('dpbFsAutoMsg').textContent = autoNote;
     $('dpbFsInspect').onclick = function () {
       if (!needOn()) return; msg('جاري الفحص...');
       inspect().then(function (r) {
@@ -1202,6 +1363,7 @@ var upsertQ = Promise.resolve();
     refresh();
   }
   function boot() {
+    if (lsGet(LS_AUTO, '0') === '1' && !autoT) autoPullSet(true);
     badge();
     mountPanel();
     try { new MutationObserver(function () { mountPanel(); }).observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
@@ -1215,7 +1377,7 @@ var upsertQ = Promise.resolve();
     setConfig: function (c) { lsSet(LS_CFG, typeof c === 'string' ? c : JSON.stringify(c)); adapter = null; adapterP = null; },
     hasConfig: function () { var c = cfg(); return !!(c && c.projectId); },
     lastError: function () { return lastErr || adapterErr; },
-    seed: seed, seedFromDevice: seedFromDevice, test: test, findOrphans: findOrphans, rebuildGrid: rebuildGrid, cleanOrphans: cleanOrphans, refreshStructure: refreshStructure, seedUsers: seedUsers, migrateAll: migrateAll, importPreview: importPreview, importApply: importApply, inspect: inspect,
+    seed: seed, seedFromDevice: seedFromDevice, test: test, findOrphans: findOrphans, rebuildGrid: rebuildGrid, cleanOrphans: cleanOrphans, refreshStructure: refreshStructure, seedUsers: seedUsers, migrateAll: migrateAll, importPreview: importPreview, importApply: importApply, pullPreview: pullPreview, pullApply: pullApply, inspect: inspect,
     _internals: { upsertMany: upsertMany, deleteMany: deleteMany, getGrid: getGrid, getProduction: getProduction, cellValue: cellValue, slug: slug, setAdapter: function (a) { adapter = a; adapterP = null; }, ROWS: ROWS }
   };
 })();
