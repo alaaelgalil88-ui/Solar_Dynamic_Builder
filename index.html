@@ -4520,7 +4520,7 @@ function colorOf(spec,model,u){
   if(spec.color==='siteCode'){
     const code=typeOf(u).toLowerCase();const row=code&&model.siteCodes.get(code);
     if(row&&row.css)return{css:row.css,src:'code',code:code.toUpperCase(),name:row.name};
-    return{css:'#d5dbe3',src:'unmapped',code:code.toUpperCase()}; /* Site Color Code: never the Excel fill; a cell whose type has no row in site_color_code shows neutral grey */
+    return{css:u.fill||'#ffffff',src:'unmapped',code:code.toUpperCase()};
   }
   return u.fill?{css:u.fill,src:'fill'}:{css:'#ffffff',src:'blank'};
 }
