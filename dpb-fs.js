@@ -407,13 +407,36 @@
   }
 
   /* ---------------------------------------------------------------- reads */
+  function bigGet(name) {
+    return kvGetStr(name).then(function (str) {
+      if (str) return JSON.parse(str);
+      return getAdapter().then(function (a) { return a.get(metaPath(name)); }).then(function (d) { return d && d.json ? JSON.parse(d.json) : null; });
+    });
+  }
+  function bigSet(name, obj) { return kvSetStr(name, JSON.stringify(obj)); }
+  // light layout (sheet name, size, merges) - all the app needs to draw trackers from a grid read
+  function liteOf(st) { return { sheet: st.sheet, rows: st.rows, cols: st.cols, merges: st.merges || [] }; }
+  function liteFor(procName) {
+    var sl = slug(procName), key = ns() + '|' + sl;
+    liteFor.mem = liteFor.mem || {};
+    if (liteFor.mem[key]) return Promise.resolve(liteFor.mem[key]);
+    return bigGet('lite_' + sl).then(function (l) {
+      if (l) { liteFor.mem[key] = l; return l; }
+      return structFor(procName).then(function (st) {
+        if (!st) return {};
+        var l2 = liteOf(st); liteFor.mem[key] = l2;
+        bigSet('lite_' + sl, l2).catch(function (e) { noteErr('save lite ' + sl, e); });
+        return l2;
+      });
+    });
+  }
   function structFor(procName) {
     var sl = slug(procName), key = ns() + '|' + sl;
     structFor.mem = structFor.mem || {};
     if (structFor.mem[key]) return Promise.resolve(structFor.mem[key]);
     return getAdapter().then(function (a) {
-      return a.get(metaPath('struct_' + sl)).then(function (d) {
-        if (d && d.json) { var s = JSON.parse(d.json); structFor.mem[key] = s; return s; }
+      return bigGet('struct_' + sl).then(function (d) {
+        if (d) { structFor.mem[key] = d; return d; }
         // first time: copy the structure (merges / ranges / colors) from the existing Apps Script, read-only
         var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
         if (!base) return null;
@@ -423,15 +446,15 @@
             if (!g || !g.ok) return null;
             var s = clone(g); delete s.values; delete s.liveColors;
             structFor.mem[key] = s;
-            return a.set(metaPath('struct_' + sl), { json: JSON.stringify(s) }, false).then(function () { return s; }, function () { return s; });
+            return bigSet('struct_' + sl, s).then(function () { return s; }, function (e) { noteErr('save struct ' + sl, e); return s; });
           });
       });
     });
   }
 
-  function buildGrid(procName, light) {
+  function buildGrid(procName, light, slim) {
     var sl = slug(procName); noteProc(procName);
-    return Promise.all([ensureGrid(sl), light ? Promise.resolve(null) : structFor(procName)]).then(function (r) {
+    return Promise.all([ensureGrid(sl), light ? Promise.resolve(null) : (slim ? liteFor(procName) : structFor(procName))]).then(function (r) {
       var st = r[1] || {};
       var gc = ((gridCache[ns()] || {})[sl]) || {};
       var rows = st.rows || 0, cols = st.cols || 0;
@@ -454,8 +477,8 @@
     var m = colorMemo[procName];
     if (m && Date.now() - m.at < 20000) return Promise.resolve(m.v);
     return getAdapter().then(function (a) {
-      return a.get(metaPath('colors_' + slug(procName))).then(function (d) {
-        if (d && d.json) { var v = JSON.parse(d.json); colorMemo[procName] = { at: Date.now(), v: v }; return v; }
+      return bigGet('colors_' + slug(procName)).then(function (v) {
+        if (v) { colorMemo[procName] = { at: Date.now(), v: v }; return v; }
         return null;
       });
     }).then(function (v) {
@@ -470,6 +493,20 @@
 
   /* ------------------------------------------- KV store (map catalog / snapshots) in Firestore */
   var KV_PART = 200000;
+  function toB64(u8) { var out = '', CH = 0x8000; for (var i = 0; i < u8.length; i += CH) out += String.fromCharCode.apply(null, u8.subarray(i, i + CH)); return btoa(out); }
+  function fromB64(b) { var t = atob(b), u = new Uint8Array(t.length); for (var i = 0; i < t.length; i++) u[i] = t.charCodeAt(i); return u; }
+  function gz(str) {
+    if (str.length < 100000 || typeof CompressionStream === 'undefined') return Promise.resolve(str);
+    var cs = new CompressionStream('gzip'), w = cs.writable.getWriter();
+    w.write(new TextEncoder().encode(str)); w.close();
+    return new Response(cs.readable).arrayBuffer().then(function (b) { return 'gz1:' + toB64(new Uint8Array(b)); }, function () { return str; });
+  }
+  function gunz(str) {
+    if (str == null || String(str).slice(0, 4) !== 'gz1:') return Promise.resolve(str);
+    var ds = new DecompressionStream('gzip'), w = ds.writable.getWriter();
+    w.write(fromB64(str.slice(4))); w.close();
+    return new Response(ds.readable).text();
+  }
   function kvGetStr(key) {
     var k = 'kv_' + slug(key);
     return getAdapter().then(function (a) {
@@ -477,14 +514,14 @@
         if (!h) return null;
         var n = Number(h.n) || 0; if (!n) return h.json != null ? String(h.json) : null;
         var jobs = []; for (var i = 0; i < n; i++) jobs.push(a.get(metaPath(k + '_' + i)));
-        return Promise.all(jobs).then(function (parts) { return parts.map(function (x) { return (x && x.t) || ''; }).join(''); });
+        return Promise.all(jobs).then(function (parts) { return gunz(parts.map(function (x) { return (x && x.t) || ''; }).join('')); });
       });
     });
   }
   function kvSetStr(key, str) {
     var k = 'kv_' + slug(key);
-    return getAdapter().then(function (a) {
-      var parts = []; for (var i = 0; i < str.length; i += KV_PART) parts.push(str.slice(i, i + KV_PART));
+    return Promise.all([getAdapter(), gz(str)]).then(function (ar) {
+      var a = ar[0], packed = ar[1], parts = []; for (var i = 0; i < packed.length; i += KV_PART) parts.push(packed.slice(i, i + KV_PART));
       if (!parts.length) parts.push('');
       var chain = Promise.resolve();
       parts.forEach(function (t, i) { chain = chain.then(function () { return a.set(metaPath(k + '_' + i), { t: t }, false); }); });
@@ -522,8 +559,8 @@
     }).then(function () { return { ok: true }; });
   }
 
-  function getGrid(procName, includeColors, light) {
-    return buildGrid(procName, light).then(function (g) {
+  function getGrid(procName, includeColors, light, slim) {
+    return buildGrid(procName, light, slim).then(function (g) {
       if (!includeColors) return g;
       return liveColorsFor(procName).then(function (c) { if (c) g.liveColors = c; return g; });
     });
@@ -675,7 +712,7 @@
           default: return origFetch(input, init);
         }
       }
-      if (q.action === 'getGrid') return getGrid(q.process || q.sheet, false, false).then(jsonRes, failFor(q.action || 'pull'));
+      if (q.action === 'getGrid') return getGrid(q.process || q.sheet, false, false, true).then(jsonRes, failFor(q.action || 'pull'));
       if (q.action === 'getGridBatch') return getGridBatch(String(q.processes || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean), q.includeColors === '1' || q.includeColors === 'true', false).then(jsonRes, failFor(q.action || 'pull'));
       if (!q.action && !q.debug) return getProduction(q.rev).then(jsonRes, failFor(q.action || 'pull'));
       return origFetch(input, init);
@@ -793,9 +830,9 @@
       return seq(names, function (n) {
         return fetchSheetGrid(n, true).then(function (g) {
           var st = clone(g); delete st.values; var lc = st.liveColors; delete st.liveColors;
-          var saveColors = lc ? a.set(metaPath('colors_' + slug(n)), { json: JSON.stringify(lc), at: new Date().toISOString() }, false) : Promise.resolve();
-          return saveColors.then(function () { return a.set(metaPath('struct_' + slug(n)), { json: JSON.stringify(st), at: new Date().toISOString() }, false); }).then(function () {
-            delete colorMemo[n];
+          var saveColors = lc ? bigSet('colors_' + slug(n), lc) : Promise.resolve();
+          return saveColors.then(function () { return bigSet('struct_' + slug(n), st); }).then(function () { return bigSet('lite_' + slug(n), liteOf(st)); }).then(function () {
+            delete colorMemo[n]; if (liteFor.mem) delete liteFor.mem[ns() + '|' + slug(n)];
             if (structFor.mem) delete structFor.mem[ns() + '|' + slug(n)];
             delete lastDims[slug(n)]; done++; if (onP) onP(done, names.length, n);
           });
