@@ -22,7 +22,7 @@
     if (!conf || !conf.projectId) return Promise.reject(new Error('مفيش Firebase config'));
     return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
       var appM = m[0], fs = m[1], authM = m[2], app = appM.getApps().length ? appM.getApp() : appM.initializeApp(conf), db;
-      try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); } catch (e) { db = fs.getFirestore(app); }
+      try { db = fs.initializeFirestore(app, { localCache: fs.memoryLocalCache() }); } catch (e) { db = fs.getFirestore(app); } // no on-device copy: the cloud is the only truth (also avoids the IndexedDB 'Unexpected state' crash)
       var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       var ready = (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
