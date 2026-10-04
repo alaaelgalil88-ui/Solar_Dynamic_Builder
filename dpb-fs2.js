@@ -32,7 +32,7 @@
           write: function (ops) {
             var p = Promise.resolve();
             for (var i = 0; i < ops.length; i += 400) (function (chunk) {
-              p = p.then(function () { var b = fs.writeBatch(db); chunk.forEach(function (o) { if (o.t === 's') b.set(dref(o.path), clean(o.data)); else b.delete(dref(o.path)); }); return b.commit(); });
+              p = p.then(function () { var b = fs.writeBatch(db); chunk.forEach(function (o) { if (o.t === 'm') b.set(dref(o.path), clean(o.data), { merge: true }); else if (o.t === 's') b.set(dref(o.path), clean(o.data)); else b.delete(dref(o.path)); }); return b.commit(); });
             })(ops.slice(i, i + 400));
             return p;
           }
