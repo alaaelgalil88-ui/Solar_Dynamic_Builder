@@ -1,6 +1,6 @@
-/* DPB single-source cell layer (v2). One doc per (process,row): dpb2/{ns}/rows/{process}_{row}, field "cells" = map col -> cell.
-   Each cell is updated on its own field (merge), so two supervisors editing different cells of the same row never overwrite each other.
-   No queue, no cascade_ ids, no local copies. Deleted cell = tombstone entry (del:true + time).
+/* DPB single-source cell layer (v2.1). One doc per (process,row) = the single truth; each cell is one field inside its row doc
+   (dpb2/{ns}/rows/{process}_{row} -> cells.{col}). Two devices writing different cells of the same row never overwrite each other.
+   No queue, no cascade_ ids, no local copies. Deleted cell = tombstone field (del:true + time).
    Meta docs have ids starting with "__" (e.g. __epoch__) and never show up as cells. */
 (function (root) {
   function slug(s) { return String(s == null ? '' : s).trim().toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g, '-'); }
@@ -9,33 +9,36 @@
     o = o || {};
     var ns = o.ns || 'test', cache = {}, subs = [];
     function id(p, r, c) { return slug(p) + '_' + Number(r) + '_' + Number(c); }
+    var COL = 'dpb2/' + ns + '/rows';
     function rowId(p, r) { return slug(p) + '_' + Number(r); }
-    function rowPath(p, r) { return 'dpb2/' + ns + '/rows/' + rowId(p, r); }
-    // a cell write; grouped per row document right before it is sent
-    function cellOp(p, r, c, data) { return { t: 'c', p: p, r: Number(r), c: Number(c), data: data }; }
-    function group(ops) {
-      var rows = {}, out = [];
-      ops.forEach(function (o) {
-        if (o.t !== 'c') { out.push(o); return; }
-        var k = rowPath(o.p, o.r), g = rows[k];
-        if (!g) { g = rows[k] = { t: 'm', path: k, data: { cells: {} } }; out.push(g); }
-        g.data.cells[String(o.c)] = o.data;
+    // one cell write = {p,r,c,data}; pack() folds all cell writes of the same row into ONE adapter op (= one Firestore write)
+    function cw(p, r, c, data) { return { p: p, r: Number(r), c: Number(c), data: data }; }
+    function pack(list) {
+      var by = {}, order = [];
+      list.forEach(function (x) {
+        if (x.t) { order.push(x); return; }                       // meta op passes through untouched
+        var k = rowId(x.p, x.r), o = by[k];
+        if (!o) { o = by[k] = { t: 'f', path: COL + '/' + k, base: { process: x.p, r: x.r }, cells: {} }; order.push(o); }
+        o.cells[x.c] = x.data;                                      // later write of the same cell wins
       });
-      return out;
+      return order;
     }
-    function isMeta(k) { return String(k).slice(0, 2) === '__'; }
+    function isMeta(k) { k = String(k); return k.slice(0, 2) === '__' || k.slice(0, 5) === 'meta-'; } // Firestore refuses doc ids like __x__, so the stored one is meta-epoch
     function norm(stages) { return (stages || []).map(function (s, i) { return { name: s.name, code: Number(s.code) || (i + 1) }; }).sort(function (a, b) { return a.code - b.code; }); }
     function stageOf(st, p) { for (var i = 0; i < st.length; i++) if (slug(st[i].name) === slug(p)) return st[i]; return null; }
     function emit() { subs.forEach(function (f) { try { f(); } catch (e) {} }); }
     var ready = new Promise(function (res, rej) {
       var done = false;
-      adapter.listen('dpb2/' + ns + '/rows', function (docs, err) {
+      adapter.listen(COL, function (docs, err) {
         if (err) { if (!done) { done = true; rej(err); } return; }   // listener failed (rules / network): report it, never hang
         var m = {};
         docs.forEach(function (d) {
-          if (isMeta(d.id)) { m[d.id] = d.data; return; }
-          var cs = d.data && d.data.cells; if (!cs) return;
-          Object.keys(cs).forEach(function (c) { var x = cs[c]; if (x && x.process != null && x.r1 != null) m[id(x.process, x.r1, x.c1 != null ? x.c1 : c)] = x; });
+          if (isMeta(d.id)) { m[d.id === 'meta-epoch' ? '__epoch__' : d.id] = d.data; return; }
+          var cells = (d.data && d.data.cells) || {};
+          Object.keys(cells).forEach(function (col) {
+            var cell = cells[col]; if (!cell) return;
+            m[id(cell.process != null ? cell.process : d.data.process, cell.r1 != null ? cell.r1 : d.data.r, cell.c1 != null ? cell.c1 : col)] = cell;
+          });
         });
         cache = m;
         if (!done) { done = true; res(); } emit();
@@ -48,7 +51,7 @@
     function ensureEpoch() {
       if (cache['__epoch__']) return Promise.resolve();
       var d = { time: new Date().toISOString(), meta: true }; cache['__epoch__'] = d;
-      return adapter.write([{ t: 's', path: 'dpb2/' + ns + '/rows/__epoch__', data: d }]).catch(function () { delete cache['__epoch__']; });
+      return adapter.write([{ t: 's', path: COL + '/meta-epoch', data: d }]).catch(function () { delete cache['__epoch__']; });
     }
     function lockOf(stages, p, r, c, skipIds) {
       var st = norm(stages), me = stageOf(st, p); if (!me) return null;
@@ -61,7 +64,7 @@
     }
     // write ops; on failure put the local cache back exactly as it was so the map never shows a mark that was not saved
     function commit(ops, before) {
-      return adapter.write(group(ops)).catch(function (e) {
+      return adapter.write(pack(ops)).catch(function (e) {
         Object.keys(before).forEach(function (k) { if (before[k] === undefined) delete cache[k]; else cache[k] = before[k]; });
         emit(); throw e;
       });
@@ -80,7 +83,7 @@
         var d = Object.assign({}, rec, { id: String(rec.id || rec.recordId || key), code: code, time: t });
         if (!(key in before)) before[key] = cache[key];
         pending[key] = d;
-        ops.push(cellOp(rec.process, rec.r1, rec.c1, d));
+        ops.push(cw(rec.process, rec.r1, rec.c1, d));
         if (me && code >= me.code && rec.source !== 'Cascade') st.forEach(function (e) {
           if (e.code >= me.code) return;
           var k = id(e.name, rec.r1, rec.c1), c2 = pending[k] || cache[k];
@@ -88,7 +91,7 @@
           if (c2 && c2.del && String(c2.time) >= t) return;
           var c = Object.assign({}, rec, { id: k, process: e.name, code: e.code, source: 'Cascade', time: t });
           if (!(k in before)) before[k] = cache[k];
-          pending[k] = c; ops.push(cellOp(e.name, rec.r1, rec.c1, c));
+          pending[k] = c; ops.push(cw(e.name, rec.r1, rec.c1, c));
         });
       });
       Object.keys(pending).forEach(function (k) { cache[k] = pending[k]; });
@@ -105,7 +108,7 @@
         if (lk) { lk.id = d.id; blocked.push(lk); return; }
         var tomb = { del: true, id: d.id, process: d.process, r1: d.r1, c1: d.c1, code: 0, time: new Date().toISOString() };
         before[k] = cache[k];
-        ops.push(cellOp(d.process, d.r1, d.c1, tomb)); gone.push([k, tomb]); deleted++;
+        ops.push(cw(d.process, d.r1, d.c1, tomb)); gone.push([k, tomb]); deleted++;
       });
       gone.forEach(function (g) { cache[g[0]] = g[1]; }); if (gone.length) emit();
       if (!ops.length) return Promise.resolve({ ok: true, deleted: 0, blocked: blocked });
@@ -125,13 +128,13 @@
         if (dry) return;
         before[k] = cur;
         var d = { id: 'sheet_' + k, process: p, sheet: p, r1: x.r, c1: x.c, r2: x.r2 == null ? x.r : x.r2, c2: x.c2 == null ? x.c : x.c2, code: Number(x.code), time: now, source: 'SheetImport' };
-        cache[k] = d; ops.push(cellOp(p, x.r, x.c, d));
+        cache[k] = d; ops.push(cw(p, x.r, x.c, d));
       });
       Object.keys(cache).forEach(function (k) {
         var d = cache[k]; if (isMeta(k) || !live(d) || slug(d.process) !== slug(p) || want[k]) return;
         remove++; if (dry) return;
         before[k] = d; var tomb = { del: true, id: d.id, process: d.process, r1: d.r1, c1: d.c1, code: 0, time: now };
-        cache[k] = tomb; ops.push(cellOp(d.process, d.r1, d.c1, tomb));
+        cache[k] = tomb; ops.push(cw(d.process, d.r1, d.c1, tomb));
       });
       var res = { add: add, change: change, remove: remove };
       if (dry || !ops.length) return Promise.resolve(res);

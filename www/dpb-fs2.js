@@ -22,17 +22,26 @@
     if (!conf || !conf.projectId) return Promise.reject(new Error('مفيش Firebase config'));
     return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
       var appM = m[0], fs = m[1], authM = m[2], app = appM.getApps().length ? appM.getApp() : appM.initializeApp(conf), db;
-      try { db = fs.initializeFirestore(app, { localCache: fs.memoryLocalCache() }); } catch (e) { db = fs.getFirestore(app); } // no on-device copy: the cloud is the only truth (also avoids the IndexedDB 'Unexpected state' crash)
+      try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); } catch (e) { db = fs.getFirestore(app); }
       var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       var ready = (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
           listen: function (path, cb) { fs.onSnapshot(fs.collection.apply(null, [db].concat(path.split('/'))), function (q) { cb(q.docs.map(function (d) { return { id: d.id, data: d.data() }; })); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
+          // t:'s' = write a whole small doc (meta). t:'f' = write only the listed cells inside a row doc (mergeFields replaces exactly those cells, never the rest of the row)
           write: function (ops) {
             var p = Promise.resolve();
             for (var i = 0; i < ops.length; i += 400) (function (chunk) {
-              p = p.then(function () { var b = fs.writeBatch(db); chunk.forEach(function (o) { if (o.t === 'm') b.set(dref(o.path), clean(o.data), { merge: true }); else if (o.t === 's') b.set(dref(o.path), clean(o.data)); else b.delete(dref(o.path)); }); return b.commit(); });
+              p = p.then(function () {
+                var b = fs.writeBatch(db);
+                chunk.forEach(function (o) {
+                  if (o.t === 's') b.set(dref(o.path), clean(o.data));
+                  else if (o.t === 'f') { var cells = clean(o.cells); b.set(dref(o.path), Object.assign({}, o.base, { cells: cells }), { mergeFields: ['process', 'r'].concat(Object.keys(cells).map(function (k) { return 'cells.' + k; })) }); }
+                  else b.delete(dref(o.path));
+                });
+                return b.commit();
+              });
             })(ops.slice(i, i + 400));
             return p;
           }
