@@ -3886,13 +3886,13 @@ function entries(){try{return (getAppliedProcessEntries()||[]).filter(e=>!/^manu
 function localSources(){
   const P=(typeof project!=='undefined')?project:null;const src=new Map(),entryKey=new Map();
   if(!P||!P.wb)return{src,entryKey};
-  src.set('plan',{wb:P.wb,sheet:P.wb.SheetNames[0]});
+  src.set('plan',{wb:P.wb,sheet:P.wb.SheetNames[0],file:P.planFile||null});
   for(const e of entries()){
     if(/^grouped:/.test(String(e.id)))continue;
     const wb=e.rec&&e.rec.wb;if(!wb)continue;
     const sheet=sheetFor(wb,e.name);let key=null;
     for(const [k,v] of src)if(v.wb===wb&&v.sheet===sheet)key=k;
-    if(!key){key='wb'+src.size;src.set(key,{wb,sheet});}
+    if(!key){key='wb'+src.size;src.set(key,{wb,sheet,file:(e.rec&&e.rec.file)||null});}
     entryKey.set(e.id,key);
   }
   return{src,entryKey};
@@ -3934,21 +3934,45 @@ function viewSpec(id){
 }
 
 /* ---------- publish / sync ---------- */
+async function fileInfo(f){
+  if(!f)return null;
+  try{const u8=new Uint8Array(await f.arrayBuffer()),d=toB64(u8);return{h:hash(d),name:f.name||'',size:u8.length,d};}catch(_){return null;}
+}
 async function publish(){
   const lc=localCatalog();if(!lc||!cloudUrl())return false;
-  const packs={},meta={};
-  for(const [key,s] of lc.src){const m=buildModel(s.wb,s.sheet);if(!m.ok)continue;const str=JSON.stringify(pack(m));packs[key]=str;meta[key]={h:hash(str),sheet:s.sheet};}
+  const packs={},meta={},files={};
+  for(const [key,s] of lc.src){
+    const m=buildModel(s.wb,s.sheet);if(!m.ok)continue;const str=JSON.stringify(pack(m));packs[key]=str;meta[key]={h:hash(str),sheet:s.sheet};
+    const fi=await fileInfo(s.file);if(fi){files[key]=fi;meta[key].f={h:fi.h,name:fi.name,size:fi.size};}
+  }
+  const remote=await kvRead('mapcat');
+  // a device that no longer has the original file keeps the copy that is already stored
+  for(const key of Object.keys(meta)){const rs=remote&&remote.snaps&&remote.snaps[key];if(!meta[key].f&&rs&&rs.f)meta[key].f=rs.f;}
   const cat={v:1,maps:lc.maps,snaps:meta,savedAt:new Date().toISOString()};
   cat.hash=hash(JSON.stringify({maps:lc.maps,snaps:meta}));
-  const remote=await kvRead('mapcat');
   if(remote&&remote.hash===cat.hash)return true;
   for(const key of Object.keys(packs)){
     if(remote&&remote.snaps&&remote.snaps[key]&&remote.snaps[key].h===meta[key].h)continue;
     const z=await gz(packs[key]);
     if(!(await kvWrite('mapsnap_'+key,{h:meta[key].h,z:z.z,d:z.d})))return false;
   }
-  return await kvWrite('mapcat',cat);   // catalog last: readers never see a catalog pointing at a missing snapshot
+  for(const key of Object.keys(files)){
+    const rs=remote&&remote.snaps&&remote.snaps[key];
+    if(rs&&rs.f&&rs.f.h===files[key].h)continue;
+    if(!(await kvWrite('xlfile_'+key,{h:files[key].h,name:files[key].name,d:files[key].d})))return false;
+  }
+  return await kvWrite('mapcat',cat);   // catalog last: readers never see a catalog pointing at a missing snapshot or file
 }
+// the original Excel file behind a map: this device first, otherwise the stored copy (any device)
+async function sourceFile(key){
+  const s=localSources().src.get(key);
+  if(s&&s.file)return{buffer:await s.file.arrayBuffer(),name:s.file.name};
+  if(key==='plan'&&typeof restoreTestFile==='function'){const f=await restoreTestFile('plan');if(f)return{buffer:await f.arrayBuffer(),name:f.name};}
+  const o=await kvRead('xlfile_'+key);
+  if(o&&o.d){const raw=atob(o.d),u=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)u[i]=raw.charCodeAt(i);return{buffer:u.buffer,name:o.name||key};}
+  return null;
+}
+window.__dpbSourceFile=sourceFile;
 function schedulePublish(){
   const L=localSources();if(!L.src.size||!cloudUrl())return;
   const sig=[...L.src].map(([k,s])=>k+':'+wbId(s.wb)+':'+s.sheet).join('|')+'#'+entries().map(e=>e.id+':'+e.code).join(',');
@@ -6491,7 +6515,7 @@ async function onPlanFile(e){
   const up=document.getElementById('planUploadSetupBtn'); if(up) up.disabled=true;
   try{
     project.wb=await XLSX.read(await f.arrayBuffer(),{type:'array',cellStyles:true});
-    project.planFileName=f.name;
+    project.planFileName=f.name;project.planFile=f;
     project.planPreview=true; project.planApplied=false;
     cacheTestFile('plan',f);
     autoConfigureFromWorkbook();
@@ -7717,77 +7741,77 @@ function dpbStyleFactory(stylesXml){
   return {styleFor,clearStyle,serialize:()=>ser.serializeToString(doc)};
 }
 async function downloadReport(){
-  const br=project.buildResult;
-  const table=document.querySelector('#excelMapShell table.excel-plan');
-  if(!br){alert('اختار الخريطة المطلوبة أولًا ثم اضغط Download Tracker Report.');return;}
-  if(!table){
-    const isTorqueTube=!!document.querySelector('#excelMapShell .tt-map');
-    if(isTorqueTube){
-      // Torque Tube's cells are evenly distributed placeholders per tracker
-      // (see the "Reference Map Only" legend) — they were never tied to a
-      // real Plan cell position, so there is no Excel cell to write this
-      // view's colors onto. This is a real, permanent limitation of this
-      // one map type, not a bug: every other map (Site Color Coding,
-      // Ramming Code, any Dynamic Operation table) still exports normally.
-      alert('خريطة Torque Tube مرجعية فقط (Reference Map) وخلاياها موزّعة بالتساوي بدون ارتباط بموقع حقيقي في شيت الإكسل الأصلي، فمينفعش تتصدّر بنفس طريقة باقي الخرائط. اختار خريطة تانية زي Site Color Coding أو Ramming Code لتحميل تقرير إكسل.');
-    }else{
-      alert('اختار الخريطة المطلوبة أولًا ثم اضغط Download Tracker Report.');
-    }
-    return;
-  }
+  const last=window.DPBMap&&window.DPBMap.state&&window.DPBMap.state.last;
+  const shell=document.getElementById('excelMapShell');
+  const tds=shell?[...shell.querySelectorAll('td.me-u[data-u]')]:[];
+  if(!last||!tds.length){alert('افتح الخريطة المطلوبة الأول وبعدين اضغط Download.');return;}
   const btn=document.getElementById('dpbDownloadReportBtn');
   const originalLabel=btn?btn.textContent:'';
   if(btn){btn.disabled=true;btn.textContent='⏳ جاري إنشاء الملف...';}
   try{
-    const source=await restoreTestFile('plan');
-    if(!source){
-      alert('ملف Plan الأصلي غير موجود في ذاكرة الاختبار. ارفع Plan مرة أخرى ثم جرّب التحميل.');
-      return;
-    }
-    const files=await dpbUnzipAll(await source.arrayBuffer());
-    const sheetName=project.wb?.SheetNames?.[0]||'Plan';
-    const sheetPath=dpbFindSheetPath(files,sheetName);
+    const key=last.spec.snap,model=last.model;
+    const src=await window.__dpbSourceFile(key);
+    if(!src){alert('ملف الإكسل الأصلي لهذه الخريطة مش محفوظ. ارفعه من البيلدر مرة واحدة وهيتحمّل بعدها من أي جهاز.');return;}
+    const files=await dpbUnzipAll(src.buffer);
+    const sheetPath=dpbFindSheetPath(files,model.sheetName);
     const stylesPath='xl/styles.xml';
     const stylesFactory=dpbStyleFactory(dpbXmlString(files.get(stylesPath)));
-    const parser=new DOMParser(),ser=new XMLSerializer();
-    const sheetDoc=parser.parseFromString(dpbXmlString(files.get(sheetPath)),'application/xml');
-    // Index every <c> cell in the sheet ONCE by its reference (e.g. "B7"),
-    // instead of re-scanning the whole sheet's XML for every single visible
-    // <td>. With hundreds/thousands of trackers this previously meant a full
-    // sheet scan repeated per cell (O(cells × sheetNodes)) which froze the
-    // browser tab on real Plan files — this makes each lookup instant.
-    const cellByRef=new Map();
+    const sheetDoc=new DOMParser().parseFromString(dpbXmlString(files.get(sheetPath)),'application/xml');
+    const ns=sheetDoc.documentElement.namespaceURI,local=n=>n.localName||n.nodeName.split(':').pop();
+    const cellByRef=new Map(),rowByNum=new Map();
     for(const n of sheetDoc.getElementsByTagName('*')){
-      if((n.localName||n.nodeName.split(':').pop())!=='c') continue;
-      const ref=n.getAttribute('r');
-      if(ref) cellByRef.set(ref,n);
+      const t=local(n);
+      if(t==='c'){const r=n.getAttribute('r');if(r)cellByRef.set(r,n);}
+      else if(t==='row'){rowByNum.set(Number(n.getAttribute('r')),n);}
     }
-    const cells=[...table.querySelectorAll('td[data-dpb-r][data-dpb-c]')];
-    const touched=new Set();
-    for(const td of cells){
-      const r=Number(td.getAttribute('data-dpb-r')),c=Number(td.getAttribute('data-dpb-c'));
-      if(!Number.isFinite(r)||!Number.isFinite(c)) continue;
-      const cellEl=cellByRef.get(XLSX.utils.encode_cell({r,c}));
-      if(!cellEl) continue;
-      const desired=dpbCurrentMapCellFill(td);
-      if(desired===null) continue;
-      const base=Number(cellEl.getAttribute('s')||0);
-      let idx;
-      if(desired==='') idx=stylesFactory.clearStyle(base);
-      else idx=stylesFactory.styleFor(base,desired);
-      cellEl.setAttribute('s',String(idx));
-      touched.add(r+'|'+c);
+    const colNum=ref=>{const m=/^([A-Z]+)/.exec(ref)[1];let x=0;for(const ch of m)x=x*26+ch.charCodeAt(0)-64;return x;};
+    function cellAt(r,c){
+      const ref=XLSX.utils.encode_cell({r,c});let el=cellByRef.get(ref);if(el)return el;
+      let row=rowByNum.get(r+1);
+      if(!row){ // row missing in the file: create it in order
+        row=sheetDoc.createElementNS(ns,'row');row.setAttribute('r',String(r+1));
+        const sd=[...sheetDoc.getElementsByTagName('*')].find(n=>local(n)==='sheetData');
+        const after=[...rowByNum.keys()].filter(k=>k>r+1).sort((x,y)=>x-y)[0];
+        if(after)sd.insertBefore(row,rowByNum.get(after));else sd.appendChild(row);
+        rowByNum.set(r+1,row);
+      }
+      el=sheetDoc.createElementNS(ns,'c');el.setAttribute('r',ref);
+      const nxt=[...row.children].find(x=>colNum(x.getAttribute('r'))>c+1);
+      if(nxt)row.insertBefore(el,nxt);else row.appendChild(el);
+      cellByRef.set(ref,el);return el;
+    }
+    function tdHex(td){
+      const bc=td.style.backgroundColor;if(bc){const x=dpbCssColorToHex(bc);if(x)return x;}
+      const bi=td.style.backgroundImage||'';const m=bi.match(/linear-gradient\(\s*to top\s*,\s*([^\s,]+)/);
+      if(m){const x=dpbCssColorToHex(m[1]);if(x)return x;}
+      return null;
+    }
+    let painted=0;
+    for(const td of tds){
+      const id=td.getAttribute('data-u');
+      const u=model.unitById.get(id)||model.unitById.get(Number(id));if(!u)continue;
+      if(td.classList.contains('me-blank')&&!td.classList.contains('me-done'))continue; // untouched cell: keep the original look
+      const hex=tdHex(td);if(!hex)continue;
+      for(let r=u.r1;r<=u.r2;r++)for(let c=u.c1;c<=u.c2;c++){
+        const el=cellAt(r,c),base=Number(el.getAttribute('s')||0);
+        el.setAttribute('s',String(stylesFactory.styleFor(base,hex)));
+      }
+      const pct=td.querySelector('.me-pct');
+      if(pct){ // progress cell: the percentage is the cell's text
+        const el=cellAt(u.r1,u.c1);while(el.firstChild)el.removeChild(el.firstChild);
+        el.setAttribute('t','inlineStr');const is=sheetDoc.createElementNS(ns,'is'),t=sheetDoc.createElementNS(ns,'t');
+        t.textContent=pct.textContent;is.appendChild(t);el.appendChild(is);
+      }
+      painted++;
     }
     files.set(stylesPath,dpbXmlBytes(stylesFactory.serialize()));
-    files.set(sheetPath,dpbXmlBytes(ser.serializeToString(sheetDoc)));
-    const outFiles=[...files.entries()].map(([name,data])=>({name,data}));
-    const blob=dpbZipStore(outFiles);
-    const viewName=document.getElementById('mapFixedSelector')?.selectedOptions?.[0]?.text ||
-      document.getElementById('mapDynamicSelector')?.selectedOptions?.[0]?.text || 'Current Map';
-    const safe=String(viewName||'Current Map').replace(/[\\/:*?"<>|]+/g,'_').trim()||'Current Map';
+    files.set(sheetPath,dpbXmlBytes(new XMLSerializer().serializeToString(sheetDoc)));
+    const blob=dpbZipStore([...files.entries()].map(([name,data])=>({name,data})));
+    const safe=String(last.spec.name||'Map').replace(/[\\/:*?"<>|]+/g,'_').trim()||'Map';
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
     a.download=`${safe}_Current_View.xlsx`;a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+    window.__dpbLastExport={painted,name:a.download,blob};
   }catch(err){
     console.error('Current map Excel export failed:',err);
     alert('لم يتم إنشاء ملف Excel: '+(err?.message||err));
