@@ -143,7 +143,7 @@
     }
     function all() { return Object.keys(cache).filter(function (k) { return !isMeta(k); }).map(function (k) { return cache[k]; }).filter(live); }
     function counts() { var c = {}; all().forEach(function (d) { var k = d.process; c[k] = (c[k] || 0) + (Number(d.code) > 0 ? 1 : 0); }); return c; }
-    return { ready: ready, put: put, removeIds: removeIds, removeCells: removeCells, importProcess: importProcess, ensureEpoch: ensureEpoch, epoch: epochMs, counts: counts, value: value, lockOf: lockOf, all: all, onChange: function (f) { subs.push(f); }, id: id };
+    return { adapter: adapter, ready: ready, put: put, removeIds: removeIds, removeCells: removeCells, importProcess: importProcess, ensureEpoch: ensureEpoch, epoch: epochMs, counts: counts, value: value, lockOf: lockOf, all: all, onChange: function (f) { subs.push(f); }, id: id };
   }
   var api = { create: create, slug: slug };
   root.DPB_FS2_CORE = api; if (typeof module !== 'undefined') module.exports = api;

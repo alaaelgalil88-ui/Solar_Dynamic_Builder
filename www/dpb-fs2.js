@@ -14,6 +14,7 @@
   function on() { return ls(LS.mode, 'off') === 'on'; }
   function procs() { return ls(LS.procs, 'Ramming,Saddle,Bearing').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
   function mine(name) { var s = CORE.slug(name); return procs().some(function (p) { return CORE.slug(p) === s; }); }
+  function nsName() { return String(ls(LS.ns, 'test')).replace(/[^A-Za-z0-9_\-]/g, '_'); }
   function jsonRes(o) { return new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
   function clean(o) { return JSON.parse(JSON.stringify(o)); }
 
@@ -28,6 +29,7 @@
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
+          get: function (path) { return fs.getDoc(dref(path)).then(function (x) { return x.exists() ? x.data() : null; }); },
           listen: function (path, cb) { fs.onSnapshot(fs.collection.apply(null, [db].concat(path.split('/'))), function (q) { cb(q.docs.map(function (d) { return { id: d.id, data: d.data() }; })); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
           // t:'s' = write a whole small doc (meta). t:'f' = write only the listed cells inside a row doc (mergeFields replaces exactly those cells, never the rest of the row)
           write: function (ops) {
@@ -55,7 +57,7 @@
   function startCreate() {
     if (creating) return creating;
     creating = (window.__DPB_FS2_ADAPTER ? Promise.resolve(window.__DPB_FS2_ADAPTER) : makeAdapter()).then(function (a) {
-      var s = CORE.create(a, { ns: String(ls(LS.ns, 'test')).replace(/[^A-Za-z0-9_\-]/g, '_') });
+      var s = CORE.create(a, { ns: nsName() });
       s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); });
       return s.ready.then(function () { store = s; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); return s; });
     }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); throw e; });
@@ -80,6 +82,54 @@
   function withBody(init, body) { return Object.assign({}, init, { body: JSON.stringify(body) }); }
   function parse(res) { return res.json(); }
   function fail(e) { return jsonRes({ ok: false, error: 'Firestore2: ' + permHint(e) }); }
+
+
+  /* ---- Map catalog / map shapes / original Excel files (kv keys mapcat, mapsnap_*, xlfile_*) live in Firestore under dpb2/{ns}/kv.
+     Same request format the app already sends (kvGet / kvPatch), so the app code does not change. Values longer than 600k chars are split into parts. ---- */
+  var KV_CHUNK = 600000;
+  function kvMine(key) { return /^(mapcat|mapsnap_|xlfile_)/.test(String(key || '')); }
+  function kvDoc(key) { return 'dpb2/' + nsName() + '/kv/' + String(key).replace(/[^A-Za-z0-9_\-]/g, '_'); }
+  function kvReadStr(a, key) {
+    var p = kvDoc(key);
+    return a.get(p).then(function (d) {
+      if (!d) return '';
+      if (!d.parts) return d.json || '';
+      var ps = []; for (var i = 0; i < d.parts; i++) ps.push(a.get(p + '-p' + i));
+      return Promise.all(ps).then(function (arr) { return arr.map(function (x) { return x ? x.d : ''; }).join(''); });
+    });
+  }
+  function kvWriteStr(a, key, str) {
+    var p = kvDoc(key), t = new Date().toISOString(), ops = [];
+    if (str.length <= KV_CHUNK) ops.push({ t: 's', path: p, data: { json: str, time: t } });
+    else {
+      var n = Math.ceil(str.length / KV_CHUNK);
+      for (var i = 0; i < n; i++) ops.push({ t: 's', path: p + '-p' + i, data: { d: str.slice(i * KV_CHUNK, (i + 1) * KV_CHUNK) } });
+      ops.push({ t: 's', path: p, data: { parts: n, len: str.length, time: t } });   // pointer last, in the same batch
+    }
+    return a.write(ops);
+  }
+  function kvHandle(body) {
+    return getStore().then(function (s) {
+      var a = s.adapter;
+      if (body.action === 'kvGet') return kvReadStr(a, body.key).then(function (str) { return jsonRes({ ok: true, json: str || '{}' }); });
+      var done = function (obj) { return kvWriteStr(a, body.key, JSON.stringify(obj)).then(function () { return jsonRes({ ok: true }); }); };
+      if (body.replace) return done(body.set || {});
+      return kvReadStr(a, body.key).then(function (str) {
+        var cur = {}; try { cur = JSON.parse(str || '{}') || {}; } catch (e) {}
+        Object.keys(body.set || {}).forEach(function (k) { cur[k] = body.set[k]; });
+        (body.del || []).forEach(function (k) { delete cur[k]; });
+        return done(cur);
+      });
+    }).catch(fail);
+  }
+  // for the app: fetch one stored Excel file as an ArrayBuffer (null if it was never uploaded)
+  function getXlFile(key) {
+    return getStore().then(function (s) { return kvReadStr(s.adapter, 'xlfile_' + key); }).then(function (str) {
+      if (!str) return null; var o = JSON.parse(str); if (!o || !o.d) return null;
+      var raw = atob(o.d), u = new Uint8Array(raw.length); for (var i = 0; i < raw.length; i++) u[i] = raw.charCodeAt(i);
+      return { name: o.name || key, h: o.h, buffer: u.buffer };
+    });
+  }
 
   function overlayGrid(s, name, g) {
     if (!g || g.ok === false) return g;
@@ -110,6 +160,7 @@
       if (qi >= 0) url.slice(qi + 1).split('&').forEach(function (kv) { var p = kv.split('='); q[decodeURIComponent(p[0])] = decodeURIComponent((p[1] || '').replace(/\+/g, ' ')); });
       if (method === 'POST') {
         var body = {}; try { body = JSON.parse((init && init.body) || '{}'); } catch (e) { return prevFetch(input, init); }
+        if ((body.action === 'kvGet' || body.action === 'kvPatch') && kvMine(body.key)) return kvHandle(body);
         if (body.action === 'upsertMany') {
           var recs = body.records || [], m = recs.filter(function (r) { return r && mine(r.process); });
           if (!m.length) return prevFetch(input, init);
@@ -151,7 +202,7 @@
       return prevFetch(input, init);
     } catch (e) { return prevFetch(input, init); }
   };
-  window.DPB_FS2 = { on: on, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore };
+  window.DPB_FS2 = { getXlFile: getXlFile, on: on, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore };
 
   /* ---- Import: make the new layer match what the layer underneath (the Google Sheet side) shows right now ---- */
   function readGrid(name) {
