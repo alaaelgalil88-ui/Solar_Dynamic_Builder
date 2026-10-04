@@ -86,8 +86,8 @@
           var recs = body.records || [], m = recs.filter(function (r) { return r && mine(r.process); });
           if (!m.length) return prevFetch(input, init);
           var rest = recs.filter(function (r) { return !(r && mine(r.process)); });
-          return getStore().then(function (s) { return s.put(m, stagesOf(body)); }).then(function () {
-            return rest.length ? prevFetch(input, withBody(init, Object.assign({}, body, { records: rest }))) : jsonRes({ ok: true, stale: [], serverTime: new Date().toISOString() });
+          return getStore().then(function (s) { return s.put(m, stagesOf(body)); }).then(function (pr) {
+            return rest.length ? prevFetch(input, withBody(init, Object.assign({}, body, { records: rest }))) : jsonRes({ ok: true, stale: pr.stale || [], serverTime: new Date().toISOString() });
           }, fail);
         }
         if (body.action === 'deleteMany') {
