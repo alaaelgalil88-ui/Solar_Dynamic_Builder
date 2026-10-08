@@ -1,5 +1,40 @@
 <!doctype html>
 <html lang="en"><head><script>
+/* v57b: quota relief. When localStorage is full, drop only caches that are re-downloaded/rebuilt on demand (map snapshot cache, map catalog cache,
+   project snapshot used only by the backup), then retry the write once. Never touches production records, accounts, tokens or settings. */
+(function(){
+  if(window.__dpbQuotaGuard)return;window.__dpbQuotaGuard=true;
+  var SP=Storage.prototype,orig=SP.setItem,busy=false;
+  var EVICT=[/^DPB_MAPSNAP_V1_/,/^DPB_MAPCAT_V1$/,/^DPB_TEST_PROJECT_SNAPSHOT_V3$/];
+  function isQuota(e){return e&&(e.name==='QuotaExceededError'||e.code===22||e.code===1014||/quota/i.test(String(e.message||'')));}
+  function free(except){
+    var freed=0;
+    try{
+      var keys=[];for(var i=0;i<this.length;i++)keys.push(this.key(i));
+      keys.forEach(function(k){
+        if(k===except)return;
+        if(EVICT.some(function(r){return r.test(k);})){try{freed+=(this.getItem(k)||'').length;this.removeItem(k);}catch(_){}}
+      },this);
+    }catch(_){}
+    return freed;
+  }
+  SP.setItem=function(k,v){
+    try{return orig.call(this,k,v);}
+    catch(e){
+      if(busy||!isQuota(e)||this!==window.localStorage)throw e;
+      busy=true;
+      try{
+        var f=free.call(this,k);
+        if(!f)throw e;
+        try{console.warn('DPB: localStorage full, freed ~'+Math.round(f/1024)+' KB of caches');}catch(_){}
+        return orig.call(this,k,v);
+      }finally{busy=false;}
+    }
+  };
+  window.__dpbFreeStorage=function(){return free.call(window.localStorage,'');};
+})();
+</script>
+<script>
 /* DPB_CAPACITOR_BRIDGE: يشتغل جوه تطبيق كابستور فقط. في المتصفح العادي مابيعملش أي حاجة. */
 (function(){
   var C=window.Capacitor;
@@ -285,6 +320,10 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   .card{border:0!important;background:#fff!important;box-shadow:none!important;padding:0!important;margin:0!important}
   #excelMapShell{display:none!important}
   #printPlanArea{display:block!important;width:100%!important}
+  body.print-plan>*:not(.app):not(script):not(style):not(link){display:none!important}
+  #dpbMapActions,#dpbProjectHome,#dpbConnectionStatus,#dpbTokenBanner,#dpbUpdateBanner,#mapDetail,#mapLegend,.dpbToast,.me-toast{display:none!important}
+  .print-plan-row-wrap table.print-me{width:100%!important;max-width:100%!important;table-layout:fixed!important;border-spacing:.5mm .35mm!important}
+  .print-plan-row-wrap table.print-me td{width:auto!important;min-width:0!important;height:auto!important;max-width:none!important;font-size:5pt!important;overflow:hidden}
   .print-plan-page{width:100%;height:288mm;page-break-after:always;break-after:page;display:flex;flex-direction:column;align-items:stretch;justify-content:space-between;gap:2mm;box-sizing:border-box;overflow:hidden;padding:2mm 0}
   .print-plan-page:last-child{page-break-after:auto;break-after:auto}
   .print-plan-row-wrap{width:100%;height:calc((100% - 2mm)/2);min-height:0;max-height:calc((100% - 2mm)/2);overflow:hidden;display:flex;align-items:stretch;justify-content:center;break-inside:avoid;page-break-inside:avoid}
@@ -294,8 +333,11 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   .print-plan-row-wrap td.tracker-label-cell{background:transparent!important;color:#111!important;font-size:8pt;font-weight:900;box-shadow:none!important}
   .print-plan-row-wrap td.outside{background:transparent!important;border:0!important}
   .print-plan-row-wrap td.print-outside-range{display:none!important;opacity:0!important;filter:none!important;border:0!important;box-shadow:none!important}
+  .print-plan-row-wrap table.print-me td.print-outside-range{display:table-cell!important;visibility:hidden!important}
+  .print-plan-row-wrap table.print-me td.me-u{border-radius:1.3mm;box-shadow:none!important;width:auto!important;min-width:0!important;height:auto!important}
   .print-plan-title{position:absolute;top:4mm;left:6mm;right:6mm;text-align:center;font-size:12pt;font-weight:900;color:#111}
 }
+#excelMapShell td.me-u.print-outside-range{filter:grayscale(1) brightness(.45)}
 @media screen{#printPlanArea{display:none}}
 
 
@@ -467,13 +509,26 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   window.addEventListener('error',function(e){show((e.message||'error')+'\n'+(e.filename?String(e.filename).split('/').pop():'')+':'+(e.lineno||'')+':'+(e.colno||'')+(e.error&&e.error.stack?'\n'+String(e.error.stack).split('\n').slice(0,3).join('\n'):''));});
   window.addEventListener('unhandledrejection',function(e){var r=e.reason;show('Promise: '+(r&&r.message||r));});
   window.__dpbBootDiagShow=show;
-  // watchdog: nothing visible after 4s -> say so
-  setTimeout(function(){
-    try{
-      var vis=[].slice.call(document.querySelectorAll('body > div,body > section,body > main')).filter(function(e){return e.offsetHeight>60&&getComputedStyle(e).display!=='none'&&getComputedStyle(e).visibility!=='hidden';});
-      if(!vis.length)show('Nothing rendered after 4s. UA: '+navigator.userAgent+'\nCompressionStream: '+(typeof CompressionStream)+' | queueMicrotask: '+(typeof queueMicrotask)+' | DPBMap: '+(typeof DPBMap));
-    }catch(e){show('watchdog: '+e.message);}
-  },4000);
+  // watchdog: nothing visible -> say so. Re-checks every second up to 20s and clears its own
+  // message as soon as something shows (a slow start is not an error).
+  (function(){
+    var tries=0,shown=false;
+    function anyVisible(){
+      var vis=[].slice.call(document.querySelectorAll('body > div,body > section,body > main')).filter(function(e){var cs=getComputedStyle(e);return e.offsetHeight>60&&cs.display!=='none'&&cs.visibility!=='hidden';});
+      return vis.length>0;
+    }
+    var iv=setInterval(function(){
+      try{
+        tries++;
+        if(anyVisible()){
+          if(shown){var b=document.getElementById('dpbBootDiagBox');if(b)b.style.display='none';}
+          clearInterval(iv);return;
+        }
+        if(tries>=20&&!shown){shown=true;show('Nothing rendered after 20s. UA: '+navigator.userAgent+'\nCompressionStream: '+(typeof CompressionStream)+' | queueMicrotask: '+(typeof queueMicrotask)+' | DPBMap: '+(typeof DPBMap));}
+        if(tries>=120)clearInterval(iv);
+      }catch(e){clearInterval(iv);show('watchdog: '+e.message);}
+    },1000);
+  })();
 })();
 </script>
 <script>
@@ -3177,7 +3232,51 @@ if ("serviceWorker" in navigator && !window.__DPB_NATIVE) {
   .dpbRammingReady{min-height:50px}.dpbRammingReady i{font-size:17px}.dpbRammingReady b{font-size:9.5px}.dpbRammingReady small{font-size:7px}
 }
 </style>
-<style>.sIco{width:1.2em;height:1.2em;vertical-align:-.22em;flex:none}.dpbProjectIcon .sIco{width:72%;height:72%;color:#ffb51e}th .sIco{margin-inline-end:.3em}.me-pending{outline:2px dashed #ffb51e!important;outline-offset:-2px}</style></head>
+<style>.sIco{width:1.2em;height:1.2em;vertical-align:-.22em;flex:none}.dpbProjectIcon .sIco{width:72%;height:72%;color:#ffb51e}th .sIco{margin-inline-end:.3em}.me-pending{outline:2px dashed #ffb51e!important;outline-offset:-2px}</style><style id="dpbReportsV43">
+.dpbRp{display:grid;gap:10px}
+.dpbRpHead{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.dpbRpHead b{font-size:15px;color:#eaf3fb}.dpbRpHead small{display:block;color:#7f9ab3;font-size:10px;margin-top:2px}
+.dpbRpRefresh{width:38px;height:38px;border-radius:12px;border:1px solid rgba(53,168,255,.3);background:rgba(53,168,255,.08);color:#ccecff;font-size:16px}
+.dpbRpRefresh.spin{opacity:.6}
+.dpbRpCard{background:linear-gradient(160deg,#0f2539,#0a1a2a)!important;border:1px solid #29465f!important;border-radius:16px!important;padding:12px!important}
+.dpbRpTitle{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;font-weight:900;color:#eaf3fb;margin-bottom:10px}
+.dpbRpTitle small{font-size:10px;color:#7f9ab3;font-weight:700}
+.dpbRpBar{margin-bottom:9px}
+.dpbRpBarTop{display:flex;align-items:baseline;gap:8px}
+.dpbRpBarTop b{font-size:12px;color:#eaf3fb;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dpbRpBarTop span{font-size:10px;color:#8fa9be;direction:ltr}
+.dpbRpBarTop em{font-style:normal;font-size:13px;font-weight:900;min-width:38px;text-align:left;direction:ltr}
+.dpbRpTrack{height:7px;border-radius:99px;background:#16324a;overflow:hidden;margin-top:4px}
+.dpbRpTrack i{display:block;height:100%;border-radius:99px;min-width:2px}
+.dpbRpMap{margin-top:10px}.dpbRpMapTitle{display:flex;justify-content:space-between;color:#9bb0c4;font-size:11px;margin-bottom:4px}.dpbRpMapTitle b{color:#eaf3fb}
+.dpbRpMapScroll{overflow:auto;max-width:100%;background:#0b1b2b;border:1px solid #1d3a54;border-radius:8px;padding:4px}.dpbRpMapScroll canvas{display:block;image-rendering:pixelated}
+#dpbRpMaps{display:flex;flex-direction:column;align-items:center}.dpbRpMap{width:fit-content;max-width:100%;margin-left:auto;margin-right:auto;box-sizing:border-box}.dpbRpMapScroll{width:fit-content;max-width:100%;box-sizing:border-box;margin:0 auto}.dpbRpMapTitle{gap:12px}
+.dpbRpFoot{display:flex;justify-content:space-between;color:#9bb0c4;font-size:10px;border-top:1px solid #1d3a54;padding-top:8px;margin-top:4px}
+.dpbRpFoot b{color:#f2f8ff}
+.dpbRpKpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.dpbRpKpis>div{background:#0b1b2b;border:1px solid #2c4d69;border-radius:12px;padding:9px 6px;text-align:center}
+.dpbRpKpis b{display:block;font-size:22px;line-height:1.1;color:#f2f8ff}.dpbRpKpis span{font-size:9px;color:#9bb0c4}
+.dpbRpChips{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.dpbRpChip{background:#10263a;border:1px solid #233f58;border-radius:99px;padding:4px 10px;font-size:11px;color:#cfe3f5}.dpbRpChip b{color:#45d89f;margin-right:3px}
+.dpbRpMuted{color:#7f9ab3;font-size:11px}
+.dpbRpSeg{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.dpbRpSeg button{border:1px solid #29465f;background:#0b1b2b;color:#9bb0c4;border-radius:10px;padding:7px 2px;font-size:11px;font-weight:800}
+.dpbRpSeg button b{display:block;font-size:13px;color:#eaf3fb}
+.dpbRpSeg button.on{background:rgba(53,168,255,.16);border-color:#35a8ff;color:#fff}
+.dpbRpProcs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.dpbRpProcs button{display:inline-flex;align-items:center;gap:6px;border:1px solid #29465f;background:#0b1b2b;color:#9bb0c4;border-radius:99px;padding:6px 12px;font-size:12px;font-weight:800;white-space:nowrap}.dpbRpProcs button i{width:10px;height:10px;border-radius:50%;display:inline-block}.dpbRpProcs button.on{background:rgba(53,168,255,.16);border-color:#35a8ff;color:#fff}.dpbRpTitle small{color:#7f9ab3;font-weight:600}
+.dpbRpLegend{display:flex;gap:12px;font-size:10px;margin:8px 2px 4px}
+.dpbRpC0{color:#7f9ab3}.dpbRpC1{color:#ffc857}.dpbRpC2{color:#45d89f}
+#dpbSupReportSummary td.dpbRpC1{color:#ffc857!important;font-weight:800}
+#dpbSupReportSummary td.dpbRpC2{color:#45d89f!important;font-weight:900}
+#dpbSupReportSummary td.dpbRpC0{color:#7f9ab3!important}
+.dpbRpRowTag{opacity:.65;font-weight:700;font-size:10px}
+.dpbRpCount{text-align:center;color:#7f9ab3;font-size:10px;margin-top:6px}
+.dpbSupActivityTable[data-fst="none"] tbody tr:not([data-st="none"]),
+.dpbSupActivityTable[data-fst="part"] tbody tr:not([data-st="part"]),
+.dpbSupActivityTable[data-fst="done"] tbody tr:not([data-st="done"]),
+.dpbSupActivityTable[data-fst="cells"] tbody tr:not([data-nsc="1"]){display:none!important}
+</style>
+</head>
 <body><svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true"><symbol id="si-sun" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" fill="#ffb51e" stroke="#ffb51e"/><path stroke="#ffb51e" d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></g></symbol><symbol id="si-module" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17.5 7.5 6h13L17 17.5z" fill="#10caff" fill-opacity=".22"/><path d="M11.83 6 8.33 17.5M16.17 6l-3.5 11.5M5.75 11.75h13"/><path d="M10.5 17.5v4M7.5 21.5h6"/></g></symbol><symbol id="si-ramming" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16h18M5 16l-2 2.5M9 16l-2 2.5M17 16l-2 2.5M21 16l-2 2.5"/><rect x="10.6" y="6" width="2.8" height="14" rx=".6" fill="currentColor" fill-opacity=".25"/><rect x="8" y="1.8" width="8" height="3.6" rx="1" fill="#ffb51e" stroke="#ffb51e"/><path stroke="#ffb51e" d="M6 8.5 4 7.5M18 8.5l2-1"/></g></symbol><symbol id="si-saddle" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 9.5a6.5 6.5 0 0 0 13 0"/><circle cx="12" cy="8.2" r="2.8" fill="#ffb51e" stroke="#ffb51e"/><path d="M12 16v5M8 21h8"/></g></symbol><symbol id="si-bearing" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.4"/><g fill="#ffb51e" stroke="none"><circle cx="17.95" cy="12" r="1.4"/><circle cx="14.98" cy="17.15" r="1.4"/><circle cx="9.02" cy="17.15" r="1.4"/><circle cx="6.05" cy="12" r="1.4"/><circle cx="9.02" cy="6.85" r="1.4"/><circle cx="14.98" cy="6.85" r="1.4"/></g></g></symbol><symbol id="si-torque" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="10" width="19" height="5.5" rx="1.2" fill="#10caff" fill-opacity=".22"/><path d="M8 10v5.5M16 10v5.5M2.5 19.5h19"/><path stroke="#ffb51e" d="M7 6.5c2.8-2.7 7.2-2.7 10 0M17 6.5l-.5-2.3M17 6.5l-2.4.3"/></g></symbol><symbol id="si-tracker" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 13 17.5 5.5l2 3.7-14 7.5z" fill="#10caff" fill-opacity=".22"/><path d="M11.5 11.2V21M8 21h7"/><circle cx="20" cy="3.6" r="1.3" fill="#ffb51e" stroke="none"/></g></symbol><symbol id="si-inverter" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="13" rx="2.2"/><path stroke="#ffb51e" d="M7 11c1.5-3.2 3-3.2 4.5 0s3 3.2 4.5 0"/><path d="M8.5 17.5v3M15.5 17.5v3"/></g></symbol><symbol id="si-site" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="2.2"/><path d="M9.2 3.5v17M14.8 3.5v17M3.5 9.2h17M3.5 14.8h17"/><rect x="9.2" y="9.2" width="5.6" height="5.6" fill="#ffb51e" stroke="#ffb51e"/></g></symbol></svg>
 <script id="dpbInPageAlertOverride">
 (function(){
@@ -3627,7 +3726,15 @@ function parseArea(part){
   if(a[0]==='#')return null;
   try{const g=XLSX.utils.decode_range(a);return{sheet:sh,r1:g.s.r,c1:g.s.c,r2:g.e.r,c2:g.e.c};}catch(_){return null;}
 }
+// PERF: collectGroups builds a per-cell mask for every named range - doing it again on every catalog/model lookup froze the page (30s+).
+// A parsed workbook never changes, so the answer is cached per (workbook, sheet).
+const _groupsCache=new WeakMap();
 function collectGroups(wb,sheetName){
+  let per=_groupsCache.get(wb);if(!per){per=new Map();_groupsCache.set(wb,per);}
+  if(per.has(sheetName))return per.get(sheetName);
+  const g=collectGroupsRaw(wb,sheetName);per.set(sheetName,g);return g;
+}
+function collectGroupsRaw(wb,sheetName){
   const groups=new Map();
   for(const n of ((wb.Workbook&&wb.Workbook.Names)||[])){
     if(/^_xlnm\./i.test(String(n.Name||'')))continue; // Excel built-ins (Print_Area...) are not map ranges
@@ -3637,6 +3744,8 @@ function collectGroups(wb,sheetName){
     const base=baseName(n.Name);
     let g=groups.get(base);if(!g){g={base,names:[],areas:[],seen:new Set(),mask:new Set()};groups.set(base,g);}
     g.names.push(n.Name);
+    // keep which named range owns which areas (Cell Details shows the cell's own range, e.g. a_15)
+    (g.nameAreas||(g.nameAreas=[])).push({name:n.Name,areas:areas.map(x=>({r1:x.r1,c1:x.c1,r2:x.r2,c2:x.c2}))});
     for(const a of areas){
       const key=[a.r1,a.c1,a.r2,a.c2].join(',');if(g.seen.has(key))continue;g.seen.add(key);g.areas.push(a);
       for(let r=a.r1;r<=a.r2;r++)for(let c=a.c1;c<=a.c2;c++)g.mask.add(K(r,c));
@@ -3805,7 +3914,7 @@ function coreFromWorkbook(wb,sheetName){
     const seenU=new Set();let geo=0;
     for(const k of g.mask){if(seenU.has(k))continue;const mg=mergeAt.get(k);if(mg){for(let r=mg.r1;r<=mg.r2;r++)for(let c=mg.c1;c<=mg.c2;c++)seenU.add(K(r,c));}else seenU.add(k);geo++;}
     const hints=g.names.map(nameNumber).filter(x=>x!=null);
-    types.push({code:g.base.toUpperCase(),rangeNames:g.names.slice(),cells:g.mask.size,units:geo,hint:hints.length?Math.max(...hints):null});
+    types.push({code:g.base.toUpperCase(),rangeNames:g.names.slice(),nameAreas:(g.nameAreas||[]).slice(),cells:g.mask.size,units:geo,hint:hints.length?Math.max(...hints):null});
   }
   types.sort((a,b)=>a.code.localeCompare(b.code));
   return{ok:true,sheetName,siteName:site.names.join(', '),siteBase:site.base,siteAreas:site.areas.length,
@@ -3883,14 +3992,29 @@ function sheetFor(wb,name){
   return wb.SheetNames.find(n=>{const l=norm(n);return l&&t&&(l.indexOf(t)!==-1||t.indexOf(l)!==-1);})||wb.SheetNames[0];
 }
 function entries(){try{return (getAppliedProcessEntries()||[]).filter(e=>!/^manualtorque/.test(String(e.id)));}catch(_){return[];}} // manual torque was cancelled
+// A grouped file (Ramming / Saddle / Bearing...) states its layout once: its named ranges sit on one sheet and every sheet of that
+// file shares that layout. A sheet with no ranges of its own reads them from the file; its colours and values stay its own.
+const _layoutWbs=new WeakMap();
+function sheetLayoutWb(wb,sheet){
+  try{
+    if(collectGroups(wb,sheet).size)return wb;
+    const all=(wb.Workbook&&wb.Workbook.Names)||[];if(!all.length)return wb;
+    let per=_layoutWbs.get(wb);if(!per){per=new Map();_layoutWbs.set(wb,per);}
+    if(per.has(sheet))return per.get(sheet);
+    const q="'"+String(sheet).replace(/'/g,"''")+"'!";
+    const names=all.filter(n=>!/^_xlnm\./i.test(String(n.Name||''))).map(n=>({Name:n.Name,Ref:splitRefs(n.Ref).map(x=>{const i=x.lastIndexOf('!');return i<0?x:q+x.slice(i+1);}).join(',')}));
+    const d={SheetNames:wb.SheetNames,Sheets:wb.Sheets,Workbook:Object.assign({},wb.Workbook,{Names:names})};
+    const out=collectGroups(d,sheet).size?d:wb;per.set(sheet,out);return out;
+  }catch(_){return wb;}
+}
 function localSources(){
   const P=(typeof project!=='undefined')?project:null;const src=new Map(),entryKey=new Map();
   if(!P||!P.wb)return{src,entryKey};
   src.set('plan',{wb:P.wb,sheet:P.wb.SheetNames[0],file:P.planFile||null});
   for(const e of entries()){
-    if(/^grouped:/.test(String(e.id)))continue;
-    const wb=e.rec&&e.rec.wb;if(!wb)continue;
-    const sheet=sheetFor(wb,e.name);let key=null;
+    // grouped or separate: every process map is built from ITS OWN sheet (shape, colours, cells) - never from Plan
+    const rawWb=e.rec&&e.rec.wb;if(!rawWb)continue;
+    const sheet=sheetFor(rawWb,e.name),wb=sheetLayoutWb(rawWb,sheet);let key=null;
     for(const [k,v] of src)if(v.wb===wb&&v.sheet===sheet)key=k;
     if(!key){key='wb'+src.size;src.set(key,{wb,sheet,file:(e.rec&&e.rec.file)||null});}
     entryKey.set(e.id,key);
@@ -3902,20 +4026,35 @@ function localCatalog(){
   const plan=L.src.get('plan');const pm=buildModel(plan.wb,plan.sheet);if(!pm.ok)return null;
   const list=entries(),maps=[];
   maps.push({id:'site',name:'Site Color Code',mode:'fixed',color:'siteCode',snap:'plan'});
-  maps.push({id:'ramming',name:'Ramming Code',mode:'fixed',color:'excel',snap:'plan'});
+  // The Ramming map is fully independent of Plan: it is drawn from the Ramming sheet itself (grouped or separate, no matter)
+  const ramE=list.find(e=>/ramming/i.test(String(e.name||''))&&L.entryKey.get(e.id))||list.filter(e=>/^grouped:/.test(String(e.id))&&L.entryKey.get(e.id)).sort((a,b)=>Number(a.code)-Number(b.code))[0]||null;
+  maps.push({id:'ramming',name:'Ramming Code',mode:'fixed',color:'excel',snap:ramE?L.entryKey.get(ramE.id):'plan'});
   const seen=new Set();
   for(const e of list){
     if(/^grouped:/.test(String(e.id)))continue;const key=L.entryKey.get(e.id);if(!key||seen.has(key))continue;seen.add(key);
     maps.push({id:'fixed:'+e.id,name:e.name+' Code',mode:'fixed',color:'excel',snap:key});
   }
   for(const e of list){
-    const grouped=/^grouped:/.test(String(e.id));const key=grouped?'plan':L.entryKey.get(e.id);if(!key)continue;
+    const grouped=/^grouped:/.test(String(e.id));const key=L.entryKey.get(e.id);if(!key)continue;
     maps.push({id:e.id,name:e.name,mode:'dynamic',color:'excel',snap:key,op:{id:e.id,name:e.name,code:String(e.code==null?'':e.code).trim(),grouped}});
   }
-  maps.push({id:'notstarted',name:'Not Started',mode:'dynamic',color:'excel',snap:'plan',op:{kind:'notstarted'}});
+  // Not Started is tied to the Ramming map (first stage of the grouped chain): it reads exactly the source the Ramming map reads,
+  // so if Ramming ever gets its own file/sheet, Not Started follows it automatically instead of staying on Plan.
+  const firstStage=maps.filter(m=>m.mode==='dynamic'&&m.op&&m.op.grouped&&Number(m.op.code)>0).sort((a,b)=>Number(a.op.code)-Number(b.op.code))[0];
+  maps.push({id:'notstarted',name:'Not Started',mode:'dynamic',color:'excel',snap:firstStage?firstStage.snap:'plan',op:{kind:'notstarted'}});
   return{maps,src:L.src};
 }
-function currentCatalog(){const l=localCatalog();return l||state.remote||null;}
+// the map layer in Firestore (dpb-fs2.js) learns which processes have a map from the catalog itself, so a new project needs no code change
+let _fs2ProcSig='';
+function dpbShareProcsWithFs2(c){
+  try{
+    if(!c||!c.maps||!window.DPB_FS2||typeof window.DPB_FS2.setProcs!=='function')return;
+    const names=[...new Set(c.maps.filter(m=>m.mode==='dynamic'&&m.op&&m.op.kind!=='notstarted'&&m.op.name).map(m=>String(m.op.name).trim()))];
+    const sig=names.join(',');
+    if(names.length&&sig!==_fs2ProcSig){_fs2ProcSig=sig;window.DPB_FS2.setProcs(names);}
+  }catch(_){}
+}
+function currentCatalog(){const l=localCatalog();const c=l||state.remote||null;dpbShareProcsWithFs2(c);return c;}
 function modelForKey(key){
   const L=localSources();const s=L.src.get(key);
   if(s)return buildModel(s.wb,s.sheet);
@@ -3938,37 +4077,63 @@ async function fileInfo(f){
   if(!f)return null;
   try{const u8=new Uint8Array(await f.arrayBuffer()),d=toB64(u8);return{h:hash(d),name:f.name||'',size:u8.length,d};}catch(_){return null;}
 }
+// Excel files used to be stored once per sheet (xlfile_<sheet>); now one shared copy per file (xlfile_<hash>).
+// The old per-sheet copies are removed here, once per session, and only after the shared copy is confirmed stored (Firestore layer only).
+const _xlCleaned=new Set();
+async function cleanLegacyXl(meta){
+  try{
+    if(!(window.DPB_FS2&&typeof DPB_FS2.on==='function'&&DPB_FS2.on()))return;
+    for(const key of Object.keys(meta)){
+      const f=meta[key]&&meta[key].f;if(!f||!f.s||!f.h)continue;
+      const sig=key+'|'+f.h;if(_xlCleaned.has(sig))continue;
+      const r=await kv({action:'kvDelete',key:'xlfile_'+key,requireKey:'xlfile_'+f.h});
+      if(r&&r.ok)_xlCleaned.add(sig);
+    }
+  }catch(_){}
+}
 async function publish(){
   const lc=localCatalog();if(!lc||!cloudUrl())return false;
   const packs={},meta={},files={};
   for(const [key,s] of lc.src){
     const m=buildModel(s.wb,s.sheet);if(!m.ok)continue;const str=JSON.stringify(pack(m));packs[key]=str;meta[key]={h:hash(str),sheet:s.sheet};
-    const fi=await fileInfo(s.file);if(fi){files[key]=fi;meta[key].f={h:fi.h,name:fi.name,size:fi.size};}
+    const fi=await fileInfo(s.file);if(fi){files[key]=fi;meta[key].f={h:fi.h,name:fi.name,size:fi.size,s:1};}
   }
   const remote=await kvRead('mapcat');
   // a device that no longer has the original file keeps the copy that is already stored
-  for(const key of Object.keys(meta)){const rs=remote&&remote.snaps&&remote.snaps[key];if(!meta[key].f&&rs&&rs.f)meta[key].f=rs.f;}
+  for(const key of Object.keys(meta)){const rs=remote&&remote.snaps&&remote.snaps[key];if(!meta[key].f&&rs&&rs.f)meta[key].f=rs.f;
+    // a file already stored under the old per-sheet key (no s flag) stays there: keep its record so readers fall back to xlfile_<key>
+    else if(meta[key].f&&rs&&rs.f&&rs.f.h===meta[key].f.h&&!rs.f.s){meta[key].f=rs.f;delete files[key];}}
   const cat={v:1,maps:lc.maps,snaps:meta,savedAt:new Date().toISOString()};
   cat.hash=hash(JSON.stringify({maps:lc.maps,snaps:meta}));
-  if(remote&&remote.hash===cat.hash)return true;
+  if(remote&&remote.hash===cat.hash){await cleanLegacyXl(meta);return true;}
   for(const key of Object.keys(packs)){
     if(remote&&remote.snaps&&remote.snaps[key]&&remote.snaps[key].h===meta[key].h)continue;
     const z=await gz(packs[key]);
     if(!(await kvWrite('mapsnap_'+key,{h:meta[key].h,z:z.z,d:z.d})))return false;
   }
+  // one stored copy per distinct Excel file (keyed by its hash), not one per sheet: sheets of the same workbook share it
+  const wrote=new Set();
+  // a copy already stored under this hash for ANY map is enough (a sheet that switched files must not re-upload what is there)
+  const stored=new Set();if(remote&&remote.snaps)for(const k of Object.keys(remote.snaps)){const f=remote.snaps[k]&&remote.snaps[k].f;if(f&&f.s&&f.h)stored.add(f.h);}
   for(const key of Object.keys(files)){
-    const rs=remote&&remote.snaps&&remote.snaps[key];
-    if(rs&&rs.f&&rs.f.h===files[key].h)continue;
-    if(!(await kvWrite('xlfile_'+key,{h:files[key].h,name:files[key].name,d:files[key].d})))return false;
+    const fh=files[key].h;
+    if(wrote.has(fh)||stored.has(fh))continue;
+    if(!(await kvWrite('xlfile_'+fh,{h:fh,name:files[key].name,d:files[key].d})))return false;
+    wrote.add(fh);
   }
-  return await kvWrite('mapcat',cat);   // catalog last: readers never see a catalog pointing at a missing snapshot or file
+  const okCat=await kvWrite('mapcat',cat);   // catalog last: readers never see a catalog pointing at a missing snapshot or file
+  if(okCat)await cleanLegacyXl(meta);
+  return okCat;
 }
 // the original Excel file behind a map: this device first, otherwise the stored copy (any device)
 async function sourceFile(key){
   const s=localSources().src.get(key);
   if(s&&s.file)return{buffer:await s.file.arrayBuffer(),name:s.file.name};
   if(key==='plan'&&typeof restoreTestFile==='function'){const f=await restoreTestFile('plan');if(f)return{buffer:await f.arrayBuffer(),name:f.name};}
-  const o=await kvRead('xlfile_'+key);
+  const rf=state.remote&&state.remote.snaps&&state.remote.snaps[key]&&state.remote.snaps[key].f;
+  let o=null;
+  if(rf&&rf.s&&rf.h)o=await kvRead('xlfile_'+rf.h);
+  if(!(o&&o.d))o=await kvRead('xlfile_'+key);   // files published before the shared-copy change
   if(o&&o.d){const raw=atob(o.d),u=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)u[i]=raw.charCodeAt(i);return{buffer:u.buffer,name:o.name||key};}
   return null;
 }
@@ -4322,6 +4487,7 @@ async function dpbRefreshLiveGoogleSheetColors(force){
   let names=[];
   try{ if(typeof window.__dpbGetLiveGridProcessNames==='function') names=window.__dpbGetLiveGridProcessNames().slice(); }catch(_){}
   dpbOvColorsOperations().forEach(o=>{ if(!names.some(x=>String(x).toLowerCase()===String(o.name).toLowerCase())) names.push(o.name); });
+  try{ const FS=window.DPB_FS2; if(FS&&FS.owns) names=names.filter(n=>!FS.owns(n)); }catch(_){}   // Firestore-owned maps have no live Sheet colours: their colours come from the Excel map
   const polled=dpbPolledSheetColors();
   const url=(typeof window.DPB_getScriptUrl==='function')?window.DPB_getScriptUrl():null;
   if(!names.length||!url){
@@ -4388,7 +4554,7 @@ function renderOvColorsPage(){
     const list=document.getElementById('dpbOvColorsAutoList');
     list.innerHTML = ops.length? ops.map(op=>{
       const col=dpbAutoSafeOverlayColor(op.code);
-      return '<div class="dpbOvColorsRow"><span class="dpbOvColorsSwatch" style="background:'+col+'"></span><b>'+esc(op.name)+'</b><span class="small">'+esc(col)+'</span></div>';
+      return '<div class="dpbOvColorsRow"><span class="dpbOvColorsSwatch" style="background:'+col+'"></span><b>'+esc(op.name)+'</b><span class="small">'+esc(colorNameOf(col)||col)+'</span></div>';
     }).join('') : '<div class="hint">لسه مفيش عمليات معرّفة — ارفع ملفات العمليات الأول.</div>';
   }else{
     modeNotice.innerHTML='<span class="badge ok">الوضع اليدوي مفعّل</span> اختار اللون من الخلايا المتاحة، وهيتطبق بس لما تضغط Apply.';
@@ -4453,7 +4619,7 @@ function dpbOpenOvColorsPicker(code,name){
     const candidates=DPB_OV_PALETTE.filter(c=>!dpbColorClashesWithSet(c,usedOnThisMap)&&!dpbColorClashesWithSet(c,takenByOthers));
     body.innerHTML = candidates.length? candidates.map(c=>{
       const sel=c.toLowerCase()===String(current).toLowerCase();
-      return '<button type="button" class="dpbOvColorsSwatchBtn'+(sel?' sel':'')+'" style="background:'+c+'" data-color="'+c+'" title="'+c+'"></button>';
+      return '<button type="button" class="dpbOvColorsSwatchBtn'+(sel?' sel':'')+'" style="background:'+c+'" data-color="'+c+'" title="'+esc(colorNameOf(c)||'')+'"></button>';
     }).join('') : '<span class="dpbOvColorsEmptyPalette">مفيش لون متاح دلوقتي — كل ألوان الباليت موجودة في خلايا الخريطة أو خلايا الجوجل شيت الحية.</span>';
     body.querySelectorAll('.dpbOvColorsSwatchBtn').forEach(btn=>{
       btn.addEventListener('click',()=>{
@@ -4545,21 +4711,55 @@ function colorNameOf(color){
   if(base==='Brown')return 'Brown';
   return (l<0.28?'Dark ':(l>0.72?'Light ':''))+base;
 }
+const _svSrc=new Map();let _svTimer=false;
+function _svSource(op){
+  // PERF: the source of a process' values is resolved once per tick instead of once per cell
+  const k=String(op.id)+'|'+String(op.name);let r=_svSrc.get(k);
+  if(r===undefined){
+    r=null;
+    const by=window.__dpbLiveGridByProcess||{};
+    const key=Object.keys(by).find(x=>x.toLowerCase()===String(op.name).trim().toLowerCase());
+    if(key&&by[key]&&by[key].valuesByCoord)r={live:by[key].valuesByCoord};
+    else{const e=entries().find(x=>x.id===op.id);const wb=e&&e.rec&&e.rec.wb;if(wb){const ws=wb.Sheets[sheetFor(wb,op.name)];if(ws)r={ws};}}
+    _svSrc.set(k,r);
+    if(!_svTimer){_svTimer=true;Promise.resolve().then(()=>{_svSrc.clear();_svTimer=false;});}
+  }
+  return r;
+}
 function stageValue(op,u){
   // The live Google-Sheet tab of the process is the shared truth on every device;
   // a locally uploaded execution workbook is used only until that tab exists.
-  const by=window.__dpbLiveGridByProcess||{};
-  const key=Object.keys(by).find(k=>k.toLowerCase()===String(op.name).trim().toLowerCase());
-  if(key&&by[key]&&by[key].valuesByCoord){const v=by[key].valuesByCoord.get(u.r1+'|'+u.c1);return v===undefined?0:(Number(v)||0);}
-  const e=entries().find(x=>x.id===op.id);const wb=e&&e.rec&&e.rec.wb;if(!wb)return 0;
-  const ws=wb.Sheets[sheetFor(wb,op.name)];const x=ws&&ws[addr(u.r1,u.c1)];
-  return x?(Number(x.v)||0):0;
+  const r=_svSource(op);if(!r)return 0;
+  if(r.live){const v=r.live.get(u.r1+'|'+u.c1);return v===undefined?0:(Number(v)||0);}
+  const x=r.ws[addr(u.r1,u.c1)];return x?(Number(x.v)||0):0;
 }
-function isDone(op,u){
+function ownDone(op,u){
   const v=stageValue(op,u);const k=Number(op.code);
   return op.grouped?(Number.isFinite(k)&&k>0?v>=k:v>0):v>0;
 }
-function groupedOps(){const c=currentCatalog();return c?c.maps.filter(m=>m.op&&m.op.grouped&&Number(m.op.code)>0).map(m=>m.op):[];}
+// Grouped chain (Ramming -> Saddle -> Bearing ...): a cell that reached a LATER stage is logically done in every earlier stage too,
+// even if the earlier stage's own sheet has nothing written there. So an earlier stage's overlay is not limited to its own marked cells.
+function isDone(op,u){
+  if(ownDone(op,u))return true;
+  if(!op.grouped)return false;
+  const k=Number(op.code);if(!(Number.isFinite(k)&&k>0))return false;
+  const later=_laterOps(k);
+  for(let i=0;i<later.length;i++)if(ownDone(later[i],u))return true;
+  return false;
+}
+let _goCache=null,_goTimer=false;
+function groupedOps(){
+  // PERF: the chain is read from the catalog once per tick, not once per cell
+  if(_goCache)return _goCache;
+  const c=currentCatalog();const r=c?c.maps.filter(m=>m.op&&m.op.grouped&&Number(m.op.code)>0).map(m=>m.op):[];
+  _goCache=r;if(!_goTimer){_goTimer=true;Promise.resolve().then(()=>{_goCache=null;_goTimer=false;});}
+  return r;
+}
+function _laterOps(k){return groupedOps().filter(o=>Number(o.code)>k);}
+// the "Ramming" stage = the first stage of the grouped chain (lowest code) - taken from the project's own process list, never a fixed name
+function firstStageOp(){const g=groupedOps();return g.length?g.slice().sort((a,b)=>Number(a.code)-Number(b.code))[0]:null;}
+// Not Started is the Ramming map turned inside out, so it looks at the same stage; a cell counts as started once that stage is done
+function notStartedBright(){const f=firstStageOp();return f?(u=>!isDone(f,u)):(()=>true);}
 
 /* ---------- colour of a unit ---------- */
 let _pt=null,_ptFor=null;
@@ -4579,7 +4779,8 @@ function colorOf(spec,model,u){
   // من غير ما يحتاج إعادة تحميل الصفحة.
   if(spec.mode==='dynamic'&&spec.op){
     const by=window.__dpbLiveGridByProcess||{};
-    const key=Object.keys(by).find(k=>k.toLowerCase()===String(spec.op.name).trim().toLowerCase());
+    const lookName=spec.op.kind==='notstarted'?((firstStageOp()||{}).name||''):spec.op.name;   // Not Started wears the Ramming map's colours
+    const key=lookName&&Object.keys(by).find(k=>k.toLowerCase()===String(lookName).trim().toLowerCase());
     const cbc=key&&by[key]&&by[key].colorByCoord;
     if(cbc){
       const live=cbc.get(u.r1+'|'+u.c1);
@@ -4753,33 +4954,71 @@ function progDiff(spec,model,op,shell){
   return changed;
 }
 function renderProgBar(row,spec){
-  const model=state.last.model,u=state.selected&&model.unitById.get(state.selected);
-  const oq=document.getElementById('dpbProgQty'),oset=document.getElementById('dpbProgSet');
-  const keep={q:oq?oq.value:'',set:oset?oset.checked:false,focus:!!oq&&document.activeElement===oq,uid:row.getAttribute('data-uid')||''};
-  const same=keep.uid===String(u?u.id:'');
-  const total=u?progTotal(model,u):0,d=u?Math.min(progDone(spec.op,u),total):0;
-  const label=u?('<b style="color:#fff">'+esc((u.rowLabel?u.rowLabel+' · ':'')+(u.label||''))+'</b> <span style="color:#9db2c7">'+d+' / '+total+' · '+progPct(d,total)+'%</span>'):'<span style="color:#9db2c7">اضغط على تراكر في الخريطة</span>';
-  row.setAttribute('data-uid',u?String(u.id):'');
+  const model=state.last.model,units=[...mark.sel.values()],n=units.length;
+  const oq=document.getElementById('dpbProgQty');
+  const sig=units.map(u=>u.id).join(',');
+  const keep={q:oq?oq.value:'',focus:!!oq&&document.activeElement===oq,sig:row.getAttribute('data-sig')||''};
+  let label;
+  if(n===1){const u=units[0],total=progTotal(model,u),d=Math.min(progDone(spec.op,u),total);
+    label='<b style="color:#fff">'+esc((u.rowLabel?u.rowLabel+' · ':'')+(u.label||''))+'</b> <span style="color:#9db2c7">'+d+' / '+total+' · '+progPct(d,total)+'%</span>';}
+  else if(n>1)label='<b style="color:#fff">'+n+' تراكر محدد</b>';
+  else label='<span style="color:#9db2c7">اضغط على تراكر أو أكتر في الخريطة</span>';
+  row.setAttribute('data-sig',sig);row.removeAttribute('data-uid');
+  const dis=n?'':' disabled';
   row.innerHTML=
     '<button type="button" id="dpbMarkReload" title="تحديث" style="'+iconBtnCss('neutral')+'">🔄</button>'+
     '<span style="font-size:12px;font-weight:800;min-width:120px">'+label+'</span>'+
-    '<input id="dpbProgQty" type="number" inputmode="numeric" min="0" step="1" placeholder="عدد الشاشات المنجزة" '+(u?'':'disabled ')+'style="width:150px;'+selCss().replace('max-width:130px;','')+'">'+
-    '<label style="color:#9db2c7;font-size:11px;white-space:nowrap;display:inline-flex;gap:4px;align-items:center"><input id="dpbProgSet" type="checkbox" '+(u?'':'disabled')+'> تصحيح: الرقم = الإجمالي</label>'+
-    '<button type="button" id="dpbProgSave" title="حفظ" style="'+iconBtnCss('primary')+'"'+(u?'':' disabled')+'>✓</button>';
-  const nq=document.getElementById('dpbProgQty'),nset=document.getElementById('dpbProgSet');
-  if(same){nq.value=keep.q;nset.checked=keep.set;if(keep.focus){nq.focus();try{nq.setSelectionRange(nq.value.length,nq.value.length);}catch(_){}}}
+    '<select id="dpbProgMode" title="طريقة التطبيق" style="'+selCss()+'"><option value="set"'+((mark.progMode||'set')==='set'?' selected':'')+'>تعديل (الرقم = الإجمالي)</option><option value="add"'+(mark.progMode==='add'?' selected':'')+'>إضافة للمنجز</option></select>'+
+    '<input id="dpbProgQty" type="number" inputmode="numeric" min="0" step="1" placeholder="عدد الشاشات" '+(n?'':'disabled ')+'style="width:110px;'+selCss().replace('max-width:130px;','')+'">'+
+    '<button type="button" id="dpbMarkCancel" title="إلغاء التحديد" style="'+iconBtnCss('neutral')+'"'+dis+'>↺</button>'+
+    '<button type="button" id="dpbProgDelete" title="حذف القيمة" style="'+iconBtnCss('danger')+'"'+dis+'>🗑️</button>'+
+    '<button type="button" id="dpbProgApply" title="تطبيق وحفظ" style="'+iconBtnCss('primary')+'"'+dis+'>✓</button>';
+  const nq=document.getElementById('dpbProgQty');
+  if(nq&&keep.sig===sig){nq.value=keep.q;if(keep.focus){nq.focus();try{nq.setSelectionRange(nq.value.length,nq.value.length);}catch(_){}}}
 }
-function progSaveFromMap(){
+// mode 'add' = the number is added to what is done; 'set' = the number IS the total. Works on every selected tracker; nothing is saved if one of them is invalid.
+function progSaveFromMap(mode){
   const spec=isProgressSpec();if(!spec)return;
-  const model=state.last.model,u=state.selected&&model.unitById.get(state.selected);
-  if(!u){toast('اختار تراكر من الخريطة الأول.');return;}
-  const q=document.getElementById('dpbProgQty'),set=document.getElementById('dpbProgSet');
+  const model=state.last.model,units=[...mark.sel.values()];
+  if(!units.length){toast('اختار تراكر من الخريطة الأول.');return;}
+  const q=document.getElementById('dpbProgQty');
+  if(!q||String(q.value).trim()===''){toast('اكتب عدد الشاشات الأول.');return;}
   const pm={op:spec.op,model,info:progressInfoOfModel(model)};
-  const r=progBuildRecord(pm,u,q?q.value:'',set&&set.checked?'set':'add','MapEngine');
-  if(!r.ok){toast(r.error,4500);return;}
-  if(!progSaveRecords([r.record])){toast('تعذر الحفظ على الجهاز.',4000);return;}
-  if(q)q.value='';if(set)set.checked=false;
-  toast('اتحفظ: '+(u.label||'')+' → '+r.done+' / '+r.total+' ('+progPct(r.done,r.total)+'%)',3500);
+  const recs=[];
+  for(const u of units){
+    const r=progBuildRecord(pm,u,q.value,mode,'MapEngine');
+    if(!r.ok){toast((units.length>1?(u.rowLabel?u.rowLabel+' · ':'')+(u.label||'')+': ':'')+r.error+(units.length>1?' — ما اتحفظش حاجة.':''),5000);return;}
+    recs.push(r.record);
+  }
+  if(!progSaveRecords(recs)){toast('تعذر الحفظ على الجهاز.',4000);return;}
+  q.value='';
+  toast(units.length===1?('اتحفظ: '+(units[0].label||'')+' → '+recs[0].done+' / '+recs[0].total+' ('+progPct(recs[0].done,recs[0].total)+'%)'):('اتحفظ '+recs.length+' تراكر'),3500);
+  clearMarkSelection();refresh();
+}
+// delete the value of every selected tracker (the cell goes back to empty)
+async function progDeleteFromMap(){
+  const spec=isProgressSpec();if(!spec)return;
+  const model=state.last.model,units=[...mark.sel.values()];
+  if(!units.length){toast('اختار تراكر من الخريطة الأول.');return;}
+  const pm={op:spec.op,model,info:progressInfoOfModel(model)};
+  const snap=progSnapshot(true),ids=[],zero=[];
+  units.forEach(u=>{
+    const id=progId(spec.op,u);
+    if(snap.recs.has(id))ids.push(id);
+    else if(progDone(spec.op,u)>0){const r=progBuildRecord(pm,u,0,'set','MapEngine');if(r.ok)zero.push(r.record);}  // value came from the sheet only: write an explicit 0
+  });
+  if(!ids.length&&!zero.length){toast('مفيش قيمة محفوظة في التراكرات دي.');clearMarkSelection();return;}
+  toast('جاري الحذف…',60000);
+  if(ids.length){
+    const res=await kvCall({action:'deleteMany',ids,siblings:[],groupedProcessNames:[]});
+    if(!res||res.ok===false){toast('فشل الحذف: '+(res&&res.error||'تعذر الاتصال بالسيرفر.'),4000);return;}
+    try{if(window.DPB_CLOUD_PRODUCTION&&window.DPB_CLOUD_PRODUCTION.forgetLocal)window.DPB_CLOUD_PRODUCTION.forgetLocal(ids);}catch(_){}
+  }
+  if(zero.length)progSaveRecords(zero);
+  progSnapshot(true);
+  toast('تم حذف القيمة من '+(ids.length+zero.length)+' تراكر ✓',3000);
+  clearMarkSelection();
+  try{if(typeof window.__dpbFetchLiveGrid==='function')await window.__dpbFetchLiveGrid();}catch(_){}
   refresh();
 }
 window.DPB_PROGRESS={
@@ -4797,6 +5036,7 @@ function ensureCss(){
 #excelMapShell{overflow:auto;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 230px);padding:6px 4px 18px}
 table.me-map{border-collapse:separate;border-spacing:2px;table-layout:fixed;margin:0 auto;width:max-content}
 .me-map td{padding:0;position:relative;box-sizing:border-box;width:var(--me-w);min-width:var(--me-w);height:var(--me-h);overflow:visible;font:600 10px system-ui,sans-serif}
+.me-map td.me-u[data-ns="1"][data-dim=""]{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.9),0 0 6px rgba(255,255,255,.6)!important;filter:saturate(1.2) brightness(1.1);z-index:1}
 .me-map td.me-u{border-radius:4px;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);-webkit-tap-highlight-color:transparent}
 /* A cell that is genuinely INSIDE the Site range but has no Excel fill
    (white) must still read as a real, bordered cell — otherwise it is
@@ -4850,12 +5090,14 @@ function renderNow(){
   if(!model){say('Loading map…');state.last=null;return;}
   if(!model.ok){say(model.reason==='no-site-range'?'No Site named range found in this workbook.':'Sheet not found.');state.last=null;return;}
   const {top,bot,right}=model;
-  let ovOf=null,doneCount=0;const counts=new Map(),unmapped=new Set();
+  let ovOf=null,brightOf=null,doneCount=0;const counts=new Map(),unmapped=new Set();
   const prog=(spec.mode==='dynamic'&&spec.op&&spec.op.kind!=='notstarted')?progressInfoOfModel(model):null;
   let progSumDone=0,progSumTotal=0;if(prog)ensureProgCss();
   if(spec.mode==='dynamic'){
     const op=spec.op;
-    if(op&&op.kind==='notstarted'){const ge=groupedOps(),col='#ff3b30';ovOf=u=>ge.some(e=>isDone(e,u))?null:col;spec.legendOv={css:col,label:'Not started'};}
+    // Not Started = the map turned inside out: the whole map keeps its own colours but dimmed to half, and only the cells
+    // that have NOT been started (no grouped process done) stay at full brightness. No overlay colour of its own.
+    if(op&&op.kind==='notstarted'){brightOf=notStartedBright();spec.legendOv={css:'#ffffff',label:'Not started (bright)'};}
     else if(op){const col=opColor(op.code);ovOf=u=>isDone(op,u)?col:null;spec.legendOv={css:col,label:op.name+' — executed'};}
   }
   if(prog){ovOf=null;spec.legendOv={css:opColor(spec.op.code),label:spec.op.name+' — progress'};}
@@ -4872,12 +5114,13 @@ function renderNow(){
         counts.set(col.css,(counts.get(col.css)||0)+1);
         if(col.src==='unmapped')unmapped.add(col.code||'?');
         const ov=ovOf?ovOf(u):null;if(ov)doneCount++;
+        const dimmed=brightOf?!brightOf(u):false;if(brightOf&&!dimmed)doneCount++;
         let pp=null;if(prog){const dd=progDone(spec.op,u),tt=progTotal(model,u);pp=progPaint(col.css,opColor(spec.op.code),dd,tt);progSumDone+=Math.min(dd,tt);progSumTotal+=tt;}
         const passF=unitPassesMapFilter(u);
         // Executed cells: the overlay paints the WHOLE cell in the operation's
         // exact colour — the same value used for that operation's legend swatch,
         // so a cell can never read as a different shade than its legend.
-        h+='<td class="me-u'+((ov||(pp&&pp.full))?' me-done':'')+(pp?' me-prog':'')+(state.selected===u.id?' me-sel':'')+(mark.sel.has(u.id)?' me-mark':'')+((!ov&&!(pp&&pp.d>0)&&col.css==='#ffffff')?' me-blank':'')+'"'+span+' data-u="'+u.id+'" data-live-bg="'+esc(pp?pp.key:(ov||col.css))+'" style="background:'+(pp?pp.bg:(ov||col.css))+(ov?';--ov:'+ov:'')+(passF?'':';opacity:.14;filter:grayscale(1) saturate(.3)')+'" title="'+esc((u.rowLabel?u.rowLabel+' · ':'')+(u.label||'')+(pp?' · '+pp.title:(u.total?' · '+u.post+'/'+u.total:'')))+'">'+(pp?pp.html:'')+'</td>';
+        h+='<td class="me-u'+((ov||(pp&&pp.full))?' me-done':'')+(pp?' me-prog':'')+(state.selected===u.id?' me-sel':'')+(mark.sel.has(u.id)?' me-mark':'')+((!ov&&!(pp&&pp.d>0)&&col.css==='#ffffff')?' me-blank':'')+'"'+span+' data-u="'+u.id+'" data-live-bg="'+esc(pp?pp.key:(ov||col.css))+'" style="background:'+(pp?pp.bg:(ov||col.css))+(ov?';--ov:'+ov:'')+(passF?(dimmed?';opacity:.28':''):';opacity:.14;filter:grayscale(1) saturate(.3)')+'"'+(brightOf?' data-ns="1"':'')+' data-dim="'+(dimmed?'1':'')+'" title="'+esc((u.rowLabel?u.rowLabel+' · ':'')+(u.label||'')+(pp?' · '+pp.title:(u.total?' · '+u.post+'/'+u.total:'')))+'">'+(pp?pp.html:'')+'</td>';
       }else if(it&&it.l){
         const l=it.l,rs=l.r2-l.r+1,cs=l.c2-l.c+1;
         const span=(rs>1?' rowspan="'+rs+'"':'')+(cs>1?' colspan="'+cs+'"':'');
@@ -4913,6 +5156,7 @@ function renderNow(){
   if(state.selected&&model.unitById.has(state.selected))details(state.selected);else state.selected=null;
   if(state.markSig!==spec.id){state.markSig=spec.id;clearMarkSelection();loadLocks();}
   renderMarkBar();
+  try{if(typeof window.dpbOnMapRendered==='function')window.dpbOnMapRendered();}catch(_){}
 }
 function refresh(){if(!state.queued){state.queued=true;queueMicrotask(renderNow);}schedulePublish();}
 
@@ -4934,7 +5178,30 @@ function applyLiveDiff(){
   if(!shell) return false;
   const op=spec.op;
   let ovOf=null;
-  if(op&&op.kind==='notstarted'){const ge=groupedOps(),col='#ff3b30';ovOf=u=>ge.some(e=>isDone(e,u))?null:col;}
+  if(op&&op.kind==='notstarted'){
+    const bf=notStartedBright();
+    if(!state.tdIndex||state.tdIndexFor!==spec.id){
+      state.tdIndex=new Map();
+      shell.querySelectorAll('td[data-u]').forEach(td=>state.tdIndex.set(td.getAttribute('data-u'),td));
+      state.tdIndexFor=spec.id;
+    }
+    let bright=0,chg=false;
+    for(const u of model.units){
+      const isB=bf(u);if(isB)bright++;
+      const td=state.tdIndex.get(String(u.id));if(!td)continue;
+      const css=colorOf(spec,model,u).css;   // a colour change made live in the Ramming sheet shows here too
+      if(td.dataset.liveBg!==css){chg=true;td.style.background=css;td.dataset.liveBg=css;}
+      const wantDim=isB?'':'1';
+      if((td.getAttribute('data-dim')||'')===wantDim)continue;
+      chg=true;td.setAttribute('data-dim',wantDim);
+      if(td.style.opacity!=='0.14')td.style.opacity=wantDim?'.28':'';   // a cell hidden by the Row/Tracker filter keeps its filter look
+    }
+    if(chg&&spec.legendOv){
+      const lg=document.getElementById('mapLegend');
+      if(lg)lg.querySelectorAll('.me-chip span[style="color:inherit"]').forEach(sp=>{if(sp.textContent.indexOf(spec.legendOv.label)===0)sp.textContent=spec.legendOv.label+' · '+bright+' / '+model.units.length;});
+    }
+    return chg;
+  }
   else if(op){const col=opColor(op.code);ovOf=u=>isDone(op,u)?col:null;}
   if(op&&op.kind!=='notstarted'&&progressInfoOfModel(model)) return progDiff(spec,model,op,shell);
   if(!ovOf) return false;
@@ -4999,6 +5266,7 @@ function groupedProcessNames(){
 }
 window.DPB_groupedProcessNames=groupedProcessNames;
 async function fetchGridFor(name){
+  try{ const FS=window.DPB_FS2; if(FS&&FS.owns&&FS.owns(name)){ const L=FS.liveValues(name); return L?{valuesByCoord:L}:null; } }catch(_){}
   const url=cloudUrl();if(!url)return null;
   try{const r=await fetch(url+'?action=getGrid&process='+encodeURIComponent(name)+'&t='+Date.now());if(!r.ok)return null;const d=await r.json();if(d&&/^unauthorized/i.test(String(d.error||"")))try{window.DPB_tokenRejected();}catch(_){}return(d&&d.ok!==false)?d:null;}catch(_){return null;}
 }
@@ -5073,7 +5341,9 @@ function renderMarkBar(){
   const spec=markableSpec();
   if(!spec){row.style.display='none';mark.sel.clear();mark.locks=new Map();return;}
   row.style.display='flex';
-  if(isProgressSpec()){mark.sel.clear();renderProgBar(row,spec);return;}
+  const _sid=String(spec.id||spec.name||'');
+  if(mark.specId!==_sid){mark.sel.clear();mark.specId=_sid;}   // a selection never follows you to another map
+  if(isProgressSpec()){renderProgBar(row,spec);return;}
   row.removeAttribute('data-uid');
   const n=mark.sel.size;
   const isRam=isRammingSpec(spec);
@@ -5315,10 +5585,12 @@ document.addEventListener('click',ev=>{
   if(t.id==='dpbMarkDelete'){deleteMark();return;}
   if(t.id==='dpbMarkDiag'){dpbDiagSelected();return;}
   if(t.id==='dpbMarkApply'){applyMark();return;}
-  if(t.id==='dpbProgSave'){progSaveFromMap();return;}
+  if(t.id==='dpbProgApply'){progSaveFromMap(mark.progMode||'set');return;}
+  if(t.id==='dpbProgDelete'){progDeleteFromMap();return;}
 });
-document.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.target&&ev.target.id==='dpbProgQty'){ev.preventDefault();progSaveFromMap();}});
+document.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.target&&ev.target.id==='dpbProgQty'){ev.preventDefault();progSaveFromMap(mark.progMode||'set');}});
 document.addEventListener('change',ev=>{
+  if(ev.target&&ev.target.id==='dpbProgMode'){mark.progMode=ev.target.value==='add'?'add':'set';return;}
   if(ev.target&&ev.target.id==='dpbMarkOperator'){
     mark.operatorId=ev.target.value||'';
     renderMarkBar();
@@ -5339,11 +5611,22 @@ function details(id){
   if(u.rowLabel)cards+=item('ROW',u.rowLabel);
   if(u.label)cards+=item('TRACKER',u.label);
   if(u.total)cards+=item('POST',u.post+' / '+u.total);
-  if(tType)cards+=item('TRACKER TYPE',esc(tType)+(tinfo?' (range '+esc(tinfo.rangeNames.join(', '))+')':''),true);
   if(u.letter&&u.letter!==String(tType).toUpperCase())cards+=item('CELL LETTER',u.letter);
+  // PLAN COLOR: the colour this cell has in the Plan (purple / dark green / light green ...), shown by name next to the type/range.
+  // Process maps (Ramming, Saddle ...) carry no Site Color Code table of their own, so it is read from the Plan model; if the code has
+  // no table row, the Plan's own fill of the same cell is named instead (colorNameOf gives the shade: Dark / Light).
+  {
+    const scCode=typeOf(u).toLowerCase(),shell=(m=>m&&m.siteCodes&&m.siteCodes.size)(model)?model:(pm&&pm.ok?pm:model);
+    const scRow=scCode&&shell.siteCodes&&shell.siteCodes.get(scCode);
+    let pcss='',pname='';
+    if(scRow&&scRow.css){pcss=scRow.css;pname=scRow.name||colorNameOf(pcss);const shade=colorNameOf(pcss);if(shade&&pname&&shade.toLowerCase()!==String(pname).toLowerCase())pname+=' ('+shade+')';}
+    else if(pm&&pm.ok){const pu=pm.units.find(x=>x.r1===u.r1&&x.c1===u.c1);if(pu&&pu.fill){pcss=pu.fill;pname=colorNameOf(pcss)||pcss;}}
+    // ONE card: tracker type letter + its plan-colour swatch + colour name (e.g. A [swatch] purple)
+    if(tType||pcss)cards+=item('ZONE',(tType?'<b style="font-size:15px">'+esc(String(tType).toUpperCase())+'</b> ':'')+(pcss?'<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+pcss+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(pname):''),true);
+  }
   const cname=colorNameOf(col.css)||(col.css==='#ffffff'?'No fill':col.css);
   const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?' · no fill':col.src==='unmapped'?' · unmapped code':' · Excel fill';
-  cards+=item('COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true);
+  cards+=item('CELL COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true);
   const ops=(currentCatalog()||{maps:[]}).maps.filter(m=>m.op&&m.op.name&&m.op.kind!=='notstarted').map(m=>m.op);
   const progHere=(spec.op&&spec.op.kind!=='notstarted'&&progressInfoOfModel(model))?spec.op:null;
   const done=ops.filter(o=>isDone(o,u)&&!(progHere&&o.id===progHere.id));
@@ -5351,12 +5634,20 @@ function details(id){
   // STATUS: one process per line, each with its own ✔️ — same card width
   // as ROW/TRACKER/etc, just letting the box grow to fit however many
   // processes this cell has actually finished, instead of one joined line.
-  if(done.length)cards+='<div class="map-detail-item map-detail-wide"><div class="k">STATUS</div><div class="v">'+done.map(o=>'✔️ '+esc(o.name)).join('<br>')+'</div></div>';
+  if(done.length){
+    // per process: "ramming · 7 / 14" = cells of this tracker done in that process
+    const tu=(u.tracker&&u.tracker.units)||[];
+    const stLine=o=>{let t='';try{if(tu.length)t=' · '+tu.filter(x=>isDone(o,x)).length+' / '+tu.length;}catch(_){}return '✔️ '+esc(o.name)+t;};
+    cards+='<div class="map-detail-item map-detail-wide"><div class="k">STATUS</div><div class="v">'+done.map(stLine).join('<br>')+'</div></div>';
+  }
   const ramOp=ops.find(o=>String(o.name||'').trim().toLowerCase()==='ramming');
   if(ramOp&&isDone(ramOp,u)){
-    const rec=dpbAllProductionRecords()
-      .filter(r=>String(r.process||'').trim().toLowerCase()==='ramming'&&Number(r.r1)===u.r1&&Number(r.c1)===u.c1)
-      .sort((a,b)=>String(b.time||'').localeCompare(String(a.time||'')))[0];
+    // the device's own copy of the records only catches up on the next full pull, so also ask Firestore directly
+    // (the cell is coloured from Firestore at once; the operator must show just as fast). The newer of the two wins.
+    const cands=dpbAllProductionRecords()
+      .filter(r=>String(r.process||'').trim().toLowerCase()==='ramming'&&Number(r.r1)===u.r1&&Number(r.c1)===u.c1);
+    try{const f=window.DPB_FS2&&window.DPB_FS2.recordAt&&window.DPB_FS2.recordAt('Ramming',u.r1,u.c1);if(f)cands.push(f);}catch(_){}
+    const rec=cands.sort((a,b)=>String(b.time||'').localeCompare(String(a.time||'')))[0];
     // Ramming only. A record with no operator/company (e.g. it arrived via
     // the Google Sheet import, not the app's own operator picker) still gets
     // a card — labelled "By Admin" — and both lines live in one auto-fit
@@ -5380,9 +5671,6 @@ function details(id){
   // map (yellow/brown/blue/...), read live from the same Plan model every
   // other map (Ramming/Saddle/Bearing) already shares — never hardcoded, so
   // if the Plan's site_color_code table changes, this follows automatically.
-  const scCode=typeOf(u).toLowerCase();
-  const scRow=scCode&&model.siteCodes&&model.siteCodes.get(scCode);
-  if(scRow)cards+=item('SITE COLOR CODE','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+(scRow.css||'#fff')+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(scRow.name),true);
   box.innerHTML='<b>'+esc(spec.name)+'</b><div class="map-detail-grid">'+cards+'</div>';
 }
 function select(id){
@@ -5397,7 +5685,7 @@ document.addEventListener('click',ev=>{
   const z=ev.target.closest&&ev.target.closest('#mapLegend .me-zoom button');
   if(z){state.size=Math.max(10,Math.min(60,state.size+Number(z.dataset.z)*4));renderNow();return;}
   const td=ev.target.closest&&ev.target.closest('#excelMapShell td.me-u');
-  if(td){ select(td.dataset.u); if(isProgressSpec()) renderMarkBar(); else if(markableSpec()) toggleUnit(td.dataset.u); }
+  if(td){ select(td.dataset.u); if(markableSpec()) toggleUnit(td.dataset.u); }
 });
 function start(){
   loadCache();sync();
@@ -5412,7 +5700,139 @@ window.dpbOvAutoAssignments=dpbOvAutoAssignments;
 window.dpbAutoSafeOverlayColor=dpbAutoSafeOverlayColor;
 window.dpbOvColorsOperations=dpbOvColorsOperations;
 window.dpbOvTakenByOthers=dpbOvTakenByOthers;
-window.DPBMap={refresh,renderNow,applyLiveDiff,select,sync,publish,options,processNames,model:buildModel,pack,unpack,state,
+/* value written into a cell of the exported Excel (same meaning as in the live sheet tab):
+   progress cell -> units done; executed cell of a process map -> the process number (tab value, else the process code). null = keep the file's own value. */
+function exportCellValue(op,u,isProg,isDone){
+  if(!op||op.kind==='notstarted')return null;
+  if(isProg){const d=Number(progDone(op,u))||0;return d>0?d:null;}
+  if(!isDone)return null;
+  let n=Number(stageValue(op,u))||0;if(!(n>0))n=Number(op.code)||0;
+  return n>0?n:null;
+}
+/* Activity Report data: computed from the SAME per-process maps the user sees (each process from its own sheet), never from Plan.
+   per process: trackers -> {done,total}; a progress process (Modules) counts screens, any other counts cells. */
+function reportData(){
+  const c=currentCatalog();if(!c)return null;
+  const procs=[];
+  for(const m of c.maps){
+    if(m.mode!=='dynamic'||!m.op||m.op.kind==='notstarted')continue;
+    const model=modelForKey(m.snap);if(!model||!model.ok)continue;
+    const op=m.op,prog=progressInfoOfModel(model),by=new Map();
+    for(const u of model.units){
+      const key=String(u.rowLabel||'')+'|'+String(u.label||'');let t=by.get(key);   // same tracker number can sit in two rows: row + number is the identity
+      if(!t){t={key,label:String(u.label||''),row:u.rowLabel||'',done:0,total:0,cells:0,cellsDone:0};by.set(key,t);}
+      t.cells++;
+      if(prog){const tot=progTotal(model,u),d=Math.min(progDone(op,u),tot);t.total+=tot;t.done+=d;if(d>=tot&&tot>0)t.cellsDone++;}
+      else{t.total++;if(isDone(op,u)){t.done++;t.cellsDone++;}}
+    }
+    procs.push({id:m.id,name:op.name,code:Number(op.code)||0,grouped:!!op.grouped,progress:!!prog,trackers:by});
+  }
+  procs.sort((a,b)=>a.code-b.code);
+  return{procs};
+}
+/* Print range (admin map print): rows and trackers of the map that is ON SCREEN (each process has its own sheet/rows), in west->east order */
+function printData(){
+  const s=state.last;if(!s||!s.model||!s.model.ok)return null;
+  const byRow=new Map();
+  for(const u of s.model.units){
+    const k=String(u.rowLabel||'');let r=byRow.get(k);
+    if(!r){r={label:k,r1:u.r1,r2:u.r2,trackers:new Map()};byRow.set(k,r);}
+    r.r1=Math.min(r.r1,u.r1);r.r2=Math.max(r.r2,u.r2);
+    if(!r.trackers.has(u.label))r.trackers.set(u.label,{label:u.label,number:Number(String(u.label).replace(/[^0-9]/g,''))||0,row:k});
+  }
+  const rows=[...byRow.values()].sort((a,b)=>a.r1-b.r1).map(r=>({label:r.label,r1:r.r1,r2:r.r2,trackers:[...r.trackers.values()].sort((a,b)=>a.number-b.number)}));
+  let i=0;rows.forEach(r=>r.trackers.forEach(t=>{t.index=i++;}));
+  return{rows,top:s.model.top,bot:s.model.bot,name:s.spec.name,sig:s.spec.id+'|'+rows.map(r=>r.label+':'+r.trackers.length).join(',')};
+}
+window.dpbAllProductionRecords=dpbAllProductionRecords; // the Activity Report (outer script) reads the operator/company from the same records
+/* Display-only status maps (reports screen): one small canvas per process map. Cells that match the chosen status stay at full
+   brightness, everything else is dimmed (same idea as the Not Started map). Nothing here can edit the working map or any data. */
+function drawStatusMaps(box,f,maxW,pid){
+  box.textContent='';
+  const c=currentCatalog();if(!c)return 0;
+  const rd=reportData();if(!rd)return 0;
+  // tracker status across ALL processes (same rule as dpbReportView): none / part / done
+  const agg=new Map();
+  rd.procs.filter(p=>!pid||p.id===pid).forEach(p=>p.trackers.forEach(t=>{let a=agg.get(t.key);if(!a){a={any:false,full:true};agg.set(t.key,a);}if(t.done>0)a.any=true;if(!(t.total>0&&t.done>=t.total))a.full=false;}));
+  const stOf=k=>{const a=agg.get(k);return !a||!a.any?'none':(a.full?'done':'part');};
+  const bf=notStartedBright();
+  const test=u=>{
+    if(!f)return true;
+    if(f==='cells')return pid?true:bf(u);
+    return stOf(String(u.rowLabel||'')+'|'+String(u.label||''))===f;
+  };
+  let n=0;
+  for(const m of c.maps){
+    if(m.mode!=='dynamic'||!m.op||m.op.kind==='notstarted')continue;
+    if(pid&&m.id!==pid)continue;
+    const model=modelForKey(m.snap);if(!model||!model.ok)continue;
+    const spec=viewSpec(m.id);if(!spec)continue;
+    // one chosen process: 'cells' = cells (screens for a progress process) of THIS process not finished yet
+    let cellsT=null;
+    if(pid&&f==='cells'){const prog=progressInfoOfModel(model);cellsT=u=>{if(prog){const tot=progTotal(model,u);return !(tot>0&&Math.min(progDone(m.op,u),tot)>=tot);}return !isDone(m.op,u);};}
+    const cols=model.right+1,rows=model.bot-model.top+1;
+    const s=Math.max(2,Math.min(8,Math.floor((maxW||340)/cols)||2));
+    const cv=document.createElement('canvas');cv.width=cols*s;cv.height=rows*s;
+    const ctx=cv.getContext('2d');if(!ctx)continue;
+    let hit=0;const dim=[],lit=[];
+    // same overlay as the working map: for the chosen process, executed cells wear that process's colour; progress maps (Modules) fill from the bottom
+    const opc=(pid&&m.op&&m.op.kind!=='notstarted')?opColor(m.op.code):null;
+    const progM=opc?progressInfoOfModel(model):null;
+    for(const u of model.units){
+      const ok=cellsT?cellsT(u):test(u);if(ok)hit++;
+      let css='#ffffff',frac=0;try{css=colorOf(spec,model,u).css||css;}catch(_){}
+      if(opc){
+        try{
+          if(progM){const tot=progTotal(model,u),d=Math.min(progDone(m.op,u),tot);if(tot>0&&d>=tot)css=opc;else if(d>0)frac=d/tot;}
+          else if(isDone(m.op,u))css=opc;
+        }catch(_){}
+      }
+      (ok?lit:dim).push([u,css,frac,opc]);
+    }
+    const paint=(arr,alpha)=>{ctx.globalAlpha=alpha;for(const [u,css,frac,oc] of arr){
+      const x=u.c1*s,y=(u.r1-model.top)*s,w=Math.max(1,(Math.min(u.c2,model.right)-u.c1+1)*s-(s>3?1:0)),h=Math.max(1,(Math.min(u.r2,model.bot)-u.r1+1)*s-(s>3?1:0));
+      ctx.fillStyle=css;ctx.fillRect(x,y,w,h);
+      if(frac>0&&oc){const fh=Math.max(1,Math.round(h*frac));ctx.fillStyle=oc;ctx.fillRect(x,y+h-fh,w,fh);}
+    }};
+    paint(dim,f?0.13:1);paint(lit,1);ctx.globalAlpha=1;
+    const wrap=document.createElement('div');wrap.className='dpbRpMap';
+    const t=document.createElement('div');t.className='dpbRpMapTitle';
+    const b=document.createElement('b');b.textContent=m.op.name;const sp=document.createElement('span');sp.textContent=f?(hit+' / '+model.units.length):(model.units.length+'');
+    t.appendChild(b);t.appendChild(sp);
+    const sc=document.createElement('div');sc.className='dpbRpMapScroll';sc.appendChild(cv);
+    wrap.appendChild(t);wrap.appendChild(sc);box.appendChild(wrap);n++;
+  }
+  return n;
+}
+/* Long-press (about 0.35 s) then drag moves the map with the mouse/pen. A quick click or a click-and-move before the hold behaves as before;
+   touch screens already pan with a normal swipe. Works on the working map and on the report maps. */
+(function(){
+  if(window.__dpbPanInstalled)return;window.__dpbPanInstalled=true;
+  const SEL='#excelMapShell, .dpbRpMapScroll',HOLD=350,SLOP=6;
+  let timer=null,st=null,pan=false,sc=null;
+  function finish(){
+    clearTimeout(timer);timer=null;
+    if(pan&&sc){sc.style.cursor='';sc.style.userSelect='';
+      const kill=e=>{e.stopPropagation();e.preventDefault();};
+      document.addEventListener('click',kill,true);setTimeout(()=>document.removeEventListener('click',kill,true),0);}
+    pan=false;st=null;
+  }
+  document.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='touch'||e.button!==0)return;
+    const el=e.target&&e.target.closest?e.target.closest(SEL):null;if(!el)return;
+    if(el.scrollWidth<=el.clientWidth&&el.scrollHeight<=el.clientHeight)return;
+    finish();sc=el;st={x:e.clientX,y:e.clientY,l:el.scrollLeft,t:el.scrollTop,id:e.pointerId};
+    timer=setTimeout(()=>{pan=true;el.style.cursor='grabbing';el.style.userSelect='none';try{el.setPointerCapture(st.id);}catch(_){}} ,HOLD);
+  },true);
+  document.addEventListener('pointermove',e=>{
+    if(!st||e.pointerId!==st.id)return;
+    const dx=e.clientX-st.x,dy=e.clientY-st.y;
+    if(!pan){if(Math.hypot(dx,dy)>SLOP){clearTimeout(timer);timer=null;st=null;}return;}
+    sc.scrollLeft=st.l-dx;sc.scrollTop=st.t-dy;e.preventDefault();
+  },true);
+  ['pointerup','pointercancel'].forEach(n=>document.addEventListener(n,()=>{if(st||pan)finish();},true));
+})();
+window.DPBMap={refresh,renderNow,applyLiveDiff,select,sync,publish,options,processNames,model:buildModel,pack,unpack,state,exportCellValue,reportData,printData,drawStatusMaps,
   summary(){const s=state.last;if(!s)return null;const m=s.model;return{view:s.spec.id,mode:s.spec.mode,color:s.spec.color,site:m.siteName,base:m.siteBase,areas:m.siteAreas,bounds:m.bounds,units:m.units.length,trackers:m.trackers.size,types:m.types,siteCodes:[...m.siteCodes]};}};
 })();
 </script>
@@ -6555,9 +6975,41 @@ function renderValidation(){
   });
   validationBody.innerHTML=h;
   const ok=project.validation.siteOk&&project.validation.typeResults.every(t=>t.ok);
-  validationNotice.innerHTML=ok?'<div class="notice ok">Verified against the workbook Named Ranges. Build is unlocked. Use the Build step below.</div>':'<div class="notice bad">The entered Range / Code / Cell Count does not match the workbook. Fix it before Build.</div>';
+  validationNotice.innerHTML=(ok?'<div class="notice ok">Verified against the workbook Named Ranges. Build is unlocked. Use the Build step below.</div>':'<div class="notice bad">The entered Range / Code / Cell Count does not match the workbook. Fix it before Build.</div>')+dpbDupTrackerNoteHtml();
   syncStepAccess();
   syncPlanButtons();
+}
+
+// A tracker number is unique across the whole site, so the same number in two places is almost surely a typo in the Plan workbook.
+// Soft hint only: never blocks Build, shows on this screen, and "تجاهل" hides it until the list of duplicates changes.
+function dpbDuplicateTrackers(){
+  try{
+    const wb=project&&project.wb;if(!wb||!wb.SheetNames||!wb.SheetNames.length)return[];
+    const bm=(window.DPBMap&&window.DPBMap.model)||null;const m=bm?bm(wb,wb.SheetNames[0]):null;
+    if(!m||!m.ok||!m.labels||!m.units)return[];
+    // every tracker number cell in the sheet (kind 't'), grouped by its text: the same number twice is a duplicate even inside one ROW
+    const byCol=new Map();for(const u of m.units){if(!byCol.has(u.c1))byCol.set(u.c1,[]);byCol.get(u.c1).push(u);}
+    const rowOf=l=>{let best=null;for(const u of (byCol.get(l.c)||[]))if(u.r1>l.r&&(!best||u.r1<best.r1))best=u;return best&&best.rowNo?'ROW '+best.rowNo:'';};
+    const by=new Map();
+    for(const l of m.labels){if(l.kind!=='t')continue;const t=String(l.text||'').trim().toUpperCase();if(!t)continue;if(!by.has(t))by.set(t,[]);by.get(t).push(rowOf(l));}
+    const out=[];for(const [label,rows] of by)if(rows.length>1)out.push({label,rows});
+    out.sort((x,y)=>(parseInt(x.label.replace(/\D/g,''))||0)-(parseInt(y.label.replace(/\D/g,''))||0));
+    return out;
+  }catch(_){return[];}
+}
+function dpbDupTrackerNoteHtml(){
+  const d=dpbDuplicateTrackers();if(!d.length)return'';
+  const sig=d.map(x=>x.label+'@'+x.rows.join(',')).join(';');
+  try{if(localStorage.getItem('DPB_DUP_TRK_DISMISSED')===sig)return'';}catch(_){}
+  window.__dpbDupTrkSig=sig;
+  const shown=d.slice(0,3).map(x=>'<b>'+esc(x.label)+'</b> ('+x.rows.map(r=>esc(r||'—')).join('، ')+')').join('، ');
+  const more=d.length>3?' و'+(d.length-3)+' غيرهم':'';
+  const msg=d.length===1?'رقم التراكر '+shown+' ظاهر في أكتر من مكان. لو ده مقصود عادي.':d.length+' أرقام تراكر ظاهرة في أكتر من مكان: '+shown+more+'. لو ده مقصود عادي.';
+  return '<div id="dpbDupTrk" class="notice" style="margin-top:8px;display:flex;gap:10px;align-items:center;border-color:rgba(255,200,87,.45);background:rgba(255,200,87,.08)"><div style="flex:1;font-size:13px;line-height:1.5">💡 '+msg+'</div><button class="btn ghost" type="button" style="padding:4px 10px;font-size:12px" onclick="dpbDismissDupTracker()">تجاهل</button></div>';
+}
+function dpbDismissDupTracker(){
+  try{localStorage.setItem('DPB_DUP_TRK_DISMISSED',window.__dpbDupTrkSig||'');}catch(_){}
+  const el=document.getElementById('dpbDupTrk');if(el)el.remove();
 }
 
 
@@ -6947,13 +7399,19 @@ function getAppliedProcessEntries(){
   const pc=project.processConfig||{}; const out=[];
   const add=(rec,sourceId)=>{
     if(!rec?.applied||!rec.definition?.processes?.length) return;
-    rec.definition.processes.forEach((p,i)=>{
+    // اسم العملية = اسم التاب في ملف الإكسل بنفس تنسيقه بالظبط (RaMmInG / SaDdLe / BeArInG)، فأي تغيير في اسم التاب يتغيّر في البرنامج.
+    // التطابق بين صف العملية والتاب بالاسم (من غير حساسية لحالة الحروف). لو ولا واحد اتطابق وعدد التابات = عدد العمليات في الملف
+    // المجمّع، بيتربطوا بالترتيب (العملية بأصغر كود = أول تاب). لو مفيش تاب مناسب بيتاخد اسم الصف زي ما هو مكتوب، من غير أي اسم ثابت.
+    const procs=rec.definition.processes,tabs=(rec.wb&&rec.wb.SheetNames)||[];
+    const nz=x=>String(x||'').toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g,'');
+    const byTab=procs.map(p=>{const k=nz(p&&p.name);return k?(tabs.find(t=>nz(t)===k)||null):null;});
+    if(sourceId==='grouped'&&procs.length>1&&tabs.length===procs.length&&byTab.every(x=>!x)){
+      procs.map((p,i)=>i).sort((x,y)=>(Number(procs[x].code)||0)-(Number(procs[y].code)||0)).forEach((pi,k)=>{byTab[pi]=tabs[k];});
+    }
+    procs.forEach((p,i)=>{
       const rawName=String(p.name||'').trim();
       const rawCode=String(p.code??'').trim();
-      // الاسم بيتقرا من ليجند الشيت (1=Ramming, 2=Saddle, 3=Bearing, 4=Torque Tube)
-      // بدل الاسم القادم من اسم الملف أو اللون — وده اللي بيخلي كروت
-      // Production Entry متطابقة مع أرقام العمليات في شيت الإكسل.
-      const name=sheetOperationName(rawName,rawCode)||('Process '+(i+1));
+      const name=byTab[i]||rawName||sheetOperationName('',rawCode)||('Process '+(i+1));
       out.push({id:sourceId+':'+i,name:name,code:rawCode,rec,processIndex:i});
     });
   };
@@ -7102,16 +7560,27 @@ function trackerPassesMapFilter(t){
   return rowHit&&numberHit;
 }
 function rowTrackerList(rowLabel){
+  const d=window.DPBMap&&DPBMap.printData?DPBMap.printData():null;
+  if(d){const row=d.rows.find(r=>String(r.label)===String(rowLabel));return row?row.trackers:[];}
   const rows=(project.buildResult?.rows||[]).slice().sort((a,b)=>a.r1-b.r1);
   const row=rows.find(r=>String(r.label)===String(rowLabel));
   return (row?.trackers||[]).slice().sort((a,b)=>a.number-b.number);
 }
+let _printSig='';
 function populatePrintRangeRows(){
-  const rows=(project.buildResult?.rows||[]).slice().sort((a,b)=>a.r1-b.r1);
+  const d=window.DPBMap&&DPBMap.printData?DPBMap.printData():null;
+  const rows=d?d.rows:(project.buildResult?.rows||[]).slice().sort((a,b)=>a.r1-b.r1);
+  _printSig=d?d.sig:'';
   const opts='<option value="">اختر ROW</option>'+rows.map(r=>`<option value="${esc(r.label)}">${esc(r.label)}</option>`).join('');
-  ['printFromRow','printToRow'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=opts;});
+  ['printFromRow','printToRow'].forEach(id=>{const el=document.getElementById(id);if(el){el.innerHTML=opts;}});
+  if(!rows.some(r=>String(r.label)===String(printRange.fromRow)))printRange.fromRow='';
+  if(!rows.some(r=>String(r.label)===String(printRange.toRow)))printRange.toRow='';
+  const f=document.getElementById('printFromRow'),t=document.getElementById('printToRow');
+  if(f)f.value=printRange.fromRow;if(t)t.value=printRange.toRow;
   onPrintRangeRow('from',printRange.fromRow,false); onPrintRangeRow('to',printRange.toRow,false);
 }
+// the row/tracker lists follow whichever map is on screen (Ramming has its own rows, Modules its own...)
+window.dpbOnMapRendered=function(){try{const d=DPBMap.printData();if(d&&d.sig!==_printSig)populatePrintRangeRows();else refreshPrintRangeClasses();}catch(_){}};
 function fillPrintTrackerSelect(which){
   const row=which==='from'?printRange.fromRow:printRange.toRow;
   const id=which==='from'?'printFromTracker':'printToTracker';
@@ -7125,19 +7594,20 @@ function refreshPrintRangeClasses(){
   const shell=document.getElementById('excelMapShell');
   if(!shell) return;
   const hasRange=!!(printRange.fromTracker||printRange.toTracker);
-  const cells=shell.querySelectorAll('.data');
-  if(!cells.length) return;
-  const trackerMap=new Map((project.buildResult?.trackerMatches||[]).map(t=>[String(t.label||'').toUpperCase(),t]));
-  cells.forEach(cell=>{
-    const label=String(cell.dataset.mapTracker||'').toUpperCase();
-    const inSite=cell.dataset.mapInsite==='1';
-    const tracker=label?trackerMap.get(label):null;
-    cell.classList.remove('print-outside-range');
-    if(hasRange){
-      if(tracker){ if(!trackerInPrintRange(tracker)) cell.classList.add('print-outside-range'); }
-      else if(inSite) cell.classList.add('print-outside-range');
-    }
+  const d=DPBMap.printData();if(!d)return;
+  const idx=new Map();d.rows.forEach(r=>r.trackers.forEach(t=>idx.set(r.label+'|'+t.label,t.index)));
+  const model=DPBMap.state.last.model;
+  shell.querySelectorAll('td.me-u').forEach(td=>{
+    const u=model.unitById.get(td.dataset.u);let out=false;
+    if(hasRange&&u){const i=idx.get(String(u.rowLabel||'')+'|'+u.label);out=!(i!==undefined&&trackerIndexInRange(i));}
+    td.classList.toggle('print-outside-range',out);
   });
+}
+function trackerIndexInRange(i){
+  const a=printEndpointIndex('from'), b=printEndpointIndex('to');
+  if(a===null&&b===null)return true;
+  const lo=a===null?i:Math.min(a,b===null?a:b), hi=b===null?i:Math.max(b,a===null?b:a);
+  return i>=lo&&i<=hi;
 }
 function onPrintRangeRow(which,value,redraw=true){
   if(which==='from'){printRange.fromRow=value||'';printRange.fromTracker='';}
@@ -7159,6 +7629,9 @@ function updatePrintButtonState(){
   btn.disabled=!(a!==null && b!==null && a<=b);
 }
 function trackerGlobalIndex(t){
+  if(t&&typeof t.index==='number')return t.index;
+  const d=window.DPBMap&&DPBMap.printData?DPBMap.printData():null;
+  if(d){for(const r of d.rows)for(const x of r.trackers)if(String(x.label||'').toUpperCase()===String(t.label||'').toUpperCase()&&(!t.row||String(t.row)===String(x.row)))return x.index;return -1;}
   const all=(project.buildResult?.trackerMatches||[]).slice().sort((a,b)=>{
     const ar=(project.buildResult?.rows||[]).findIndex(r=>String(r.label)===String(a.row));
     const br=(project.buildResult?.rows||[]).findIndex(r=>String(r.label)===String(b.row));
@@ -7174,15 +7647,11 @@ function printEndpointIndex(which){
   return t?trackerGlobalIndex(t):null;
 }
 function trackerInPrintRange(t){
-  const a=printEndpointIndex('from'), b=printEndpointIndex('to');
-  if(a===null&&b===null)return true;
-  const i=trackerGlobalIndex(t); if(i<0)return false;
-  const lo=a===null?i:Math.min(a,b===null?a:b), hi=b===null?i:Math.max(b,a===null?b:a);
-  return i>=lo&&i<=hi;
+  const i=trackerGlobalIndex(t);if(i<0)return false;return trackerIndexInRange(i);
 }
 function clearPrintRange(){printRange={fromRow:'',fromTracker:'',toRow:'',toTracker:''};populatePrintRangeRows();updatePrintButtonState();DPBMap.refresh();}
 function printPlanRange(){
-  if(!project.buildResult){alert('Build the Plan first.');return;}
+  if(!(window.DPBMap&&DPBMap.printData&&DPBMap.printData())){alert('افتح خريطة الأول.');return;}
   if(printRange.fromTracker&&!printRange.fromRow){alert('اختر ROW الخاص بـ "من Tracker".');return;}
   if(printRange.toTracker&&!printRange.toRow){alert('اختر ROW الخاص بـ "إلى Tracker".');return;}
   const a=printEndpointIndex('from'),b=printEndpointIndex('to');
@@ -7202,91 +7671,37 @@ function printPlanRange(){
 // rows are included; it never crops a row horizontally.
 function buildPlanPrintPages(){
   const area=document.getElementById('printPlanArea');
-  const source=document.querySelector('#excelMapShell table.excel-plan');
-  if(!area||!source){return;}
-
+  const source=document.querySelector('#excelMapShell table.me-map');
+  const d=DPBMap.printData();
+  if(!area||!source||!d)return;
   const allRows=[...(source.tBodies[0]?.rows||[])];
-  const buildRows=(project.buildResult?.rows||[]).slice().sort((a,b)=>a.r1-b.r1);
   const fromIdx=printEndpointIndex('from'), toIdx=printEndpointIndex('to');
-  const globalTrackers=(project.buildResult?.trackerMatches||[]).slice().sort((a,b)=>{
-    const ar=buildRows.findIndex(r=>String(r.label)===String(a.row));
-    const br=buildRows.findIndex(r=>String(r.label)===String(b.row));
-    return ar-br||Number(a.number)-Number(b.number);
-  });
-
-  let renderMinR=Infinity;
-  buildRows.forEach(r=>{
-    renderMinR=Math.min(renderMinR,Number(r.headerR),Number(r.r1));
-  });
-  if(!Number.isFinite(renderMinR)) renderMinR=0;
-
-  const rowAllowed=(rowIndex)=>{
-    if(fromIdx===null&&toIdx===null)return true;
-    const row=buildRows[rowIndex];
-    if(!row)return false;
-    const rowTrackers=(row.trackers||[]).slice().sort((a,b)=>Number(a.number)-Number(b.number));
-    if(!rowTrackers.length)return false;
-    const first=trackerGlobalIndex(rowTrackers[0]);
-    const last=trackerGlobalIndex(rowTrackers[rowTrackers.length-1]);
-    const lo=fromIdx===null?0:Math.min(fromIdx,toIdx===null?fromIdx:toIdx);
-    const hi=toIdx===null?globalTrackers.length-1:Math.max(toIdx,fromIdx===null?toIdx:fromIdx);
-    return last>=lo&&first<=hi;
-  };
-
-  const selected=document.getElementById('mapViewSelector')?.selectedOptions?.[0]?.text || 'Site Color Code';
-  const rowBands=[];
-
-  // Build one self-contained printable band for each complete ROW.
-  buildRows.forEach((row,rowIndex)=>{
-    if(!rowAllowed(rowIndex)) return;
-    const start=Math.max(0,Number(row.headerR)-renderMinR);
-    const end=Math.min(allRows.length-1,Number(row.r2)-renderMinR);
-    if(start>end) return;
-
-    const wrap=document.createElement('div');
-    wrap.className='print-plan-row-wrap';
-    const table=document.createElement('table');
-    table.className='excel-plan';
-    const tbody=document.createElement('tbody');
-    for(let i=start;i<=end;i++) tbody.appendChild(allRows[i].cloneNode(true));
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-    rowBands.push({row,html:wrap.outerHTML});
-  });
-
-  // A3 landscape = exactly two complete ROW bands per page.
-  // No horizontal cropping: every selected ROW keeps its full west→east tracker span.
-  const pages=[];
-  for(let i=0;i<rowBands.length;i+=2){
-    const pair=rowBands.slice(i,i+2);
-    const page=document.createElement('div');
-    page.className='print-plan-page';
-
-    const title=document.createElement('div');
-    title.className='print-plan-title';
-    title.textContent=`${selected} · ${pair.map(x=>x.row.label).join(' + ')}`;
-    page.appendChild(title);
-
-    pair.forEach(x=>{
-      const holder=document.createElement('div');
-      holder.innerHTML=x.html;
-      page.appendChild(holder.firstElementChild);
-    });
-    pages.push(page.outerHTML);
-  }
-
-  if(!pages.length && allRows.length){
-    const page=document.createElement('div');
-    page.className='print-plan-page';
-    const wrap=document.createElement('div');
-    wrap.className='print-plan-row-wrap';
-    const table=document.createElement('table');
-    table.className='excel-plan';
+  const hasRange=fromIdx!==null||toIdx!==null;
+  // one band per ROW: from just after the previous band to the last sheet row of this ROW; a ROW is printed if any tracker of it is in range
+  const bands=[];let prevEnd=d.top-1;
+  d.rows.forEach(row=>{
+    const start=prevEnd+1,end=row.r2;prevEnd=Math.max(prevEnd,end);
+    const inRange=!hasRange||row.trackers.some(t=>trackerIndexInRange(t.index));
+    if(!inRange)return;
+    const a=Math.max(0,start-d.top),b=Math.min(allRows.length-1,end-d.top);
+    if(a>b)return;
+    const table=document.createElement('table');table.className='me-map print-me';
+    table.style.cssText=source.style.cssText;
     const tb=document.createElement('tbody');
-    allRows.forEach(tr=>tb.appendChild(tr.cloneNode(true)));
+    for(let i=a;i<=b;i++)tb.appendChild(allRows[i].cloneNode(true));
     table.appendChild(tb);
-    wrap.appendChild(table);
-    page.appendChild(wrap);
+    const wrap=document.createElement('div');wrap.className='print-plan-row-wrap';wrap.appendChild(table);
+    bands.push({row,html:wrap.outerHTML});
+  });
+  // A3 landscape: two complete ROW bands per page, never cropped horizontally
+  const pages=[];
+  for(let i=0;i<bands.length;i+=2){
+    const pair=bands.slice(i,i+2);
+    const page=document.createElement('div');page.className='print-plan-page';
+    const title=document.createElement('div');title.className='print-plan-title';
+    title.textContent=d.name+' — '+pair.map(x=>x.row.label).join(' + ');
+    page.appendChild(title);
+    pair.forEach(x=>{const h=document.createElement('div');h.innerHTML=x.html;page.appendChild(h.firstElementChild);});
     pages.push(page.outerHTML);
   }
   area.innerHTML=pages.join('');
@@ -7740,6 +8155,50 @@ function dpbStyleFactory(stylesXml){
   }
   return {styleFor,clearStyle,serialize:()=>ser.serializeToString(doc)};
 }
+
+// Export of ONE map: the source file may be a grouped workbook (Ramming + Saddle + Bearing...). Only the sheet of the map that is open is kept.
+function dpbKeepOnlySheet(files,keepPath){
+  const parser=new DOMParser(),ser=new XMLSerializer(),lname=n=>n.localName||n.nodeName.split(':').pop();
+  const wbDoc=parser.parseFromString(dpbXmlString(files.get('xl/workbook.xml')),'application/xml');
+  const relPath='xl/_rels/workbook.xml.rels',relDoc=parser.parseFromString(dpbXmlString(files.get(relPath)),'application/xml');
+  const rels=new Map();[...relDoc.getElementsByTagName('*')].forEach(n=>{const id=n.getAttribute('Id');if(id)rels.set(id,n);});
+  const target=n=>{let t=(n.getAttribute('Target')||'').replace(/^\//,'');return t.startsWith('xl/')?t:'xl/'+t.replace(/^xl\//,'');};
+  const sheets=[...wbDoc.getElementsByTagName('*')].filter(n=>lname(n)==='sheet');
+  if(sheets.length<2)return;
+  const keepIdx=sheets.findIndex(n=>{const r=rels.get(n.getAttribute('r:id')||n.getAttribute('id'));return r&&target(r)===keepPath;});
+  if(keepIdx<0)return;
+  const removedNames=[],drop=[];
+  sheets.forEach((n,i)=>{
+    if(i===keepIdx)return;
+    removedNames.push(n.getAttribute('name'));
+    const r=rels.get(n.getAttribute('r:id')||n.getAttribute('id'));
+    if(r){const t=target(r);drop.push(t);const d=t.replace(/[^/]+$/,'');drop.push(d+'_rels/'+t.slice(d.length)+'.rels');r.parentNode.removeChild(r);}
+    n.parentNode.removeChild(n);
+  });
+  const dn=[...wbDoc.getElementsByTagName('*')].filter(n=>lname(n)==='definedName');
+  const mentions=txt=>removedNames.some(nm=>{const q=String(nm).replace(/'/g,"''");return txt.indexOf("'"+q+"'!")>=0||txt.indexOf(nm+'!')>=0;});
+  dn.forEach(n=>{
+    const ls=n.getAttribute('localSheetId');
+    if(ls!==null&&ls!==''){const i=Number(ls);if(i!==keepIdx){n.parentNode.removeChild(n);return;}n.setAttribute('localSheetId','0');}
+    if(mentions(n.textContent||''))n.parentNode.removeChild(n);
+  });
+  [...wbDoc.getElementsByTagName('*')].filter(n=>lname(n)==='workbookView').forEach(n=>{n.setAttribute('activeTab','0');n.removeAttribute('firstSheet');});
+  files.set('xl/workbook.xml',dpbXmlBytes(ser.serializeToString(wbDoc)));
+  // calcChain names sheets by index: not needed for a values-only export
+  if(files.has('xl/calcChain.xml')){drop.push('xl/calcChain.xml');[...relDoc.getElementsByTagName('*')].forEach(n=>{if(/calcChain/i.test(n.getAttribute('Type')||''))n.parentNode.removeChild(n);});}
+  files.set(relPath,dpbXmlBytes(ser.serializeToString(relDoc)));
+  const ctPath='[Content_Types].xml';
+  if(files.has(ctPath)){
+    const ct=parser.parseFromString(dpbXmlString(files.get(ctPath)),'application/xml');
+    [...ct.getElementsByTagName('*')].forEach(n=>{const pn=(n.getAttribute('PartName')||'').replace(/^\//,'');if(pn&&drop.includes(pn))n.parentNode.removeChild(n);});
+    files.set(ctPath,dpbXmlBytes(ser.serializeToString(ct)));
+  }
+  drop.forEach(f=>files.delete(f));
+  // titles of parts in docProps/app.xml would still list every sheet; the file is only informational
+  files.delete('docProps/app.xml');
+  if(files.has(ctPath)){const ct=dpbXmlString(files.get(ctPath)).replace(/<Override[^>]*PartName="\/docProps\/app\.xml"[^>]*\/>/,'');files.set(ctPath,dpbXmlBytes(ct));}
+  if(files.has('_rels/.rels')){const rr=dpbXmlString(files.get('_rels/.rels')).replace(/<Relationship\b[^>]*docProps\/app\.xml[^>]*\/>/,'');files.set('_rels/.rels',dpbXmlBytes(rr));}
+}
 async function downloadReport(){
   const last=window.DPBMap&&window.DPBMap.state&&window.DPBMap.state.last;
   const shell=document.getElementById('excelMapShell');
@@ -7782,7 +8241,7 @@ async function downloadReport(){
     }
     function tdHex(td){
       const bc=td.style.backgroundColor;if(bc){const x=dpbCssColorToHex(bc);if(x)return x;}
-      const bi=td.style.backgroundImage||'';const m=bi.match(/linear-gradient\(\s*to top\s*,\s*([^\s,]+)/);
+      const bi=td.style.backgroundImage||'';const m=bi.match(/linear-gradient\(\s*to top\s*,\s*(rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}|[a-zA-Z]+)/);
       if(m){const x=dpbCssColorToHex(m[1]);if(x)return x;}
       return null;
     }
@@ -7796,16 +8255,20 @@ async function downloadReport(){
         const el=cellAt(r,c),base=Number(el.getAttribute('s')||0);
         el.setAttribute('s',String(stylesFactory.styleFor(base,hex)));
       }
-      const pct=td.querySelector('.me-pct');
-      if(pct){ // progress cell: the percentage is the cell's text
+      // The cell's value in the exported file (same meaning as in the live sheet tab):
+      //  - progress cell (Modules...): the number of units done;
+      //  - executed cell of a process map: the process number (its order / code, as stored in the tab);
+      // untouched cells keep their original value.
+      const num=window.DPBMap.exportCellValue(last.spec&&last.spec.op,u,!!td.querySelector('.me-pct'),td.classList.contains('me-done'));
+      if(num!==null){
         const el=cellAt(u.r1,u.c1);while(el.firstChild)el.removeChild(el.firstChild);
-        el.setAttribute('t','inlineStr');const is=sheetDoc.createElementNS(ns,'is'),t=sheetDoc.createElementNS(ns,'t');
-        t.textContent=pct.textContent;is.appendChild(t);el.appendChild(is);
+        el.removeAttribute('t');const vv=sheetDoc.createElementNS(ns,'v');vv.textContent=String(num);el.appendChild(vv);
       }
       painted++;
     }
     files.set(stylesPath,dpbXmlBytes(stylesFactory.serialize()));
     files.set(sheetPath,dpbXmlBytes(new XMLSerializer().serializeToString(sheetDoc)));
+    try{dpbKeepOnlySheet(files,sheetPath);}catch(e){console.warn('keep-only-sheet failed, exporting whole file',e);}
     const blob=dpbZipStore([...files.entries()].map(([name,data])=>({name,data})));
     const safe=String(last.spec.name||'Map').replace(/[\\/:*?"<>|]+/g,'_').trim()||'Map';
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -8645,6 +9108,25 @@ function pickLiveGrid_(processName){
   // مفيش اسم عملية خالص (نداء قديم بـ 2 args) - رجّع الشبكة العامة القديمة.
   return window.__dpbLiveGrid;
 }
+// Production Entry writes must land on the SAME cell the map shows: translate a Plan unit to the process's own sheet coordinates
+// (same tracker+position matching liveGridUnitValue uses for reading). Falls back to the Plan unit when the live grid is not available.
+function dpbProcUnit(t,u,processName){
+  try{
+    const lg=pickLiveGrid_(processName);
+    if(!lg||!Array.isArray(lg.trackers)||!lg.trackers.length)return u;
+    const tLabel=String(t.label||'').trim().toUpperCase();
+    const tNumber=Number(t.number)||Number(tLabel.replace(/\D/g,''))||0;
+    const tRow=String(t.row||'').trim().toUpperCase();
+    let lt=lg.trackers.find(x=>String(x.row||'').trim().toUpperCase()===tRow&&(String(x.label||'').trim().toUpperCase()===tLabel||Number(x.number)===tNumber));
+    if(!lt)lt=lg.trackers.find(x=>String(x.label||'').trim().toUpperCase()===tLabel||Number(x.number)===tNumber);
+    if(!lt||!Array.isArray(lt.units))return u;
+    const idx=(t.units||[]).findIndex(x=>x===u||(Number(x.r1)===Number(u.r1)&&Number(x.c1)===Number(u.c1)&&Number(x.r2)===Number(u.r2)&&Number(x.c2)===Number(u.c2)));
+    const lu=idx>=0?lt.units[idx]:null;
+    if(!lu||!Number.isFinite(Number(lu.r1))||!Number.isFinite(Number(lu.c1)))return u;
+    return {sheet:u.sheet,r1:lu.r1,c1:lu.c1,r2:lu.r2!=null?lu.r2:lu.r1,c2:lu.c2!=null?lu.c2:lu.c1};
+  }catch(_){return u;}
+}
+window.__dpbProcUnit=dpbProcUnit;
 function liveGridUnitValue(t,u,processName){
   // ONE live-source resolver. A process is identified by its process name,
   // then by Tracker label/number + ROW, then by unit position. The Plan
@@ -8977,9 +9459,79 @@ function linkDynamicExecutionToPlan(){
   renderProduction(rows);
 }
 
+function dpbOperatorBadge(procName,label,row){
+  if(String(procName||'').trim().toLowerCase()!=='ramming'||typeof dpbAllProductionRecords!=='function')return '';
+  try{
+    const recs=dpbAllProductionRecords().filter(rec=>String(rec.process||'').trim().toLowerCase()==='ramming'&&String(rec.tracker||'')===String(label||'')&&(!rec.row||!row||String(rec.row)===String(row)));
+    const ops=[...new Set(recs.map(rec=>rec.operator||'By Admin'))];
+    const cos=[...new Set(recs.map(rec=>rec.company).filter(Boolean))];
+    if(!ops.length)return '';
+    const coTxt=cos.length?` (🏢 ${execEsc(cos.join(', '))})`:'';
+    return `<div class="small" style="margin-top:2px;font-weight:800;color:#8fd9c4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px">👤 ${execEsc(ops.join(', '))}${coTxt}</div>`;
+  }catch(_){return '';}
+}
+// ONE report model for Builder AND Supervisor: same maps, same counts. Returns null when the maps are not ready yet.
+const DPB_REPORT_PALETTE=['#b7e77b','#9edcf0','#f6c86b','#c8a7e8','#ff7ac8','#8ed1ff','#ff9f80','#a8e6cf'];
+function dpbReportView(){
+  let rd=null;try{rd=window.DPBMap&&typeof DPBMap.reportData==='function'?DPBMap.reportData():null;}catch(_){rd=null;}
+  if(!rd||!rd.procs||!rd.procs.length)return null;
+  const procs=rd.procs,labels=new Map();
+  procs.forEach(p=>p.trackers.forEach(t=>{if(!labels.has(t.key))labels.set(t.key,{key:t.key,label:t.label,row:t.row,number:Number(String(t.label).replace(/[^0-9]/g,''))||0,rowNo:Number(String(t.row).replace(/[^0-9]/g,''))||0});}));
+  const labelCount=new Map();labels.forEach(L=>labelCount.set(L.label,(labelCount.get(L.label)||0)+1));
+  const list=[...labels.values()].sort((a,b)=>a.number-b.number||a.rowNo-b.rowNo);
+  const pct=(n,t)=>t?Math.round(n*100/t):0;
+  const first=procs.filter(p=>p.grouped&&p.code>0)[0]||procs[0]||null;
+  let nsCells=0,nsTotal=0;
+  if(first)first.trackers.forEach(t=>{nsTotal+=t.cells;nsCells+=t.cells-t.cellsDone;});
+  const perProc=procs.map((p,i)=>{let d=0,t=0;p.trackers.forEach(x=>{d+=x.done;t+=x.total;});return{id:p.id,name:p.name,code:p.code,progress:p.progress,done:d,total:t,pct:pct(d,t),color:DPB_REPORT_PALETTE[i%DPB_REPORT_PALETTE.length]};});
+  // per tracker: latest stage reached + a status (none / part / done) used by the filter chips and the cell colours
+  const counts={none:0,part:0,done:0};
+  list.forEach(L=>{
+    let latest=null,any=false,full=true,has=false;
+    procs.forEach(p=>{const t=p.trackers.get(L.key);if(!t)return;has=true;if(t.done>0){any=true;if(!latest||p.code>=latest.code)latest=p;}if(!(t.total>0&&t.done>=t.total))full=false;});
+    L.latest=latest;L.status=!any?'none':(has&&full?'done':'part');counts[L.status]++;
+  });
+  return{procs,list,labelCount,first,nsCells,nsTotal,perProc,counts,palette:DPB_REPORT_PALETTE,pct};
+}
+window.dpbReportView=dpbReportView;
+// Activity Report straight from the process maps: every process counts ITS OWN cells (its own sheet); a tracker a process
+// does not contain shows "—"; Modules counts screens. Same numbers the maps show, nothing derived from Plan.
+function renderProductionFromMaps(rd){
+  const V=dpbReportView();if(!V)return;
+  const procs=V.procs,list=V.list,labelCount=V.labelCount,palette=V.palette,pct=V.pct,nsCells=V.nsCells,nsTotal=V.nsTotal;
+  const summary=[['Trackers',list.length,'100%',null],['Not Started Cells',nsCells,pct(nsCells,nsTotal)+'%',null]];
+  V.perProc.forEach(p=>summary.push([p.name+(p.progress?' Screens':' Units'),p.done,p.pct+'%',p.color]));
+  const box=document.getElementById('productionSummary2');
+  if(box)box.innerHTML=summary.map(x=>{
+    const dot=x[3]?`<i class="dot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${x[3]};margin-right:6px;vertical-align:middle"></i>`:'';
+    return `<div class="card"><div class="kicker">${dot}${execEsc(x[0])}</div><div class="num">${x[1]}</div><div class="small" style="margin-top:2px;font-weight:800">${x[2]}</div></div>`;
+  }).join('');
+  const legend=document.getElementById('productionLegend2');
+  if(legend)legend.innerHTML=procs.map((p,i)=>`<span><i class="dot" style="background:${palette[i%palette.length]}"></i>${i+1} · ${execEsc(p.name)}</span>`).join('');
+  const thead=document.querySelector('#activityTable thead');
+  if(thead)thead.innerHTML=`<tr>${['Tracker',...procs.map(p=>p.name),'Overall Stage'].map(x=>`<th>${execEsc(x)}</th>`).join('')}</tr>`;
+  const body=document.getElementById('productionBody2');
+  if(body)body.innerHTML=list.map(L=>{
+    let latest=null;
+    const vals=procs.map(p=>{
+      const t=p.trackers.get(L.key);if(!t)return '<td style="opacity:.45">—</td>';
+      if(t.done>0&&(!latest||p.code>=latest.code))latest=p;
+      return `<td>${t.done}/${t.total}${dpbOperatorBadge(p.name,L.label,t.row)}</td>`;
+    }).join('');
+    const rowTag=labelCount.get(L.label)>1?` <span class="small" style="opacity:.65;font-weight:700">· ${execEsc(L.row)}</span>`:'';
+    return `<tr><td><b>${execEsc(L.label)}</b>${rowTag}</td>${vals}<td><span class="badge ${latest?'ok':'warn'}">${execEsc(latest?latest.name:'Not Started')}</span></td></tr>`;
+  }).join('');
+  if(typeof window.applyBuilderTrackerFilter==='function')window.applyBuilderTrackerFilter();
+  updateActivityPrintButton();
+}
+
 function renderProduction(rows){
   renderBuildReportSnapshot();
   const activity=document.getElementById('activity'); if(activity) activity.dataset.ready='1';
+  try{
+    const rd=window.DPBMap&&typeof DPBMap.reportData==='function'?DPBMap.reportData():null;
+    if(rd&&rd.procs&&rd.procs.length){renderProductionFromMaps(rd);return;}
+  }catch(e){console.warn('report from maps failed, using the old calculation',e);}
   const entries=getAppliedProcessEntries().filter(e=>e.code!=='' && Number.isFinite(Number(e.code))).slice().sort((a,b)=>Number(a.code)-Number(b.code));
   const totalUnits=rows.reduce((a,r)=>a+r.units,0);
   const pct=(n)=>totalUnits?Math.round(n*100/totalUnits):0;
@@ -9081,7 +9633,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         types:project.types||[],
         executionResult:project.executionResult||null
       };
-      if(snapshot.buildResult) localStorage.setItem(KEY,JSON.stringify(snapshot));
+      if(snapshot.buildResult){const js=JSON.stringify(snapshot);if(js.length<1200000)localStorage.setItem(KEY,js);else{try{localStorage.removeItem(KEY)}catch(_){}}}
     }catch(e){}
   }
   // The previous 1-second full JSON serialization was the main source of the
@@ -9197,7 +9749,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     <h2>النسخ الاحتياطي 💾</h2>
     <div class="dpbBackupPanel">
       <h3 style="margin:0;font-size:22px">النسخ الاحتياطي التلقائي</h3>
-      <p>يعمل في الخلفية بدون رسائل مزعجة. يحتفظ بنسخة محلية على نفس الجهاز وفق الفترة التي تحددها.</p>
+      <p>يعمل في الخلفية بدون رسائل مزعجة. يحتفظ بنسختين فقط: الحالية والسابقة. كل نسخة جديدة تصبح هي الحالية، والحالية القديمة تصبح السابقة، وتُكتب فوق نفس الملفين على الهاتف وعلى Google Drive.</p>
       <div class="dpbBackupRow">
         <label class="dpbBackupTimeField"><span>المدة</span><input id="dpbBackupInterval" type="number" min="1" step="1" value="5"></label>
         <label class="dpbBackupTimeField"><span>الوحدة</span><select id="dpbBackupUnit">
@@ -9225,14 +9777,20 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         <button id="dpbRestoreModal" class="secondary">استعادة النسخة 📥</button>
       </div>
       <div class="dpbBackupActions" style="margin-top:8px">
-        <button id="dpbBackupChooseFolder" class="secondary">اختيار Documents 📁</button>
+        <button id="dpbBackupChooseFolder" class="secondary">اختيار مكان الحفظ على الهاتف 📁</button>
         <button id="dpbBackupShareFile" class="secondary">مشاركة/حفظ في مكان مخصص 📤</button>
       </div>
-      <div class="dpbBackupActions" style="margin-top:8px">
-        <button id="dpbCloudSyncTestBtn" class="secondary">🔄 اختبار الاتصال بمزامنة السحابة الآن</button>
-      </div>
-      <div id="dpbCloudSyncTestStatus" class="dpbBackupLast">لم يتم الاختبار بعد.</div>
+      <label class="dpbBackupSwitchRow">
+        <span id="dpbBackupDriveToggleLabel" class="dpbBackupSwitchText">☁️ رفع نسخة على Google Drive: تشغيل</span>
+        <span class="dpbBackupSwitch">
+          <input id="dpbBackupDriveToggle" type="checkbox" checked>
+          <span class="dpbBackupSwitchTrack"><span class="dpbBackupSwitchThumb"></span></span>
+        </span>
+      </label>
+      <input id="dpbBackupScriptUrl" type="url" inputmode="url" autocomplete="off" placeholder="رابط سكربت النسخ الاحتياطي (ينتهي بـ /exec)" style="width:100%;box-sizing:border-box;margin-top:8px;padding:11px 12px;border-radius:10px;border:1px solid #c9d6e6;background:#fff;color:#111;font-size:15px;direction:ltr;text-align:left">
+      <input id="dpbBackupDriveEmail" type="email" inputmode="email" autocomplete="off" placeholder="إيميل Google Drive اللي تترفع عليه النسخة" style="width:100%;box-sizing:border-box;margin-top:8px;padding:11px 12px;border-radius:10px;border:1px solid #c9d6e6;background:#fff;color:#111;font-size:15px;direction:ltr;text-align:left">
       <div id="dpbBackupFolderStatus" class="dpbBackupLast">لم يتم اختيار مجلد خارجي بعد.</div>
+      <div id="dpbBackupOutCard" class="dpbBackupLast" style="line-height:1.9"></div>
       <input id="dpbRestoreModalFile" type="file" accept=".json,application/json" style="display:none">
     </div>
     <button id="dpbBackupModalClose" class="dpbBackupClose">إغلاق</button>
@@ -9366,14 +9924,12 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 
     <div class="dpbAdminTabPanel" data-tab="sync">
       <section class="dpbAdminCard" id="dpbLastSyncCard">
-        <h3>آخر حالة مزامنة</h3>
+        <h3>حالة المزامنة والاتصال</h3>
         <div class="hint" id="dpbLastSyncStatus">لسه مفيش أي محاولة مزامنة مسجّلة.</div>
+        <button type="button" class="dpbAdminBtn" id="dpbCloudSyncTestBtn" style="margin-top:8px;width:100%">🔄 اختبار الاتصال بمزامنة السحابة الآن</button>
+        <div class="hint" id="dpbCloudSyncTestStatus" style="margin-top:6px">لم يتم الاختبار بعد.</div>
         <h3 style="margin-top:14px">أخطاء برمجية مسجّلة</h3>
         <div class="hint" id="dpbJsErrorsStatus" style="white-space:pre-line">لا يوجد أخطاء مسجّلة.</div>
-      </section>
-      <section class="dpbAdminCard">
-        <h3>فتح المشروع</h3>
-        <div class="hint">الـBuild يظل تلقائيًا ويتحدث تلقائيًا عند فتح Admin Control Center؛ فتح Plan Builder أصبح من أيقونة 🛠️ بجوار الترس.</div>
       </section>
     </div>
 
@@ -9810,8 +10366,35 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     };
   }
 
+  // احتياط: لو في مسار حفظ ما بلّغش بالتعديل، بنقارن بصمة البيانات نفسها بآخر نسخة، فأي تعديل فعلي يتحسب.
+  const BACKUP_SIG_KEY="DPB_BACKUP_SIG_V1";
+  function sourceSig(){
+    let h=5381,n=0;
+    ["DPB_SHARED_PRODUCTION_V2","DPB_TEST_PROJECT_SNAPSHOT_V3",ACC_KEY].forEach(k=>{
+      let v="";try{v=localStorage.getItem(k)||""}catch(_){}
+      n+=v.length;
+      for(let i=0;i<v.length;i++){h=((h<<5)+h+v.charCodeAt(i))|0}
+    });
+    return h+":"+n;
+  }
+  let sigTick=0;
+  function checkSigChange(){
+    if(Date.now()-sigTick<30000)return;sigTick=Date.now();
+    try{
+      const now=sourceSig(),old=localStorage.getItem(BACKUP_SIG_KEY);
+      if(old===null){localStorage.setItem(BACKUP_SIG_KEY,now);return}
+      if(old!==now&&!Number(localStorage.getItem(BACKUP_LAST_CHANGE_KEY)||0))markDataChanged();
+    }catch(_){}
+  }
   function markDataChanged(){
-    try{localStorage.setItem(BACKUP_LAST_CHANGE_KEY,String(Date.now()))}catch(_){}
+    try{
+      // المزامنة بتنادي هنا في كل سحب حتى لو مفيش جديد: نعلّم "تعديل" بس لو البيانات فعلًا اختلفت عن آخر نسخة
+      const old=localStorage.getItem(BACKUP_SIG_KEY);
+      if(old!==null&&sourceSig()===old)return;
+      // ولو في تعديل معلّق أصلًا منزحزحش موعده (المزامنة المتكررة كانت بتأجّل النسخة للأبد)
+      if(Number(localStorage.getItem(BACKUP_LAST_CHANGE_KEY)||0))return;
+      localStorage.setItem(BACKUP_LAST_CHANGE_KEY,String(Date.now()));
+    }catch(_){}
   }
   window.__dpbMarkDataChanged=markDataChanged;
 
@@ -9868,51 +10451,176 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     }catch(_){}
     return false;
   }
-  async function writeBackupToDocuments(data){
-    const name="DPB_Backup_"+new Date().toISOString().replace(/[:.]/g,"-")+".json";
-    const text=JSON.stringify(data,null,2);
-
+  // ===== نسخة برّه التطبيق: الهاتف + Google Drive، دايمًا نسختين بس (الحالية + السابقة) وبنفس أسماء الملفات =====
+  const BK_CUR_NAME="DPB_Backup_current.json", BK_PREV_NAME="DPB_Backup_previous.json";
+  const PHONE_PENDING_KEY="DPB_BACKUP_PHONE_PENDING_V1";
+  const DRIVE_EMAIL_KEY="DPB_BACKUP_DRIVE_EMAIL_V1", OUT_STATUS_KEY="DPB_BACKUP_OUT_STATUS_V1", DRIVE_ON_KEY="DPB_BACKUP_DRIVE_V1", DRIVE_PENDING_KEY="DPB_BACKUP_DRIVE_PENDING_V1";
+  const IS_LOCAL_HOST=/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  // على localhost الرفع على Drive مقفول افتراضيًا (عشان بيانات التجربة ما تكتبش فوق نسخة الشغل الحقيقية)
+  function driveEnabled(){
+    let v=null;try{v=localStorage.getItem(DRIVE_ON_KEY)}catch(_){}
+    return v===null?!IS_LOCAL_HOST:v!=="off";
+  }
+  function driveEmail(){try{return String(localStorage.getItem(DRIVE_EMAIL_KEY)||"").trim()}catch(_){return ""}}
+  function validEmail(e){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)}
+  function readOutStatus(){try{return JSON.parse(localStorage.getItem(OUT_STATUS_KEY)||"{}")||{}}catch(_){return {}}}
+  function setOutStatus(kind,val){
+    const o=readOutStatus();o[kind]=val;
+    try{localStorage.setItem(OUT_STATUS_KEY,JSON.stringify(o))}catch(_){}
+    renderOutStatus();
+  }
+  function fmtWhen(t){
+    const d=new Date(t),today=new Date();
+    const tm=d.toLocaleTimeString("ar-EG",{hour:"numeric",minute:"2-digit"});
+    return d.toDateString()===today.toDateString()?("الساعة "+tm):(d.toLocaleDateString("ar-EG")+" "+tm);
+  }
+  function renderOutStatus(){
+    const box=q("dpbBackupOutCard");if(!box)return;
+    const st=readOutStatus();box.textContent="";
+    const add=(txt,color)=>{const d=document.createElement("div");d.textContent=txt;if(color)d.style.color=color;box.appendChild(d);return d};
+    add("آخر حفظ برّه التطبيق:");
+    const ph=st.phone;
+    if(!ph)add("📱 على الهاتف: لم يتم بعد");
+    else if(ph.ok)add("📱 على الهاتف: ✔ نجح "+fmtWhen(ph.time)+(ph.where?" ("+ph.where+")":""),"#7be08a");
+    else add("📱 على الهاتف: ✖ "+(ph.error||"فشل")+" ("+fmtWhen(ph.time)+")","#ff8080");
+    const dr=st.drive;
+    if(!driveEnabled())add("☁️ Google Drive: متوقف");
+    else if(!dr)add("☁️ Google Drive: لم يتم بعد");
+    else{
+      const row=add(dr.ok?("☁️ Google Drive: ✔ نجح "+fmtWhen(dr.time)):("☁️ Google Drive: ✖ "+(dr.error||"فشل")+" ("+fmtWhen(dr.time)+")"),dr.ok?"#7be08a":"#ff8080");
+      if(dr.ok&&dr.url&&/^https:\/\//.test(dr.url)){
+        const a=document.createElement("a");a.href=dr.url;a.target="_blank";a.rel="noopener";a.textContent=" 🔗 فتح الملف";a.style.color="#8ec5ff";row.appendChild(a);
+      }
+      if(dr.ok&&dr.sharedWith)add("📧 مشاركة مع: "+dr.sharedWith+" ✔","#7be08a");
+      else if(dr.ok&&dr.shareError)add("📧 تعذّرت المشاركة مع "+(driveEmail()||"الإيميل")+": "+dr.shareError,"#ff8080");
+      else if(dr.ok&&!driveEmail())add("📧 اكتب إيميل Drive عشان النسخة تظهر عنده");
+      {const acc=dr.sharedWith||driveEmail()||dr.owner;if(dr.ok&&acc)add("الملف محفوظ في حساب: "+acc)}
+    }
+  }
+  function capFS(){
+    try{const C=window.Capacitor;return(window.__DPB_NATIVE&&C&&C.Plugins&&C.Plugins.Filesystem)?C.Plugins.Filesystem:null}catch(_){return null}
+  }
+  async function writeFilesToHandle(handle,files){
+    for(const f of files){
+      const fh=await handle.getFileHandle(f.name,{create:true});
+      const w=await fh.createWritable();await w.write(f.text);await w.close();   // بتكتب فوق الملف الموجود
+    }
+  }
+  // بيكتب الملفين على الهاتف/الجهاز. interactive=true (ضغطة زرار) يسمح بنافذة اختيار مجلد أو مشاركة. التلقائي ما بيفتحش أي نافذة.
+  async function writePhoneFiles(files,interactive){
+    let lastErr="";
     if(dpbHasNativeBridge()){
       try{
-        const hasFolder=await nativeHasFolder();
-        if(hasFolder){
-          const ok=await nativeWriteBackupFile(name,text);
-          if(ok){
-            if(q("dpbBackupFolderStatus"))q("dpbBackupFolderStatus").textContent=`📁 تم حفظ النسخة في المجلد المختار: ${name}`;
-            return {ok:true,name,external:true};
+        if(await nativeHasFolder()){
+          for(const f of files){
+            const ok=await nativeWriteBackupFile(f.name,f.text);
+            if(!ok)throw new Error("تعذّرت الكتابة في المجلد المختار");
           }
+          return {ok:true,where:"المجلد المختار"};
         }
-      }catch(e){console.warn("native backup write failed",e)}
+        lastErr="لم يتم اختيار مجلد للحفظ بعد";
+      }catch(e){console.warn("native backup write failed",e);lastErr=(e&&e.message)||"تعذّرت الكتابة في المجلد المختار"}
     }
-
-    let handle=await getDocumentsDirectoryHandle();
-    if(!handle && window.showDirectoryPicker && !dpbHasNativeBridge()){
-      handle=await requestDocumentsFolder();
-    }
-    if(handle && !handle.native && await ensureDirectoryPermission(handle)){
-      try{
-        const fileHandle=await handle.getFileHandle(name,{create:true});
-        const writable=await fileHandle.createWritable();
-        await writable.write(text);
-        await writable.close();
-        if(q("dpbBackupFolderStatus"))q("dpbBackupFolderStatus").textContent=`📁 تم حفظ النسخة في المجلد المختار: ${name}`;
-        return {ok:true,name,external:true};
-      }catch(e){
-        console.warn("Documents write failed",e);
+    try{
+      let handle=await getDocumentsDirectoryHandle();
+      if(handle&&!handle.native){
+        if(await ensureDirectoryPermission(handle)){
+          await writeFilesToHandle(handle,files);
+          return {ok:true,where:"المجلد المختار"};
+        }
+        lastErr="المتصفح محتاج إذن المجلد — افتح النسخ الاحتياطي واضغط «نسخ احتياطي الآن»";
+      }else if(!handle&&interactive&&window.showDirectoryPicker&&!dpbHasNativeBridge()){
+        handle=await requestDocumentsFolder();
+        await writeFilesToHandle(handle,files);
+        return {ok:true,where:"المجلد المختار"};
       }
+    }catch(e){console.warn("Documents write failed",e);lastErr=(e&&e.message)||lastErr||"تعذّرت الكتابة في المجلد"}
+    // تطبيق Capacitor من غير bridge للمجلد: Documents/DPB، وكل مرة فوق نفس الملفين
+    const fs=capFS();
+    if(fs){
+      try{
+        for(const f of files)await fs.writeFile({path:"DPB/"+f.name,data:f.text,directory:"DOCUMENTS",encoding:"utf8",recursive:true});
+        return {ok:true,where:"Documents/DPB"};
+      }catch(e){console.warn("capacitor backup write failed",e);lastErr=(e&&e.message)||"تعذّرت الكتابة في Documents/DPB"}
     }
-    // Fallback for Android WebView/content:// or browsers without directory access.
-    const blob=new Blob([text],{type:"application/json"});
-    const url=URL.createObjectURL(blob),a=document.createElement("a");
-    a.href=url;a.download=name;
-    document.body.appendChild(a);a.click();a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),1500);
-    if(q("dpbBackupFolderStatus"))
-      q("dpbBackupFolderStatus").textContent=window.__DPB_NATIVE?"📤 اختر مكان الحفظ من نافذة المشاركة (Files / Drive).":"⬇️ تم حفظ الملف في مجلد التنزيلات (Downloads) بجهازك — افتح تطبيق الملفات لتجده هناك.";
-    return {ok:true,name,external:false};
+    if(interactive){
+      // آخر حل: تنزيل/مشاركة ملف النسخة الحالية
+      const blob=new Blob([files[0].text],{type:"application/json"});
+      const url=URL.createObjectURL(blob),a=document.createElement("a");
+      a.href=url;a.download=files[0].name;
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1500);
+      return {ok:true,where:window.__DPB_NATIVE?"نافذة المشاركة":"مجلد التنزيلات"};
+    }
+    return {ok:false,error:lastErr||"لم يتم اختيار مكان للحفظ على الهاتف"};
+  }
+  function driveErrorText(res){
+    const raw=String((res&&res.error)||"");
+    if(/Unknown action/i.test(raw))return "Code.gs المنشور ما فيهوش النسخ الاحتياطي — انشر نسخة جديدة (Deploy > Manage deployments > Version: New version)";
+    if(/unauthorized|401/i.test(raw)||(res&&res.code===401))return "سجّل دخول من جديد (التوكن غير صالح)";
+    if(res&&res.__reachable===false){
+      if(navigator.onLine===false)return "لا يوجد اتصال بالإنترنت";
+      if(window.DPB_backupUrl&&window.DPB_backupUrl()){
+        if(res.__probe==="get-ok")return "الرابط شغال لكن رفع النسخة اتمنع — في Apps Script: شغّل دالة authorizeBackup مرة واحدة ووافق على الصلاحيات، وبعدها Deploy > Manage deployments > Version: New version";
+        return "تعذّر الاتصال بسكربت النسخ الاحتياطي — افتح الرابط في المتصفح: لازم يظهر ok:true. لو طلب تسجيل دخول أو إذن، اجعل Who has access = Anyone ووافق على الصلاحيات";
+      }
+      return "تعذّر الاتصال بـ Apps Script";
+    }
+    return raw||"فشل الرفع";
+  }
+  async function uploadBackupToDrive(data){
+    if(!driveEnabled())return {skipped:true};
+    for(let i=0;i<30&&typeof window.DPB_backupPost!=="function";i++)await new Promise(r=>setTimeout(r,100));
+    let res;
+    try{
+      if(typeof window.DPB_backupPost!=="function")throw new Error("الاتصال بالسحابة غير جاهز");
+      res=await window.DPB_backupPost("saveBackup",{content:JSON.stringify(data),createdAt:data.createdAt||new Date().toISOString(),shareWith:driveEmail()},90000);
+    }catch(e){res={ok:false,error:String((e&&e.message)||e)}}
+    if(res&&res.ok){
+      try{localStorage.removeItem(DRIVE_PENDING_KEY)}catch(_){}
+      setOutStatus("drive",{ok:true,time:Date.now(),url:res.url||"",owner:res.owner||"",sharedWith:res.sharedWith||"",shareError:res.shareError||""});
+      return {ok:true};
+    }
+    try{localStorage.setItem(DRIVE_PENDING_KEY,String(Date.now()))}catch(_){}
+    const err=driveErrorText(res);
+    setOutStatus("drive",{ok:false,time:Date.now(),error:err});
+    return {ok:false,error:err};
+  }
+  let outBusy=false;
+  // بيحفظ النسخة (الحالية + السابقة) على الهاتف وعلى Drive. كل واحدة مستقلة: فشل واحدة ما بيوقفش التانية.
+  async function externalSave(data,interactive){
+    if(outBusy)return {busy:true};
+    outBusy=true;
+    try{
+      const prev=await backupDbGet("previous");
+      const files=[{name:BK_CUR_NAME,text:JSON.stringify(data)}];
+      if(prev)files.push({name:BK_PREV_NAME,text:JSON.stringify(prev)});
+      let phone,drive;
+      try{phone=await writePhoneFiles(files,!!interactive)}catch(e){phone={ok:false,error:(e&&e.message)||"فشل"}}
+      if(phone.ok){try{localStorage.removeItem(PHONE_PENDING_KEY)}catch(_){}setOutStatus("phone",{ok:true,time:Date.now(),where:phone.where})}
+      else{try{localStorage.setItem(PHONE_PENDING_KEY,"1")}catch(_){}if(interactive||phone.error)setOutStatus("phone",{ok:false,time:Date.now(),error:phone.error})}
+      try{drive=await uploadBackupToDrive(data)}catch(e){drive={ok:false,error:(e&&e.message)||"فشل"}}
+      return {phone,drive};
+    }finally{outBusy=false}
+  }
+  // لو آخر رفع على Drive فشل (نت قطع مثلًا) نعيده بالنسخة الحالية كل 5 دقايق لحد ما ينجح
+  let lastDriveRetry=0;
+  async function retryDriveIfPending(){
+    try{
+      if(!driveEnabled()||outBusy)return;
+      if(!localStorage.getItem(DRIVE_PENDING_KEY))return;
+      if(navigator.onLine===false||Date.now()-lastDriveRetry<300000)return;
+      lastDriveRetry=Date.now();
+      const cur=await backupCurrentData();if(!cur)return;
+      outBusy=true;try{await uploadBackupToDrive(cur)}finally{outBusy=false}
+    }catch(e){console.warn("drive retry",e)}
+  }
+  async function writeBackupToDocuments(data){
+    return await externalSave(data,true);
   }
 
   async function rotateAndStore(){
+    const sigNow=sourceSig();
     const data=snapshot(),now=Date.now(),cur=await backupCurrentData();
     if(cur){
       await backupDbPut("previous",cur);
@@ -9927,6 +10635,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     }
     localStorage.setItem(BACKUP_CURRENT_TIME_KEY,String(now));
     localStorage.removeItem(BACKUP_LAST_CHANGE_KEY);
+    try{localStorage.setItem(BACKUP_SIG_KEY,sigNow)}catch(_){}
     localStorage.setItem("DPB_BACKUP_LAST_MANUAL_V1",new Date(now).toLocaleString("ar-EG"));
     updateBackupInfo();
     return data;
@@ -9968,34 +10677,71 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     return Date.now()>=scheduleDueAt(lastChange);
   }
 
+  // بيكتب النسخة الحالية برّه التطبيق فورًا (هاتف + Drive) من غير ما حد يضغط «نسخ احتياطي الآن»
+  async function syncExternalNow(){
+    try{
+      if(outBusy)return;
+      const cur=await backupCurrentData();if(!cur)return;
+      const r=await externalSave(cur,false);
+      const msg="🟢 اتحفظت برّه التطبيق"+(r&&r.phone&&r.phone.ok?" — 📱 ✔":"")+(r&&r.drive&&r.drive.ok?" — ☁️ ✔":"")+".";
+      if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=msg;
+    }catch(e){console.warn("syncExternalNow",e)}
+  }
+  // لو الكتابة على الهاتف فشلت (إذن المجلد مثلًا) نعيدها تلقائيًا من غير نوافذ لحد ما تنجح
+  let lastPhoneRetry=0;
+  async function retryPhoneIfPending(){
+    try{
+      if(outBusy||!localStorage.getItem(PHONE_PENDING_KEY))return;
+      if(Date.now()-lastPhoneRetry<30000)return;
+      lastPhoneRetry=Date.now();
+      await syncExternalNow();
+    }catch(_){}
+  }
+  // المتصفح بيفقد إذن المجلد بعد كل فتح للصفحة. أول لمسة في الصفحة بتجدد الإذن (من غير ما تفتح أي شاشة)، وبعدها الحفظ بيرجع تلقائي.
+  let lastGrantTry=0;
+  document.addEventListener("pointerdown",async()=>{
+    try{
+      if(dpbHasNativeBridge()||!localStorage.getItem(PHONE_PENDING_KEY))return;
+      if(Date.now()-lastGrantTry<60000)return;
+      const h=await getDocumentsDirectoryHandle();
+      if(!h||h.native||!h.requestPermission)return;
+      lastGrantTry=Date.now();
+      if(await ensureDirectoryPermission(h))await syncExternalNow();
+    }catch(_){}
+  },true);
   async function manualBackup(){
     try{
       const data=await rotateAndStore();
-      // Manual backup is both a real local backup and an external Documents copy.
-      const result=await writeBackupToDocuments(data);
-      const msg=result.external
-        ?"تم إنشاء النسخة وحفظها في المجلد المختار."
-        :"تم إنشاء النسخة. تم تجهيز ملف خارجي للحفظ في Documents.";
+      const r=await externalSave(data,true);
+      const parts=["تم إنشاء النسخة (الحالية والسابقة)."];
+      if(r&&r.phone)parts.push(r.phone.ok?("📱 حُفظت على الهاتف ("+r.phone.where+")."):("📱 لم تُحفظ على الهاتف: "+r.phone.error));
+      if(r&&r.drive&&!r.drive.skipped)parts.push(r.drive.ok?"☁️ رُفعت على Google Drive.":("☁️ لم تُرفع على Drive: "+r.drive.error));
+      const msg=parts.join(" ");
+      const bad=r&&((r.phone&&!r.phone.ok)||(r.drive&&!r.drive.skipped&&!r.drive.ok));
       if(q("dpbBackupStatus"))q("dpbBackupStatus").textContent=msg;
-      if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent="✅ "+msg;
+      if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=(bad?"⚠️ ":"✅ ")+msg;
     }catch(e){
       if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent="❌ "+(e?.message||"تعذر إنشاء النسخة.");
       console.warn("manual backup",e);
     }
   }
 
+  let autoBusy=false;
   async function autoBackup(){
+    if(autoBusy)return;
+    autoBusy=true;
     try{
+      checkSigChange();
       if(dueAndChanged()){
         const data=await rotateAndStore();
-        // If the user has already granted a Documents directory, write there silently.
-        const handle=await getDocumentsDirectoryHandle();
-        if(handle && await ensureDirectoryPermission(handle))await writeBackupToDocuments(data);
-        const msg="🟢 تم النسخ التلقائي بعد انتهاء الفترة ووجود تعديل.";
+        const r=await externalSave(data,false);
+        const okP=r&&r.phone&&r.phone.ok, okD=r&&r.drive&&r.drive.ok;
+        const msg="🟢 تم النسخ التلقائي"+(okP?" — 📱 الهاتف ✔":"")+(okD?" — ☁️ Drive ✔":"")+".";
         if(q("dpbBackupStatus"))q("dpbBackupStatus").textContent=msg;
         if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=msg;
-      }else updateBackupInfo();
+      }else{updateBackupInfo();await retryDriveIfPending();await retryPhoneIfPending()}
     }catch(e){console.warn("auto backup",e)}
+    finally{autoBusy=false}
   }
 
   function scheduleAutoBackup(){
@@ -10004,6 +10750,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     autoBackup();
   }
 
+  function syncDriveToggleUI(on){
+    const t=q("dpbBackupDriveToggle");if(t)t.checked=on;
+    const l=q("dpbBackupDriveToggleLabel");if(l)l.textContent="☁️ رفع نسخة على Google Drive: "+(on?"تشغيل":"إيقاف");
+  }
   function syncAutoToggleUI(on){
     const t=q("dpbBackupAutoToggle");if(t)t.checked=on;
     const l=q("dpbBackupAutoToggleLabel");if(l)l.textContent="النسخ التلقائي: "+(on?"تشغيل":"إيقاف");
@@ -10019,6 +10769,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     if(q("dpbBackupFolderStatus"))
       q("dpbBackupFolderStatus").textContent=h?"📁 مجلد خارجي محفوظ ويمكن استخدامه تلقائيًا.":"لم يتم اختيار مجلد خارجي بعد.";
     q("dpbBackupModalStatus").textContent=on?"🟢 النسخ التلقائي يعمل":"⚪ النسخ التلقائي متوقف";
+    syncDriveToggleUI(driveEnabled());if(q("dpbBackupDriveEmail"))q("dpbBackupDriveEmail").value=driveEmail();if(q("dpbBackupScriptUrl"))q("dpbBackupScriptUrl").value=(localStorage.getItem("DPB_BACKUP_URL_V1")||"");renderOutStatus();
     await updateBackupInfo();
     m.style.display="flex";m.setAttribute("aria-hidden","false");
   }
@@ -10342,8 +11093,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     }
   };
 
-  const cloudTestBtn=q("dpbCloudSyncTestBtn");
-  if(cloudTestBtn) cloudTestBtn.onclick=async()=>{
+  if(!window.__dpbCloudTestBound){window.__dpbCloudTestBound=true;document.addEventListener("click",ev=>{
+    const bt=ev.target&&ev.target.closest&&ev.target.closest("#dpbCloudSyncTestBtn");if(!bt)return;window.__dpbRunCloudTest(bt);});}
+  window.__dpbRunCloudTest=async(cloudTestBtn)=>{
     const status=q("dpbCloudSyncTestStatus");
     if(status)status.textContent="⏳ جاري الاختبار...";
     cloudTestBtn.disabled=true;
@@ -10372,6 +11124,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       const h=await requestDocumentsFolder();
       if(h && q("dpbBackupFolderStatus"))
         q("dpbBackupFolderStatus").textContent="📁 تم اختيار المجلد بنجاح. النسخ القادمة يمكن حفظها فيه تلقائيًا.";
+      if(h)await syncExternalNow();
     }catch(e){
       if(q("dpbBackupFolderStatus"))
         q("dpbBackupFolderStatus").textContent="ℹ️ لم يتم اختيار المجلد. يمكنك المحاولة مرة أخرى.";
@@ -10402,6 +11155,31 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     const on=e.target.checked;
     if(on)saveBackupSchedule();
     setAutoMode(on);
+  };
+  q("dpbBackupDriveEmail").onchange=async(e)=>{
+    const v=String(e.target.value||"").trim().toLowerCase();
+    if(v&&!validEmail(v)){if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent="⚠️ الإيميل غير صالح";return}
+    try{localStorage.setItem(DRIVE_EMAIL_KEY,v)}catch(_){}
+    e.target.value=v;
+    if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=v?"📧 اتحفظ الإيميل — بشارك النسخة معاه…":"📧 اتمسح الإيميل";
+    try{
+      const cur=await backupCurrentData();
+      if(cur&&driveEnabled()&&!outBusy){outBusy=true;try{await uploadBackupToDrive(cur)}finally{outBusy=false}}
+    }catch(_){}
+    renderOutStatus();
+    if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=v?"📧 تم":"";
+  };
+  q("dpbBackupDriveToggle").onchange=(e)=>{
+    try{localStorage.setItem(DRIVE_ON_KEY,e.target.checked?"on":"off")}catch(_){}
+    syncDriveToggleUI(e.target.checked);renderOutStatus();
+    if(e.target.checked)syncExternalNow();
+  };
+  q("dpbBackupScriptUrl").onchange=async(e)=>{
+    const v=String(e.target.value||"").trim();
+    if(v&&!/^https:\/\/script\.google\.com\/.+\/exec$/.test(v)){if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent="⚠️ الرابط لازم يبدأ بـ https://script.google.com وينتهي بـ /exec";return}
+    try{localStorage.setItem("DPB_BACKUP_URL_V1",v)}catch(_){}
+    if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=v?"🔗 اتحفظ رابط سكربت النسخ الاحتياطي":"🔗 اتمسح — هيرجع للسكربت القديم";
+    if(v)await syncExternalNow();
   };
   q("dpbBackupInterval").onchange=saveBackupSchedule;
   q("dpbBackupUnit").onchange=saveBackupSchedule;
@@ -10526,6 +11304,33 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     try{const m=JSON.parse(localStorage.getItem(OFFLINE_AUTH_KEY)||"{}")||{};return !!m[name]&&m[name]===dpbOfflineHash(name,pin);}catch(_){return false;}
   }
   window.DPB_offlineAuthStore=dpbOfflineAuthStore;window.DPB_offlineAuthOk=dpbOfflineAuthOk;
+  window.DPB_gsCall=function(a,d,t){return gsCall(a,d,t);};
+  // النسخ الاحتياطي: لو فيه رابط سكربت منفصل (DPB_BACKUP_URL_V1) بيروح له مباشرة، وإلا بيرجع للسكربت القديم
+  window.DPB_backupUrl=function(){try{return String(localStorage.getItem("DPB_BACKUP_URL_V1")||"").trim()}catch(_){return ""}};
+  // بيقبل الشكلين: DPB_backupPost(payload, ms) أو DPB_backupPost("saveBackup", payload, ms)
+  window.DPB_backupPost=async function(a,b,c){
+    let action="saveBackup",payload,ms;
+    if(typeof a==="string"){action=a;payload=b;ms=c}else{payload=a;ms=b}
+    payload=(payload&&typeof payload==="object")?payload:{};
+    ms=(Number(ms)>0)?Number(ms):90000;
+    const u=window.DPB_backupUrl();
+    if(!u)return window.DPB_gsCall(action,payload,ms);
+    const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),ms);
+    try{
+      const r=await fetch(u,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(Object.assign({},payload,{action:action})),signal:ctl.signal,redirect:"follow"});
+      const txt=await r.text();
+      try{return JSON.parse(txt)}catch(_){return {ok:false,error:"رد غير مفهوم من سكربت النسخ الاحتياطي — تأكد إن الرابط ينتهي بـ /exec وإن الوصول Anyone"}}
+    }catch(e){
+      // الرفع فشل: نفحص بـ GET هل الرابط نفسه شغال (يفرّق بين "الرابط/الوصول غلط" و"السكربت شغال بس الإذن ناقص")
+      let probe="";
+      try{
+        const c2=new AbortController(),t2=setTimeout(()=>c2.abort(),15000);
+        try{const g=await fetch(u,{method:"GET",signal:c2.signal,redirect:"follow"});const j=JSON.parse(await g.text());probe=(j&&j.ok)?"get-ok":"get-bad"}finally{clearTimeout(t2)}
+      }catch(_){probe="get-fail"}
+      return {ok:false,__reachable:false,__probe:probe,error:String((e&&e.message)||e)};
+    }
+    finally{clearTimeout(t)}
+  };
   function gsCall(action,data,timeoutMs){
     timeoutMs=timeoutMs||8000;
     if(DPB_ADMIN_ACTIONS[action]){const a=dpbAdminAuth(); if(a) data=Object.assign({auth:a},data||{});}
@@ -10813,8 +11618,19 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   function getSyncedMap(){
     try{ return JSON.parse(localStorage.getItem(SYNCED_KEY)||"{}"); }catch(_){ return {}; }
   }
-  function setSyncedMap(m){
-    try{ localStorage.setItem(SYNCED_KEY,JSON.stringify(m)); }catch(_){}
+  // The map only matters for records that exist on this device (push compares synced[id] with the record's time; pull skips ids with no local
+  // record). Entries of records that are gone were never removed, so the map grew without limit (about 1 MB seen) and filled the 5 MB storage.
+  function pruneSyncedMap(m,recs){
+    try{
+      if(!Array.isArray(recs)){ const st=readStore(); recs=st&&st.records; }
+      if(!Array.isArray(recs)) return m;
+      const ids=new Set(); recs.forEach(r=>{ if(r&&r.id!=null) ids.add(String(r.id)); });
+      Object.keys(m).forEach(id=>{ if(!ids.has(String(id))) delete m[id]; });
+    }catch(_){}
+    return m;
+  }
+  function setSyncedMap(m,recs){
+    try{ localStorage.setItem(SYNCED_KEY,JSON.stringify(pruneSyncedMap(m,recs))); }catch(_){}
   }
   const DELETED_KEY="DPB_CLOUD_DELETED_V1";
   function getDeletedMap(){try{return JSON.parse(localStorage.getItem(DELETED_KEY)||"{}")}catch(_){return {}}}
@@ -11217,6 +12033,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   window.__dpbGetLiveGridProcessNames=getLiveGridProcessNames_;
   window.__dpbLiveGridByProcess=window.__dpbLiveGridByProcess||{};
   async function fetchOneProcessGrid_(processName){
+    // Firestore layer owns this process: read the cells locally, never ask Apps Script (null = not connected yet; the layer's onChange refetches)
+    try{ const FS=window.DPB_FS2; if(FS&&FS.owns&&FS.owns(processName)){ const L=FS.liveValues(processName); const prev=window.__dpbLiveGridByProcess[processName]; return L?{sheet:processName,valuesByCoord:L,trackers:(prev&&prev.trackers)||[]}:null; } }catch(_){}
     const res=await dpbGuardedFetch(CLOUD_URL_NOW()+"?action=getGrid&process="+encodeURIComponent(processName)+"&t="+Date.now());
     if(!res.ok) return null;
     const json=JSON.parse(await res.text());
@@ -11321,7 +12139,22 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     const pollStart=Date.now();
     const wantColors=(pollStart-pollColorsAt)>20000;
     try{
-      const names=getLiveGridProcessNames_();
+      const allNames=getLiveGridProcessNames_();
+      // processes owned by the Firestore layer are read locally (no network); only the rest go to Apps Script
+      const FS=window.DPB_FS2; let localAny=false;
+      const names=allNames.filter(n=>{ try{ return !(FS&&FS.owns&&FS.owns(n)); }catch(_){ return true; } });
+      allNames.forEach(n=>{
+        if(names.includes(n)) return;
+        const L=FS.liveValues(n); if(!L) return;
+        const prev=window.__dpbLiveGridByProcess[n];
+        window.__dpbLiveGridByProcess[n]={sheet:n,valuesByCoord:L,trackers:(prev&&prev.trackers)||[],colorByCoord:(prev&&prev.colorByCoord)||new Map()};
+        localAny=true;
+      });
+      if(localAny){
+        if(window.__dpbLiveGridByProcess.Ramming) window.__dpbLiveGrid=window.__dpbLiveGridByProcess.Ramming;
+        pollLastOkAt=Date.now();
+        if(dm&&typeof dm.applyLiveDiff==="function") dm.applyLiveDiff();
+      }
       if(!names.length) return;
       const res=await dpbGuardedFetch(CLOUD_URL_NOW(),{method:"POST",body:JSON.stringify({action:"getGridBatch",processes:names,includeColors:wantColors,light:true})});
       if(!res.ok) return;
@@ -11425,7 +12258,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       if(typeof window.__dpbMarkDataChanged==="function") window.__dpbMarkDataChanged();
     }catch(e){ console.warn("[CloudSync] forgetLocal failed",e); }
   }
-  window.DPB_CLOUD_PRODUCTION={cloudPush,cloudPull,cloudDelete,scheduleSync,forgetLocal};
+  window.DPB_CLOUD_PRODUCTION={cloudPush,cloudPull,cloudDelete,scheduleSync,forgetLocal,pruneSynced:function(recs){ setSyncedMap(getSyncedMap(),recs); }};
+  setTimeout(function(){ try{ setSyncedMap(getSyncedMap()); }catch(_){} },3000); // shrink a map that is already bloated on this device
 })();
 </script>
 <style id="dpbSupervisorMapAndCompactPatch">
@@ -14190,7 +15024,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       <section class="dpbSupScreen" id="dpbSupHistory">
         <div class="dpbSupHero">
           <h2>📊 Production Reports</h2>
-          <p>كميات الإنتاج الفعلية المسجلة. المشرف يعدل الحالات التي سجلها بنفسه فقط، وAdmin يستطيع تعديل أي حالة بما فيها الحالات التي سجلها Admin.</p>
+          <p>المشرف يعدّل الحالات التي سجّلها بنفسه فقط، والـAdmin يعدّل أي حالة.</p>
         </div>
         <div id="dpbSupReportSummary" class="dpbSupReportSummary"></div>
         <div id="dpbSupHistoryList"></div>
@@ -14354,7 +15188,16 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     }catch(e){return {}}
   }
   let PROCESS_STAGE_INDEXES=new Map();
-  function setStore(x){localStorage.setItem(STORE,JSON.stringify(x));PROCESS_STAGE_INDEXES=new Map()}
+  function setStore(x){
+    const js=JSON.stringify(x);
+    try{localStorage.setItem(STORE,js)}
+    catch(e){
+      let ok=false;
+      try{ if(window.DPB_CLOUD_PRODUCTION&&window.DPB_CLOUD_PRODUCTION.pruneSynced){ window.DPB_CLOUD_PRODUCTION.pruneSynced(x&&x.records); localStorage.setItem(STORE,js); ok=true; } }catch(_){}
+      if(!ok){ const err=new Error("التخزين المحلي على الجهاز ممتلي، التعديل ما اتحفظش. امسح الكاش المؤقت أو بلّغ الأدمن. ("+(e&&e.message||e)+")"); err.name="QuotaExceededError"; throw err; }
+    }
+    PROCESS_STAGE_INDEXES=new Map()
+  }
   function records(){return getStore().records||[]}
   function saveRecords(a){
     const pid=window.__dpbActiveProjectId||'';
@@ -14686,7 +15529,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     let ownerEditable=false;
     try{
       const sh=String(unit?.sheet||'');
-      ownerEditable=records().some(r=>String(r.code??'').trim()===String(processCode??'').trim()&&String(r.sheet||'')===sh&&Number(r.r1)===Number(unit?.r1)&&Number(r.c1)===Number(unit?.c1)&&String(r.editedBy||r.user||'').trim().toLowerCase()===String(state.user||'').trim().toLowerCase());
+      ownerEditable=records().some(r=>String(r.code??'').trim()===String(processCode??'').trim()&&String(r.sheet||'')===sh&&Number(r.r1)===Number(window.__dpbProcUnit(tracker,unit,processNameForLookup).r1)&&Number(r.c1)===Number(window.__dpbProcUnit(tracker,unit,processNameForLookup).c1)&&String(r.editedBy||r.user||'').trim().toLowerCase()===String(state.user||'').trim().toLowerCase());
     }catch(_){}
     return {done:true,source:"الشيت اللايف",editable:isCurrentStage && (isAdmin || ownerEditable),adminRecord:false};
   }
@@ -15146,7 +15989,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
                   ev.stopPropagation();
                   hideSupKeyboard();
                   const sheet=u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||"");
-                  const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+u.r1+"_"+u.c1,sheet,r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2};
+                  const pu=window.__dpbProcUnit(t,u,state.process.name);const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+pu.r1+"_"+pu.c1,sheet,r1:pu.r1,c1:pu.c1,r2:pu.r2,c2:pu.c2,alt:{r1:u.r1,c1:u.c1}};
                   if(!confirm(`إلغاء إدخال ${t.label} · P${i+1} نهائيًا؟\nستعود الوحدة إلى حالة متاحة بدون أي حالة مسجلة.`))return;
                   deleteSavedRecordForUnit(unitK,rec);
                 };
@@ -15203,7 +16046,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
                   hideSupKeyboard();
                   if(!confirm(`إلغاء إدخال ${t.label} · U${i+1} نهائيًا؟\nستعود الوحدة إلى حالة متاحة بدون أي حالة مسجلة.`))return;
                   const sheet=u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||"");
-                  const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+u.r1+"_"+u.c1,sheet,r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2};
+                  const pu=window.__dpbProcUnit(t,u,state.process.name);const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+pu.r1+"_"+pu.c1,sheet,r1:pu.r1,c1:pu.c1,r2:pu.r2,c2:pu.c2,alt:{r1:u.r1,c1:u.c1}};
                   deleteSavedRecordForUnit(unitK,rec);
                 };
               }
@@ -15250,6 +16093,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       const bySheet=matches.filter(x=>String(x.sheet||'')===targetSheet);
       if(bySheet.length) matches=bySheet;
     }
+    if(!matches.length&&rec&&rec.alt){matches=all.filter(x=>String(x.code??'').trim()===processCode&&Number(x.r1)===Number(rec.alt.r1)&&Number(x.c1)===Number(rec.alt.c1));}
     const ids=matches.map(x=>String(x.id||'')).filter(Boolean);
     if(!ids.length){showToast("لم يتم العثور على سجل محفوظ لهذه الخلية.");return;}
     const filtered=all.filter(x=>!ids.includes(String(x.id||'')));
@@ -15299,9 +16143,10 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
         const sheet=u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||"");
         const unitK=unitKey(state.process.code,t,u,i);
         const assigned=(rammingIsActive()&&state.rammingUnitMeta)?(state.rammingUnitMeta.get(unitK)||{}):{};
+        const pu=window.__dpbProcUnit(t,u,state.process.name);
         toUpsert.push({
-          id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+u.r1+"_"+u.c1,
-          sheet,r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2,
+          id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+pu.r1+"_"+pu.c1,
+          sheet,r1:pu.r1,c1:pu.c1,r2:pu.r2,c2:pu.c2,
           code:state.process.code,process:state.process.name,
           tracker:t.label,row:t.row,unit:i+1,
           time:now,editedBy:state.user,
@@ -15337,10 +16182,12 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     try{ if(window.project?.executionResult?.rows) projectRows=window.project.executionResult.rows.slice(); }catch(_){}
     const all=records().slice();
     const mine=all.filter(x=>String(x.editedBy||"")===String(state.user||""));
-    const totalUnits=projectRows.reduce((a,r)=>a+Number(r.units||0),0) || all.length;
+    let totalUnits=projectRows.reduce((a,r)=>a+Number(r.units||0),0) || all.length;
     let notStarted=0;
     try{(window.project?.buildResult?.trackerMatches||[]).forEach(t=>(t.units||[]).forEach(u=>{if(overallLiveStage(t,u)===0)notStarted++}))}catch(_){}
-    const trackers=projectRows.length || (window.project?.buildResult?.trackerMatches||[]).length || 0;
+    let trackers=projectRows.length || (window.project?.buildResult?.trackerMatches||[]).length || 0;
+    // same numbers as the Builder Activity Report
+    try{const V=(typeof window.dpbReportView==='function')?window.dpbReportView():null;if(V){trackers=V.list.length;totalUnits=V.nsTotal;notStarted=V.nsCells;}}catch(_){}
     const todayKey=new Date().toLocaleDateString();
     const todayMine=mine.filter(x=>new Date(x.time).toLocaleDateString()===todayKey).length;
     root.innerHTML=`
@@ -15421,7 +16268,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       rammingByTracker.get(tr).add(label);
     });
     const projectTableHead=['Tracker',...appliedEntries.map(e=>String(e.name||"Process")), 'Ramming Operator', 'Overall Stage'];
-    const projectTableHtml=`<div class="dpbSupActivityTableWrap"><table class="dpbSupActivityTable" tabindex="-1"><thead><tr>${projectTableHead.map(h=>`<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${projectTrackerRows.map(r=>{
+    const projectTableHtmlFn=()=>`<div class="dpbSupActivityTableWrap"><table class="dpbSupActivityTable" tabindex="-1"><thead><tr>${projectTableHead.map(h=>`<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${projectTrackerRows.map(r=>{
       const total=Number(r.units||0);
       const vals=appliedEntries.map(e=>{
         const k=Number(e.code);
@@ -15467,6 +16314,114 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
 
 
     if(summary){
+      const V=(typeof window.dpbReportView==='function')?window.dpbReportView():null;
+      if(V){
+        // SAME numbers as the Builder Activity Report: both read the process maps through dpbReportView()
+        const fmt=n=>Number(n||0).toLocaleString('en-US');
+        const bars=V.perProc.map(p=>`<div class="dpbRpBar"><div class="dpbRpBarTop"><b>${escapeHtml(p.name)}</b><span>${fmt(p.done)} / ${fmt(p.total)}${p.progress?' شاشة':''}</span><em style="color:${p.color}">${p.pct}%</em></div><div class="dpbRpTrack"><i style="width:${p.pct}%;background:${p.color}"></i></div></div>`).join('');
+        const nsPctT=V.pct(V.counts.none,V.list.length),nsPctC=V.pct(V.nsCells,V.nsTotal);
+        const nsBar=`<div class="dpbRpBar dpbRpBarNS"><div class="dpbRpBarTop"><b>لم يبدأ (تراكرات كاملة)</b><span>${fmt(V.counts.none)} / ${fmt(V.list.length)} تراكر</span><em style="color:#e6eef7">${nsPctT}%</em></div><div class="dpbRpTrack"><i style="width:${nsPctT}%;background:#e6eef7"></i></div></div><div class="dpbRpBar dpbRpBarNS"><div class="dpbRpBarTop"><b>لم يبدأ (خلايا)</b><span>${fmt(V.nsCells)} / ${fmt(V.nsTotal)} خلية</span><em style="color:#cbd5e1">${nsPctC}%</em></div><div class="dpbRpTrack"><i style="width:${nsPctC}%;background:#cbd5e1"></i></div></div>`;
+        const myChips=Object.entries(myByProcess).sort((a,b)=>b[1]-a[1]).map(([name,n])=>`<span class="dpbRpChip">${escapeHtml(name)} <b>${n}</b></span>`).join('')||'<span class="dpbRpMuted">لا توجد إدخالات محفوظة لهذا المشرف.</span>';
+        const hasRam=V.procs.some(p=>/ramming/i.test(String(p.name||'')));
+        const head=['Tracker',...V.procs.map(p=>p.name),...(hasRam?['Ramming Operator']:[]),'Overall Stage'];
+        const rowsHtml=V.list.map(L=>{
+          const cells=V.procs.map(p=>{
+            const t=p.trackers.get(L.key);if(!t)return '<td class="dpbRpC0" style="opacity:.45">—</td>';
+            const cls=t.done<=0?'dpbRpC0':(t.total>0&&t.done>=t.total?'dpbRpC2':'dpbRpC1');
+            return `<td class="${cls}">${t.done}/${t.total}</td>`;
+          }).join('');
+          let ram='';
+          if(hasRam){
+            const rs=rammingByTracker.get(String(L.label||''));
+            ram='<td>'+(rs&&rs.size?[...rs].sort((a,b)=>(a==='By Admin'?1:0)-(b==='By Admin'?1:0)).map(escapeHtml).join('<br>'):'—')+'</td>';
+          }
+          const rowTag=V.labelCount.get(L.label)>1?` <span class="dpbRpRowTag">· ${escapeHtml(L.row)}</span>`:'';
+          const fT=V.first&&V.first.trackers.get(L.key);const hasNs=fT&&(fT.cells-fT.cellsDone)>0?1:0;
+          return `<tr data-st="${L.status}" data-nsc="${hasNs}"><td><b>${escapeHtml(L.label)}</b>${rowTag}</td>${cells}${ram}<td><span class="badge ${L.latest?'ok':'warn'}">${escapeHtml(L.latest?L.latest.name:'Not Started')}</span></td></tr>`;
+        }).join('');
+        const tm=new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+        summary.innerHTML=`
+        <div class="dpbRp" dir="rtl">
+          <div class="dpbRpHead"><div><small>آخر تحديث ${tm} · نفس أرقام تقارير الـBuilder</small></div><button type="button" id="dpbRpRefresh" class="dpbRpRefresh" aria-label="تحديث">🔄</button></div>
+          <div class="dpbRpCard dpbSupReportBlock">
+            <div class="dpbRpTitle">تقدم المشروع <small>${fmt(V.list.length)} تراكر</small></div>
+            ${bars}${nsBar}
+          </div>
+          <div class="dpbRpCard dpbSupReportBlock dpbSupTrackerStatusBlock" id="dpbRpTrackers">
+            <div class="dpbRpTitle">📋 حالة التراكرات <small id="dpbRpProcName"></small></div>
+            <div class="dpbRpSeg" id="dpbRpSeg" role="tablist"></div>
+            <div class="dpbRpProcs" id="dpbRpProcs" role="tablist" dir="ltr">${V.procs.map((p,i)=>`<button type="button" data-p="${escapeHtml(p.id)}"><i style="background:${V.perProc[i]?V.perProc[i].color:'#9bb0c4'}"></i>${escapeHtml(p.name)}</button>`).join('')}</div>
+            <div class="dpbTrackerFilter" id="dpbSupervisorTrackerFilter" style="margin-top:8px" dir="ltr">
+              <select id="dpbSupervisorTrackerFilterMode" aria-label="Filter type" style="display:none"><option value="tracker">Tracker Number</option><option value="operation">Operation</option></select>
+              <select id="dpbSupervisorTrackerFilterProcess" aria-label="Operation filter" style="display:none"></select>
+              <input id="dpbSupervisorTrackerFilterInput" type="text" inputmode="numeric" pattern="[0-9,- ]*" autocomplete="off" placeholder="Tracker: 1-2-3">
+              <button type="button" class="btn" onclick="resetSupervisorTrackerFilter()">↺ Reset</button>
+            </div>
+            <div class="dpbRpLegend"><span class="dpbRpC0">● 0</span><span class="dpbRpC1">● جاري</span><span class="dpbRpC2">● مكتمل</span></div>
+            <div class="dpbSupActivityTableWrap" dir="ltr"><table class="dpbSupActivityTable" tabindex="-1" data-fst=""><thead></thead><tbody></tbody></table></div>
+            <div class="dpbRpCount" id="dpbRpCount"></div>
+            <div id="dpbRpMaps"></div>
+          </div>
+          <div class="dpbRpCard dpbSupReportBlock dpbSupSupervisorReport">
+            <div class="dpbRpTitle">👤 إنتاجي <small>${escapeHtml(state.user||'Supervisor')}</small></div>
+            <div class="dpbRpKpis"><div><b>${todayMine}</b><span>اليوم</span></div><div><b>${mine.length}</b><span>إجمالي إدخالاتي</span></div><div><b>${Object.keys(myByTracker).length}</b><span>تراكرات اشتغلت</span></div></div>
+            <div class="dpbRpChips">${myChips}</div>
+          </div>
+        </div>`;
+        const tbl=summary.querySelector('table.dpbSupActivityTable');
+        const countEl=summary.querySelector('#dpbRpCount');
+        const mapsBox=summary.querySelector('#dpbRpMaps');
+        const segEl=summary.querySelector('#dpbRpSeg');
+        const procsEl=summary.querySelector('#dpbRpProcs');
+        let selP=(V.procs.find(p=>p.id===window.__dpbRpSel)||V.procs[0]);
+        const stOfT=t=>t.done<=0?'none':(t.total>0&&t.done>=t.total?'done':'part');
+        const hasRamSel=()=>/ramming/i.test(String(selP.name||''));
+        const stTxt={none:'Not Started',part:'In Progress',done:'Done'};
+        // everything below follows the ONE selected process: counts, table columns, the map
+        const paintSeg=()=>{
+          const c={none:0,part:0,done:0};let nsc=0,n=0;
+          selP.trackers.forEach(t=>{c[stOfT(t)]++;n++;nsc+=t.cells-t.cellsDone;});
+          const cur=tbl.dataset.fst||'';
+          segEl.innerHTML=`<button type="button" data-f=""><span>الكل</span> <b>${n}</b></button><button type="button" data-f="none"><span>لم يبدأ</span> <b>${c.none}</b> <small>تراكر</small></button><button type="button" data-f="cells"><span>لم يبدأ</span> <b>${fmt(nsc)}</b> <small>${'خلية'}</small></button><button type="button" data-f="part"><span>جاري</span> <b>${c.part}</b></button><button type="button" data-f="done"><span>مكتمل</span> <b>${c.done}</b></button>`;
+          segEl.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.f===cur));
+        };
+        const paintTable=()=>{
+          const hr=['Tracker',selP.name,...(hasRamSel()?['Ramming Operator']:[]),'Status'];
+          tbl.tHead.innerHTML='<tr>'+hr.map(h=>`<th>${escapeHtml(h)}</th>`).join('')+'</tr>';
+          tbl.tBodies[0].innerHTML=V.list.filter(L=>selP.trackers.has(L.key)).map(L=>{
+            const t=selP.trackers.get(L.key),st=stOfT(t);
+            const cls=st==='none'?'dpbRpC0':(st==='done'?'dpbRpC2':'dpbRpC1');
+            let ram='';
+            if(hasRamSel()){const rs=rammingByTracker.get(String(L.label||''));ram='<td>'+(rs&&rs.size?[...rs].sort((a,b)=>(a==='By Admin'?1:0)-(b==='By Admin'?1:0)).map(escapeHtml).join('<br>'):'—')+'</td>';}
+            const rowTag=V.labelCount.get(L.label)>1?` <span class="dpbRpRowTag">· ${escapeHtml(L.row)}</span>`:'';
+            return `<tr data-st="${st}" data-nsc="${t.cells-t.cellsDone>0?1:0}"><td><b>${escapeHtml(L.label)}</b>${rowTag}</td><td class="${cls}">${t.done}/${t.total}</td>${ram}<td><span class="badge ${st==='none'?'warn':'ok'}">${stTxt[st]}</span></td></tr>`;
+          }).join('');
+        };
+        const drawMaps=()=>{try{if(mapsBox&&window.DPBMap&&DPBMap.drawStatusMaps)DPBMap.drawStatusMaps(mapsBox,tbl.dataset.fst||'',Math.max(220,(mapsBox.clientWidth||340)-12),selP.id);}catch(e){console.warn('status maps',e);}};
+        const updCount=()=>{try{const rows=[...tbl.tBodies[0].rows];const vis=rows.filter(r=>r.style.display!=='none'&&!(tbl.dataset.fst&&(tbl.dataset.fst==='cells'?r.dataset.nsc!=='1':r.dataset.st!==tbl.dataset.fst))).length;countEl.textContent='معروض '+vis+' من '+rows.length+' تراكر';}catch(_){}};
+        const paintProcs=()=>{procsEl.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===selP.id));const nm=summary.querySelector('#dpbRpProcName');if(nm)nm.textContent='· '+selP.name;};
+        const paintAll=()=>{paintProcs();paintSeg();paintTable();drawMaps();updCount();};
+        segEl.addEventListener('click',e=>{
+          const b=e.target.closest('button[data-f]');if(!b)return;
+          segEl.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+          tbl.dataset.fst=b.dataset.f;try{tbl.parentElement.scrollTop=0}catch(_){} updCount();
+          drawMaps();
+        });
+        procsEl.addEventListener('click',e=>{
+          const b=e.target.closest('button[data-p]');if(!b)return;
+          const p=V.procs.find(x=>x.id===b.dataset.p);if(!p||p===selP)return;
+          selP=p;window.__dpbRpSel=p.id;paintAll();
+          try{const i=summary.querySelector('#dpbSupervisorTrackerFilterInput');if(i&&i.value)i.dispatchEvent(new Event('input',{bubbles:true}));}catch(_){}
+        });
+        {let t=null;new MutationObserver(()=>{clearTimeout(t);t=setTimeout(updCount,80);}).observe(tbl.tBodies[0],{attributes:true,attributeFilter:['style','hidden'],subtree:true});}
+        summary.querySelector('#dpbRpRefresh').addEventListener('click',async ev=>{
+          const btn=ev.currentTarget;btn.disabled=true;btn.classList.add('spin');
+          try{if(typeof window.__dpbForcePoll==='function')await window.__dpbForcePoll();}catch(_){}
+          try{renderHistory();}catch(_){}
+        });
+        paintAll();
+        try{if(typeof window.applySupervisorTrackerFilter==='function')window.applySupervisorTrackerFilter();}catch(_){}
+      } else {
       summary.innerHTML=`
         <div class="dpbSupReportBlock dpbSupSupervisorReport">
           <div class="dpbSupReportTitle">👤 Supervisor Report — ${escapeHtml(state.user||"Supervisor")}</div>
@@ -15499,9 +16454,10 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
               <input id="dpbSupervisorTrackerFilterInput" type="text" inputmode="numeric" pattern="[0-9,- ]*" autocomplete="off" placeholder="Tracker: 1-2-3">
               <button type="button" class="btn" onclick="resetSupervisorTrackerFilter()">↺ Reset</button>
             </div>
-            ${projectTableHtml||'<span class="hint">لا توجد بيانات إنتاج للمشروع حتى الآن.</span>'}
+            ${projectTableHtmlFn()||'<span class="hint">لا توجد بيانات إنتاج للمشروع حتى الآن.</span>'}
           </div>
         </div>`;
+          }
     }
 
     root.innerHTML="";
@@ -15587,7 +16543,15 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     sel.innerHTML='<option value="">'+placeholder+'</option>'+list.map(x=>'<option value="'+esc(x.id)+'"'+(x.id===mapViewState?' selected':'')+'>'+esc(x.name)+'</option>').join('');
     if(!list.some(x=>x.id===mapViewState))sel.value='';
   }
-  function supervisorRefreshMapButtons(){const groups=DPBMap.options(),f=q("dpbSupMapFixed"),o=q("dpbSupMapOps");if(!f||!o)return;supervisorFillMapSelect(f,groups.fixed,'Select Fixed Map');supervisorFillMapSelect(o,groups.operations,'Select Operation');f.onchange=()=>{if(f.value){applyMapView(f.value);o.value='';supervisorRefreshMapButtons()}};o.onchange=()=>{if(o.value){applyMapView(o.value);f.value='';supervisorRefreshMapButtons()}};const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");if(row){const old=row.value;row.innerHTML='<option value="all">All Rows</option>'+(project.buildResult?.rows||[]).map(r=>{const v=r.name||r.label||r.row||"";return `<option value="${esc(v)}">${esc(v)}</option>`}).join("");row.value=[...row.options].some(x=>x.value===old)?old:"all"}if(tr){const old=tr.value;const rowVal=row?row.value:"all";const src=(project.buildResult?.trackerMatches||[]).filter(t=>rowVal==="all"||String(t.row||"")===String(rowVal));tr.innerHTML='<option value="all">All Trackers</option>'+src.map(t=>{const v=String(t.label||"").replace(/^T/i,"");return `<option value="${esc(v)}">${esc(t.label||"")}</option>`}).join("");tr.value=[...tr.options].some(x=>x.value===old)?old:"all"}}
+  function supervisorFilterOps(list){
+    // صلاحيات المشرف: قايمة Dynamic تعرض عملياته فقط (الأدمن/كل العمليات = الكل). الخرائط Fixed بتفضل كلها.
+    const allowed=(state&&state.assignedProcessIds)||[];
+    if(allowed.includes("*"))return list;
+    if(!allowed.length)return [];
+    const ok=new Set(allowed.map(String));
+    return list.filter(x=>ok.has(String(x.id)));
+  }
+  function supervisorRefreshMapButtons(){const groups=DPBMap.options(),f=q("dpbSupMapFixed"),o=q("dpbSupMapOps");if(!f||!o)return;supervisorFillMapSelect(f,groups.fixed,'Select Fixed Map');supervisorFillMapSelect(o,supervisorFilterOps(groups.operations),'Select Operation');f.onchange=()=>{if(f.value){applyMapView(f.value);o.value='';supervisorRefreshMapButtons()}};o.onchange=()=>{if(o.value){applyMapView(o.value);f.value='';supervisorRefreshMapButtons()}};const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");if(row){const old=row.value;row.innerHTML='<option value="all">All Rows</option>'+(project.buildResult?.rows||[]).map(r=>{const v=r.name||r.label||r.row||"";return `<option value="${esc(v)}">${esc(v)}</option>`}).join("");row.value=[...row.options].some(x=>x.value===old)?old:"all"}if(tr){const old=tr.value;const rowVal=row?row.value:"all";const src=(project.buildResult?.trackerMatches||[]).filter(t=>rowVal==="all"||String(t.row||"")===String(rowVal));tr.innerHTML='<option value="all">All Trackers</option>'+src.map(t=>{const v=String(t.label||"").replace(/^T/i,"");return `<option value="${esc(v)}">${esc(t.label||"")}</option>`}).join("");tr.value=[...tr.options].some(x=>x.value===old)?old:"all"}}
   function jumpToMapTracker(){
     const el=q("dpbSupMapTrackerJump");if(!el)return;
     const num=String(el.value||"").replace(/[^0-9]/g,"").trim();
@@ -15875,6 +16839,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     window.scrollTo(0,0);
   };
   q("dpbSupTrackerSearch").addEventListener("keydown",e=>{if(e.key==='Enter'){hideSupKeyboard();}});
+  window.__dpbSupReportsNow=function(){try{renderHistory();renderHomeSummary();}catch(e){console.warn(e)}};
+  window.__dpbSupShowScreen=function(n){try{showScreen(n)}catch(e){console.warn(e)}};
   window.__dpbRefreshSupervisorUI=function(){try{const d=buildData();state.processes=d.processes;state.trackers=d.trackers;if(state.screen==="selection"||state.screen==="production"){renderProcesses();renderRows();renderTrackers()}else if(state.screen==="units"){
     // FIX (تعديل الشيت يدوي كان مايوصلش لشاشة اختيار الوحدات): الدالة
     // دي بترد على أي تحديث جاي من جوجل شيت (لايف Poll كل 25 ثانية)، لكن
