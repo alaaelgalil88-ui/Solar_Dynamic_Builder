@@ -8,6 +8,10 @@
   function create(adapter, o) {
     o = o || {};
     var ns = o.ns || 'test', cache = {}, subs = [];
+    // offset (ms) between this device's clock and the Firestore server clock; every stored time is device time + offset, so all devices agree
+    function off() { try { var v = o.offset ? Number(o.offset()) : 0; return isFinite(v) ? v : 0; } catch (e) { return 0; } }
+    function nowMs() { return Date.now() + off(); }
+    function nowIso() { return new Date(nowMs()).toISOString(); }
     function id(p, r, c) { return slug(p) + '_' + Number(r) + '_' + Number(c); }
     var COL = 'dpb2/' + ns + '/rows';
     function rowId(p, r) { return slug(p) + '_' + Number(r); }
@@ -50,7 +54,7 @@
     // first device that opens the layer stamps the start time; older leftovers from the old system are ignored afterwards
     function ensureEpoch() {
       if (cache['__epoch__']) return Promise.resolve();
-      var d = { time: new Date().toISOString(), meta: true }; cache['__epoch__'] = d;
+      var d = { time: nowIso(), meta: true }; cache['__epoch__'] = d;
       return adapter.write([{ t: 's', path: COL + '/meta-epoch', data: d }]).catch(function () { delete cache['__epoch__']; });
     }
     function lockOf(stages, p, r, c, skipIds) {
@@ -70,15 +74,25 @@
       });
     }
     function put(records, stages) {
-      var st = norm(stages), now = new Date().toISOString(), ops = [], pending = {}, before = {}, stale = [], ignored = 0, ep = epochMs();
+      var st = norm(stages), now = nowIso(), ops = [], pending = {}, before = {}, stale = [], ignored = 0, bumped = 0, ep = epochMs();
       records.forEach(function (rec) {
         if (!rec || !rec.process || rec.r1 == null || rec.c1 == null) return;
         var code = Number(rec.code) || 0, me = stageOf(st, rec.process), key = id(rec.process, rec.r1, rec.c1);
-        var t = String(rec.time || rec.updatedAt || now), cur = pending[key] || cache[key];
+        var rawT = rec.time || rec.updatedAt, t = rawT ? String(rawT) : now, cur = pending[key] || cache[key];
+        var fresh = !rawT || Math.abs((Date.parse(t) || 0) - Date.now()) < 2 * 60 * 1000;   // judged on the device's own clock, as the app stamped it
+        if (rawT && off() && Date.parse(t)) t = new Date(Date.parse(t) + off()).toISOString();   // then moved onto the server clock
         if (ep && rec.source !== 'SheetImport' && (Date.parse(t) || 0) < ep - EPOCH_MARGIN_MS) { ignored++; return; } // old-system leftover
         if (cur && String(cur.time || '') >= t) {
-          if (live(cur) && String(cur.id) !== String(rec.id) && String(cur.time) > t) stale.push({ id: String(rec.id) });
-          return;
+          // A fresh, deliberate user action (made within the last 2 minutes by this device) must never be dropped silently just because the
+          // stored time looks newer: that happens when the stored record/tombstone came from a device whose clock runs ahead (or is in the
+          // future for this device). The user is looking at the cell as it is now, so the action wins: its time is moved just past the stored one.
+          var ct = Date.parse(cur.time) || 0;
+          if (fresh && (cur.del || ct > nowMs()) && rec.source !== 'SheetImport' && rec.source !== 'Cascade') {
+            t = new Date(ct + 1).toISOString(); bumped++;
+          } else {
+            if (live(cur) && String(cur.id) !== String(rec.id) && String(cur.time) > t) stale.push({ id: String(rec.id) });
+            return;
+          }
         }
         var d = Object.assign({}, rec, { id: String(rec.id || rec.recordId || key), code: code, time: t });
         if (!(key in before)) before[key] = cache[key];
@@ -96,8 +110,8 @@
       });
       Object.keys(pending).forEach(function (k) { cache[k] = pending[k]; });
       if (ops.length) emit();
-      if (!ops.length) return Promise.resolve({ ok: true, written: 0, stale: stale, ignored: ignored });
-      return commit(ops, before).then(function () { return { ok: true, written: ops.length, stale: stale, ignored: ignored }; });
+      if (!ops.length) return Promise.resolve({ ok: true, written: 0, stale: stale, ignored: ignored, bumped: bumped });
+      return commit(ops, before).then(function () { return { ok: true, written: ops.length, stale: stale, ignored: ignored, bumped: bumped }; });
     }
     function removeIds(ids, stages) {
       var want = {}; ids.forEach(function (x) { want[String(x)] = true; });
@@ -106,7 +120,7 @@
         var d = cache[k]; if (isMeta(k) || !live(d) || !want[d.id] && !want[k]) return;
         var lk = lockOf(st, d.process, d.r1, d.c1, want);
         if (lk) { lk.id = d.id; blocked.push(lk); return; }
-        var tomb = { del: true, id: d.id, process: d.process, r1: d.r1, c1: d.c1, code: 0, time: new Date().toISOString() };
+        var tomb = { del: true, id: d.id, process: d.process, r1: d.r1, c1: d.c1, code: 0, time: nowIso() };
         before[k] = cache[k];
         ops.push(cw(d.process, d.r1, d.c1, tomb)); gone.push([k, tomb]); deleted++;
       });
@@ -120,7 +134,7 @@
     }
     // import: make process p match "cells" exactly ([{r,c,code,r2,c2}]); bypasses cascade and lock on purpose (the sheet is the truth)
     function importProcess(p, cells, dry) {
-      var want = {}, ops = [], before = {}, add = 0, change = 0, remove = 0, now = new Date().toISOString();
+      var want = {}, ops = [], before = {}, add = 0, change = 0, remove = 0, now = nowIso();
       cells.forEach(function (x) {
         var k = id(p, x.r, x.c); want[k] = true; var cur = cache[k];
         if (live(cur) && Number(cur.code) === Number(x.code)) return;
