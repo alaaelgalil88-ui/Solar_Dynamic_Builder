@@ -4,7 +4,7 @@
    طلبات السيرفر (Apps Script) مش بتتخزّن أبدًا. */
 const CACHE='dpb-shell-v60';
 // كل ملف بيتخزّن لوحده: ملف ناقص (زي أيقونة أو اختلاف حروف index/Index) مابقاش بيفشّل تخزين الباقي كله.
-const SHELL=['./','index.html','Index.html','dpb-fs.js','dpb-fs2-core.js','dpb-fs2.js','manifest.json','icon-192.png','icon-512.png'];
+const SHELL=['./','index.html','Index.html','dpb-config.js','dpb-fs.js','dpb-fs2-core.js','dpb-fs2.js','manifest.json','icon-192.png','icon-512.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>Promise.all(SHELL.map(u=>c.add(u).catch(()=>{})))).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
 function versionOf(res){return (res.headers.get('etag')||'')+'|'+(res.headers.get('last-modified')||'')+'|'+(res.headers.get('content-length')||'');}

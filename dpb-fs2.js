@@ -18,7 +18,12 @@
   function emu() { return EMU_HOST && ls('dpb_fs2_emu', 'on') === 'on'; }   // on localhost the emulator is the default
   // default: ON as soon as this device has a Firebase config + the app's Email/Password account saved (nothing to switch by hand).
   // An explicit "off" (the toggle in the card, or ?fs2=off) still wins as a kill switch.
-  function hasCreds() { try { var c = JSON.parse(ls(LS.cfg, 'null')), a = JSON.parse(ls(LS.auth, 'null')); return !!(c && c.projectId && a && a.email && a.password); } catch (e) { return false; } }
+  // Firebase web config: saved on the device (admin card) or shipped with the app in dpb-config.js (window.DPB_FIREBASE_CONFIG; the web config is public by design, the rules protect the data)
+  function cfgOf() { try { var c = JSON.parse(ls(LS.cfg, 'null')); if (c && c.projectId) return c; } catch (e) {} var w = window.DPB_FIREBASE_CONFIG; return (w && w.projectId) ? w : null; }
+  function authOf() { try { var a = JSON.parse(ls(LS.auth, 'null')); return (a && a.email && a.password) ? a : null; } catch (e) { return null; } }
+  function hasCreds() { return !!(cfgOf() && authOf()); }
+  // the owner account's device / an admin member's device (only these run the first-run import; everyone else may write only their own processes)
+  function isAdminDevice() { var a = authOf(); return !!a && (!/@dpb\.app$/i.test(a.email) || ls('dpb_fs2_role', '') === 'admin'); }
   function on() { var m = ls(LS.mode, null); return m === 'on' || emu() || (m === null && hasCreds()); }
   function procs() { return ls(LS.procs, 'Ramming,Saddle,Bearing,Torque Tube,Modules').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
   function mine(name) { var s = CORE.slug(name); return procs().some(function (p) { return CORE.slug(p) === s; }); }
@@ -26,7 +31,7 @@
   function isCell(r) { return !!r && mine(r.process) && r.r1 != null && r.c1 != null; }
   // the app tells us which processes have a map (so a new project needs no change here)
   function setProcs(list) { try { var s = (list || []).map(function (x) { return String(x == null ? '' : x).trim(); }).filter(Boolean).join(','); if (s && s !== ls(LS.procs, '')) localStorage.setItem(LS.procs, s); } catch (e) {} }
-  function nsName() { return String(ls(LS.ns, 'test')).replace(/[^A-Za-z0-9_\-]/g, '_'); }
+  function nsName() { return String(ls(LS.ns, window.DPB_FIREBASE_NS || 'test')).replace(/[^A-Za-z0-9_\-]/g, '_'); }
   function jsonRes(o) { return new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
   function clean(o) { return JSON.parse(JSON.stringify(o)); }
   // The app filters its local records by the active project (r.projectId). Map-engine marks are sent without one, so stamp it:
@@ -44,8 +49,8 @@
     } catch (e) { return []; }
   }
 
-  function makeAdapter() {
-    var conf; try { conf = JSON.parse(ls(LS.cfg, 'null')); } catch (e) { conf = null; }
+  function makeAdapter(override) {
+    var conf = cfgOf();
     if (emu()) conf = { apiKey: 'demo', projectId: 'demo-no-project', appId: 'demo' };   // emulator needs no real config
     if (!conf || !conf.projectId) return Promise.reject(new Error('مفيش Firebase config'));
     return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
@@ -67,11 +72,18 @@
         app = appM.getApps().length ? appM.getApp() : appM.initializeApp(conf);
         try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); } catch (e) { db = fs.getFirestore(app); }
       }
-      var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
+      var auth = authM.getAuth(app), ac = override || authOf();
       var ready = emu() ? Promise.resolve() : (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
+          uid: function () { return auth.currentUser ? auth.currentUser.uid : ''; },
+          // create (or find) another person's Email/Password account WITHOUT leaving this session: it runs on a second named app
+          authCreate: function (email, pass) {
+            var sec = appM.getApps().filter(function (x) { return x.name === 'dpb-sec'; })[0] || appM.initializeApp(conf, 'dpb-sec'), sa = authM.getAuth(sec);
+            return authM.createUserWithEmailAndPassword(sa, email, pass).catch(function (e) { if (e && e.code === 'auth/email-already-in-use') return authM.signInWithEmailAndPassword(sa, email, pass); throw e; })
+              .then(function (cr) { var uid = cr.user.uid; return authM.signOut(sa).then(function () { return { uid: uid }; }); });
+          },
           // server clock: write a tiny doc with serverTimestamp and read it back from the server (dpb2/{ns}/kv is already allowed by the rules)
           serverNow: function () {
             var dev = ls('dpb_fs2_dev', ''); if (!dev) { dev = Math.random().toString(36).slice(2, 10); try { localStorage.setItem('dpb_fs2_dev', dev); } catch (e) {} }
@@ -231,7 +243,7 @@
   }
   function pinHash(name, pin) { return sha256('dpbfs|' + String(name == null ? '' : name).trim().toLowerCase() + '|' + String(pin == null ? '' : pin).trim()); }
   function uName(u) { return String((u && (u.username || u.name || u.UserID || u.user)) || '').trim(); }
-  function pubUser(u) { var c = clean(u); delete c.passHash; delete c.password; delete c.pin; return c; }
+  function pubUser(u) { var c = clean(u); delete c.passHash; delete c.password; delete c.pin; delete c.fbUid; return c; }
   function isActive(u) { var v = u.active; return !(v === false || String(v).toLowerCase() === 'false' || String(v).toLowerCase() === 'no'); }
   function usersLoad(a) {
     return kvReadStr(a, U_KEY).then(function (str) {
@@ -262,15 +274,99 @@
           var hp = (pw != null && String(pw).trim() !== '') ? pinHash(nm, pw) : Promise.resolve(old ? old.passHash : '');
           return hp.then(function (h) {
             nu.passHash = h || '';
-            if (k >= 0) list[k] = Object.assign({}, old, nu); else list.push(nu);
-            return usersSave(a, list).then(function () { return { ok: true }; });
+            var merged = Object.assign({}, old, nu);
+            var mem = (a.authCreate && h) ? memberEnsure(a, merged, h).then(function (uid) { if (uid) merged.fbUid = uid; return ''; }, function (e) { return 'حساب Firebase للمستخدم ما اتعملش: ' + (e && e.message || e); }) : Promise.resolve('');
+            return mem.then(function (warn) {
+              if (k >= 0) list[k] = merged; else list.push(merged);
+              return usersSave(a, list).then(function () { return warn ? { ok: true, warning: warn } : { ok: true }; });
+            });
           });
         case 'deleteUser':
-          var d = find(body.username); if (d >= 0) list.splice(d, 1);
-          return usersSave(a, list).then(function () { return { ok: true }; });
+          var d = find(body.username), gone = d >= 0 ? list[d] : null; if (d >= 0) list.splice(d, 1);
+          return (gone && gone.fbUid ? a.write([{ t: 'd', path: mPath(gone.fbUid) }]).catch(function () {}) : Promise.resolve()).then(function () { return usersSave(a, list); }).then(function () { return { ok: true }; });
       }
       return null;
     });
+  }
+
+  /* ---- Per-person Firebase accounts + permissions ----
+     Each user gets an Email/Password Firebase account whose email AND password are derived from the stored PIN fingerprint
+     (passHash = sha256('dpbfs|user|pin')): email = u<16 hex of the name>.<first 8 of the hash>@dpb.app, password = hash chars 8..40.
+     So the login screen (username + PIN) signs in to Firebase directly, Firebase checks the PIN, and no raw PIN is ever stored.
+     A changed PIN is a different email -> a new account; the old member document is removed, so the old account is dead.
+     dpb2/{ns}/members/{uid} holds role / active / procs (lower-case process names, or ["*"]) / profile (what the app's login reply carries):
+     firestore.rules read that document to decide what each person may write. */
+  function mPath(uid) { return 'dpb2/' + nsName() + '/members/' + uid; }
+  function acct(name, h) {
+    return sha256('dpbu|' + String(name == null ? '' : name).trim().toLowerCase()).then(function (u) {
+      return { email: 'u' + u.slice(0, 16) + '.' + String(h).slice(0, 8) + '@dpb.app', password: String(h).slice(8, 40) };
+    });
+  }
+  function procNames(u) {
+    var raw = u.processIds != null ? u.processIds : (u.processId || '');
+    var ids = Array.isArray(raw) ? raw.map(String) : String(raw).split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    var admin = String(u.role || '').toLowerCase() === 'admin';
+    var all = admin || u.allProcesses === true || String(u.allProcesses).toUpperCase() === 'TRUE' || ids.indexOf('*') >= 0;
+    if (all) return ['*'];
+    var map = {}; try { (typeof window.getAppliedProcessEntries === 'function' ? window.getAppliedProcessEntries() : []).forEach(function (p) { map[String(p.id)] = String(p.name || '').trim().toLowerCase(); }); } catch (e) {}
+    var out = []; ids.forEach(function (i) { var n = map[i] || String(i).trim().toLowerCase(); if (n && out.indexOf(n) < 0) out.push(n); });
+    // a later grouped stage fills the earlier stages of the same cell (cascade), so those need write access too (they are written only by that cascade)
+    var g = []; try { g = (typeof window.DPB_groupedProcessNames === 'function' ? window.DPB_groupedProcessNames() : []).map(function (x) { return String(x).trim().toLowerCase(); }).filter(Boolean); } catch (e) {}
+    out.slice().forEach(function (n) { var gi = g.indexOf(n); for (var k = 0; k < gi; k++) if (out.indexOf(g[k]) < 0) out.push(g[k]); });
+    return out;
+  }
+  function memberData(u) {
+    var pu = pubUser(u); delete pu.fbUid;
+    return { username: uName(u), role: String(u.role || '').toLowerCase() === 'admin' ? 'admin' : 'supervisor', active: isActive(u), procs: procNames(u), profile: JSON.stringify(pu), time: new Date().toISOString() };
+  }
+  // make sure the person has an account + an up-to-date member document; returns the uid (needs an admin session)
+  function memberEnsure(a, u, hash) {
+    var nm = uName(u); if (!nm || !hash) return Promise.resolve('');
+    return acct(nm, hash).then(function (ac) { return a.authCreate(ac.email, ac.password); }).then(function (r) {
+      var ops = [{ t: 's', path: mPath(r.uid), data: memberData(u) }];
+      if (u.fbUid && u.fbUid !== r.uid) ops.push({ t: 'd', path: mPath(u.fbUid) });   // PIN changed: the old account loses its member document
+      return a.write(ops).then(function () { return r.uid; });
+    });
+  }
+  function membersSync() {
+    return getStore().then(function (s) {
+      var a = s.adapter; if (!a.authCreate) return Promise.reject(new Error('إنشاء الحسابات مش متاح في الوضع ده'));
+      return usersLoad(a).then(function (list) {
+        if (!list) throw new Error('انقل المستخدمين الأول');
+        var made = 0, skipped = 0, errs = [];
+        return list.reduce(function (pr, u) {
+          return pr.then(function () {
+            if (!u.passHash) { skipped++; return; }
+            return memberEnsure(a, u, u.passHash).then(function (uid) { if (uid) { u.fbUid = uid; made++; } }, function (e) { errs.push(uName(u) + ': ' + (e && e.message || e)); });
+          });
+        }, Promise.resolve()).then(function () { return usersSave(a, list); }).then(function () { return { ok: true, made: made, skipped: skipped, errors: errs }; });
+      });
+    });
+  }
+  // login straight against Firebase: resolves {ok:true,user} / {ok:false,error:'wrong'} / null (fall back to the Apps Script login)
+  function loginFb(body) {
+    var name = String(body.username || '').trim(), pin = body.password;
+    if (!name || pin == null || String(pin).trim() === '' || !cfgOf() || !usersOn()) return Promise.resolve(null);
+    var noFall = ls('dpb_fs2_login_fallback', 'on') === 'off';
+    return pinHash(name, pin).then(function (h) { return acct(name, h); }).then(function (ac) {
+      var mk = window.__DPB_FS2_ADAPTER ? Promise.resolve(window.__DPB_FS2_ADAPTER) : makeAdapter(ac);
+      return mk.then(function (a) {
+        return (a.authSignIn ? a.authSignIn(ac.email, ac.password) : Promise.resolve()).then(function () {
+          var uid = a.uid ? a.uid() : '';
+          return a.get(mPath(uid)).then(function (m) {
+            if (!m) return null;                                   // signed in but no member document: let the old path decide
+            if (!m.active) return { ok: false, error: 'wrong' };
+            var pu = {}; try { pu = JSON.parse(m.profile || '{}'); } catch (e) {}
+            try { localStorage.setItem(LS.auth, JSON.stringify(ac)); localStorage.setItem('dpb_fs2_role', m.role === 'admin' ? 'admin' : 'supervisor'); } catch (e) {}
+            resetStore();
+            return { ok: true, user: pu };
+          });
+        }, function (e) {
+          var code = String(e && e.code || ''); if (/user-not-found|invalid-credential|wrong-password|invalid-login/.test(code) && noFall) return { ok: false, error: 'wrong' };
+          return null;
+        });
+      });
+    }).catch(function () { return null; });
   }
   function usersHandle(body, input, init) {
     return getStore().then(function (s) { return usersOp(s.adapter, body); }).then(function (r) { return r ? jsonRes(r) : prevFetch(input, init); }, function () { return prevFetch(input, init); });
@@ -292,7 +388,7 @@
         return Promise.all(res.users.map(function (u) {
           var c = clean(u), pw = c.password != null ? c.password : c.pin; delete c.password; delete c.pin;
           return (pw != null && String(pw).trim() !== '' ? pinHash(uName(c), pw) : Promise.resolve('')).then(function (h) { c.passHash = h; return c; });
-        })).then(function (list) { return getStore().then(function (s) { return usersSave(s.adapter, list); }).then(function () { return { ok: true, count: list.length }; }); });
+        })).then(function (list) { return getStore().then(function (s) { return usersSave(s.adapter, list); }).then(function () { return membersSync().then(function (m) { return { ok: true, count: list.length, made: m.made, errors: m.errors }; }, function (e) { return { ok: true, count: list.length, made: 0, errors: [String(e && e.message || e)] }; }); }); });
       });
   }
   function usersCount() { return getStore().then(function (s) { return usersLoad(s.adapter); }).then(function (l) { return l ? l.length : 0; }); }
@@ -321,7 +417,16 @@
 
   window.fetch = function (input, init) {
     try {
-      if (!on()) return prevFetch(input, init);
+      if (!on()) {
+        try {
+          var b0u = window.DPB_getScriptUrl && window.DPB_getScriptUrl(), u0 = typeof input === 'string' ? input : (input && input.url) || '';
+          if (b0u && u0.indexOf(b0u) === 0 && String((init && init.method) || 'GET').toUpperCase() === 'POST') {
+            var b0 = JSON.parse((init && init.body) || '{}');
+            if (b0.action === 'login') return loginFb(b0).then(function (r) { return r ? jsonRes(r) : prevFetch(input, init); });
+          }
+        } catch (e) {}
+        return prevFetch(input, init);
+      }
       var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
       var url = typeof input === 'string' ? input : (input && input.url) || '';
       if (!base || url.indexOf(base) !== 0) return prevFetch(input, init);
@@ -355,6 +460,7 @@
           return Promise.all([getStore(), prevFetch(input, init).then(parse)]).then(function (r) { return jsonRes(overlayGrid(r[0], nm, r[1])); }, fail);
         }
         if (body.action === 'getGridBatch') { return batchRes(input, init); }
+        if (body.action === 'login' && usersOn()) return loginFb(body).then(function (r) { return r ? jsonRes(r) : usersHandle(body, input, init); });
         if (USER_ACTIONS[body.action] === 1 && usersOn()) return usersHandle(body, input, init);
         return prevFetch(input, init);
       }
@@ -394,7 +500,7 @@
     });
     return m;
   }
-  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, usersCount: usersCount, testConnection: testConn };
+  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, syncMembers: membersSync, usersCount: usersCount, testConnection: testConn };
 
   /* ---- Import: make the new layer match what the layer underneath (the Google Sheet side) shows right now ---- */
   function readGrid(name) {
@@ -426,7 +532,7 @@
      later emptied on purpose is never refilled from a stale sheet. A tab that cannot be read is skipped and retried on the next open. ---- */
   var AI_KEY = 'fs2imported', aiRunning = false, aiFailed = {};
   function autoImport(s) {
-    if (aiRunning || ls('dpb_fs2_autoimp', 'on') === 'off') return Promise.resolve();
+    if (aiRunning || ls('dpb_fs2_autoimp', 'on') === 'off' || !isAdminDevice()) return Promise.resolve();
     aiRunning = true; var a = s.adapter;
     return kvReadStr(a, AI_KEY).then(function (str) {
       var done = {}; try { (JSON.parse(str || '[]') || []).forEach(function (x) { done[CORE.slug(x)] = 1; }); } catch (e) {}
