@@ -621,7 +621,6 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   window.fetch=wrapped;
 })();
 </script>
-<script src="dpb-config.js"></script>
 <script src="dpb-fs.js"></script>
 <script src="dpb-fs2-core.js"></script>
 <script src="dpb-fs2.js"></script>
@@ -4719,7 +4718,7 @@ function _svSource(op){
   if(r===undefined){
     r=null;
     const by=window.__dpbLiveGridByProcess||{};
-    const key=Object.keys(by).find(x=>x.toLowerCase()===String(op.name).trim().toLowerCase());
+    const nm=String(op.name).trim();const key=(by[nm]?nm:null)||Object.keys(by).find(x=>x.toLowerCase()===nm.toLowerCase());   // exact tab name first: an old default-name entry (Ramming) must never win over the real one (RaMmInG)
     if(key&&by[key]&&by[key].valuesByCoord)r={live:by[key].valuesByCoord};
     else{const e=entries().find(x=>x.id===op.id);const wb=e&&e.rec&&e.rec.wb;if(wb){const ws=wb.Sheets[sheetFor(wb,op.name)];if(ws)r={ws};}}
     _svSrc.set(k,r);
@@ -4781,7 +4780,7 @@ function colorOf(spec,model,u){
   if(spec.mode==='dynamic'&&spec.op){
     const by=window.__dpbLiveGridByProcess||{};
     const lookName=spec.op.kind==='notstarted'?((firstStageOp()||{}).name||''):spec.op.name;   // Not Started wears the Ramming map's colours
-    const key=lookName&&Object.keys(by).find(k=>k.toLowerCase()===String(lookName).trim().toLowerCase());
+    const ln=String(lookName||'').trim();const key=ln&&((by[ln]?ln:null)||Object.keys(by).find(k=>k.toLowerCase()===ln.toLowerCase()));
     const cbc=key&&by[key]&&by[key].colorByCoord;
     if(cbc){
       const live=cbc.get(u.r1+'|'+u.c1);
@@ -5833,6 +5832,27 @@ function drawStatusMaps(box,f,maxW,pid){
   },true);
   ['pointerup','pointercancel'].forEach(n=>document.addEventListener(n,()=>{if(st||pan)finish();},true));
 })();
+// Excel baseline for the Firestore layer: for every applied process, the numeric value (> 0) of each map UNIT of its own tab (merged cells are one unit),
+// exactly the units the map draws (same model, same layout fallback). Non-numeric leftovers inside a unit (e.g. ` or `1) are reported, never imported.
+window.__dpbExcelUnitCells=function(){
+  const out=[];
+  try{
+    for(const e of entries()){
+      const rawWb=e.rec&&e.rec.wb;if(!rawWb)continue;
+      const sheet=sheetFor(rawWb,e.name),wb=sheetLayoutWb(rawWb,sheet),m=buildModel(wb,sheet),ws=rawWb.Sheets[sheet];
+      if(!m||!m.ok||!ws)continue;
+      const cells=[],bad=[];
+      (m.units||[]).forEach(u=>{
+        const x=ws[addr(u.r1,u.c1)];if(!x||x.v===undefined||x.v===null||String(x.v).trim()==='')return;
+        const v=Number(x.v);
+        if(isFinite(v)&&v>0)cells.push({r:u.r1,c:u.c1,r2:u.r2,c2:u.c2,code:v});
+        else if(!(isFinite(v)&&v===0))bad.push({r:u.r1,c:u.c1,v:String(x.v)});
+      });
+      out.push({name:e.name,sheet,units:(m.units||[]).length,cells,bad});
+    }
+  }catch(err){try{console.warn('__dpbExcelUnitCells',err);}catch(_){}}
+  return out;
+};
 window.DPBMap={refresh,renderNow,applyLiveDiff,select,sync,publish,options,processNames,model:buildModel,pack,unpack,state,exportCellValue,reportData,printData,drawStatusMaps,
   summary(){const s=state.last;if(!s)return null;const m=s.model;return{view:s.spec.id,mode:s.spec.mode,color:s.spec.color,site:m.siteName,base:m.siteBase,areas:m.siteAreas,bounds:m.bounds,units:m.units.length,trackers:m.trackers.size,types:m.types,siteCodes:[...m.siteCodes]};}};
 })();
@@ -12029,6 +12049,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     }catch(_){}
     try{ (DPBMap.processNames()||[]).forEach(n=>{ n=String(n||'').trim(); if(n && !names.some(x=>x.toLowerCase()===n.toLowerCase())) names.push(n); }); }catch(_){}
     if(!names.length) ['Ramming','Saddle','Bearing'].forEach(n=>names.push(n));
+    else{ // the real list is known: entries kept from the startup defaults (before the catalog existed) are stale copies - drop them
+      try{ const by=window.__dpbLiveGridByProcess||{}; const keep=new Set(names.map(n=>n.toLowerCase()));
+        Object.keys(by).forEach(k=>{ if(!keep.has(k.toLowerCase())) delete by[k]; else if(!names.includes(k)) delete by[k]; }); }catch(_){}
+    }
     return names;
   }
   window.__dpbGetLiveGridProcessNames=getLiveGridProcessNames_;

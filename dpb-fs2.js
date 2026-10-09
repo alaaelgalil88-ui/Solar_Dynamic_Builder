@@ -16,22 +16,14 @@
   var EMU_HOST = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
   try { var me = /[?&]emu=(on|off)/.exec(location.search); if (me && EMU_HOST) localStorage.setItem('dpb_fs2_emu', me[1]); } catch (e) {}
   function emu() { return EMU_HOST && ls('dpb_fs2_emu', 'on') === 'on'; }   // on localhost the emulator is the default
-  // default: ON as soon as this device has a Firebase config + the app's Email/Password account saved (nothing to switch by hand).
-  // An explicit "off" (the toggle in the card, or ?fs2=off) still wins as a kill switch.
-  // Firebase web config: saved on the device (admin card) or shipped with the app in dpb-config.js (window.DPB_FIREBASE_CONFIG; the web config is public by design, the rules protect the data)
-  function cfgOf() { try { var c = JSON.parse(ls(LS.cfg, 'null')); if (c && c.projectId) return c; } catch (e) {} var w = window.DPB_FIREBASE_CONFIG; return (w && w.projectId) ? w : null; }
-  function authOf() { try { var a = JSON.parse(ls(LS.auth, 'null')); return (a && a.email && a.password) ? a : null; } catch (e) { return null; } }
-  function hasCreds() { return !!(cfgOf() && authOf()); }
-  // the owner account's device / an admin member's device (only these run the first-run import; everyone else may write only their own processes)
-  function isAdminDevice() { var a = authOf(); return !!a && (!/@dpb\.app$/i.test(a.email) || ls('dpb_fs2_role', '') === 'admin'); }
-  function on() { var m = ls(LS.mode, null); return m === 'on' || emu() || (m === null && hasCreds()); }
+  function on() { return ls(LS.mode, 'off') === 'on' || emu(); }
   function procs() { return ls(LS.procs, 'Ramming,Saddle,Bearing,Torque Tube,Modules').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
   function mine(name) { var s = CORE.slug(name); return procs().some(function (p) { return CORE.slug(p) === s; }); }
   // a record belongs to this layer only if its process is a map process AND it points at a map cell; anything else (e.g. a tracker-level entry) goes down untouched
   function isCell(r) { return !!r && mine(r.process) && r.r1 != null && r.c1 != null; }
   // the app tells us which processes have a map (so a new project needs no change here)
   function setProcs(list) { try { var s = (list || []).map(function (x) { return String(x == null ? '' : x).trim(); }).filter(Boolean).join(','); if (s && s !== ls(LS.procs, '')) localStorage.setItem(LS.procs, s); } catch (e) {} }
-  function nsName() { return String(ls(LS.ns, window.DPB_FIREBASE_NS || 'test')).replace(/[^A-Za-z0-9_\-]/g, '_'); }
+  function nsName() { return String(ls(LS.ns, 'test')).replace(/[^A-Za-z0-9_\-]/g, '_'); }
   function jsonRes(o) { return new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
   function clean(o) { return JSON.parse(JSON.stringify(o)); }
   // The app filters its local records by the active project (r.projectId). Map-engine marks are sent without one, so stamp it:
@@ -49,8 +41,8 @@
     } catch (e) { return []; }
   }
 
-  function makeAdapter(override) {
-    var conf = cfgOf();
+  function makeAdapter() {
+    var conf; try { conf = JSON.parse(ls(LS.cfg, 'null')); } catch (e) { conf = null; }
     if (emu()) conf = { apiKey: 'demo', projectId: 'demo-no-project', appId: 'demo' };   // emulator needs no real config
     if (!conf || !conf.projectId) return Promise.reject(new Error('مفيش Firebase config'));
     return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
@@ -72,18 +64,11 @@
         app = appM.getApps().length ? appM.getApp() : appM.initializeApp(conf);
         try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); } catch (e) { db = fs.getFirestore(app); }
       }
-      var auth = authM.getAuth(app), ac = override || authOf();
+      var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       var ready = emu() ? Promise.resolve() : (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
-          uid: function () { return auth.currentUser ? auth.currentUser.uid : ''; },
-          // create (or find) another person's Email/Password account WITHOUT leaving this session: it runs on a second named app
-          authCreate: function (email, pass) {
-            var sec = appM.getApps().filter(function (x) { return x.name === 'dpb-sec'; })[0] || appM.initializeApp(conf, 'dpb-sec'), sa = authM.getAuth(sec);
-            return authM.createUserWithEmailAndPassword(sa, email, pass).catch(function (e) { if (e && e.code === 'auth/email-already-in-use') return authM.signInWithEmailAndPassword(sa, email, pass); throw e; })
-              .then(function (cr) { var uid = cr.user.uid; return authM.signOut(sa).then(function () { return { uid: uid }; }); });
-          },
           // server clock: write a tiny doc with serverTimestamp and read it back from the server (dpb2/{ns}/kv is already allowed by the rules)
           serverNow: function () {
             var dev = ls('dpb_fs2_dev', ''); if (!dev) { dev = Math.random().toString(36).slice(2, 10); try { localStorage.setItem('dpb_fs2_dev', dev); } catch (e) {} }
@@ -137,7 +122,7 @@
     creating = (window.__DPB_FS2_ADAPTER ? Promise.resolve(window.__DPB_FS2_ADAPTER) : makeAdapter()).then(function (a) {
       var s = CORE.create(a, { ns: nsName(), offset: clockOff });
       s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); clearTimeout(pullT); pullT = setTimeout(function () { try { if (window.DPB_CLOUD_PRODUCTION && window.DPB_CLOUD_PRODUCTION.cloudPull) window.DPB_CLOUD_PRODUCTION.cloudPull(); } catch (e) {} }, 1500); });
-      return s.ready.then(function () { store = s; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); syncClock(a); setTimeout(function () { autoImport(s); }, 0); return s; });
+      return s.ready.then(function () { store = s; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); syncClock(a); return s; });
     }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); throw e; });
     return creating;
   }
@@ -243,7 +228,7 @@
   }
   function pinHash(name, pin) { return sha256('dpbfs|' + String(name == null ? '' : name).trim().toLowerCase() + '|' + String(pin == null ? '' : pin).trim()); }
   function uName(u) { return String((u && (u.username || u.name || u.UserID || u.user)) || '').trim(); }
-  function pubUser(u) { var c = clean(u); delete c.passHash; delete c.password; delete c.pin; delete c.fbUid; return c; }
+  function pubUser(u) { var c = clean(u); delete c.passHash; delete c.password; delete c.pin; return c; }
   function isActive(u) { var v = u.active; return !(v === false || String(v).toLowerCase() === 'false' || String(v).toLowerCase() === 'no'); }
   function usersLoad(a) {
     return kvReadStr(a, U_KEY).then(function (str) {
@@ -274,99 +259,15 @@
           var hp = (pw != null && String(pw).trim() !== '') ? pinHash(nm, pw) : Promise.resolve(old ? old.passHash : '');
           return hp.then(function (h) {
             nu.passHash = h || '';
-            var merged = Object.assign({}, old, nu);
-            var mem = (a.authCreate && h) ? memberEnsure(a, merged, h).then(function (uid) { if (uid) merged.fbUid = uid; return ''; }, function (e) { return 'حساب Firebase للمستخدم ما اتعملش: ' + (e && e.message || e); }) : Promise.resolve('');
-            return mem.then(function (warn) {
-              if (k >= 0) list[k] = merged; else list.push(merged);
-              return usersSave(a, list).then(function () { return warn ? { ok: true, warning: warn } : { ok: true }; });
-            });
+            if (k >= 0) list[k] = Object.assign({}, old, nu); else list.push(nu);
+            return usersSave(a, list).then(function () { return { ok: true }; });
           });
         case 'deleteUser':
-          var d = find(body.username), gone = d >= 0 ? list[d] : null; if (d >= 0) list.splice(d, 1);
-          return (gone && gone.fbUid ? a.write([{ t: 'd', path: mPath(gone.fbUid) }]).catch(function () {}) : Promise.resolve()).then(function () { return usersSave(a, list); }).then(function () { return { ok: true }; });
+          var d = find(body.username); if (d >= 0) list.splice(d, 1);
+          return usersSave(a, list).then(function () { return { ok: true }; });
       }
       return null;
     });
-  }
-
-  /* ---- Per-person Firebase accounts + permissions ----
-     Each user gets an Email/Password Firebase account whose email AND password are derived from the stored PIN fingerprint
-     (passHash = sha256('dpbfs|user|pin')): email = u<16 hex of the name>.<first 8 of the hash>@dpb.app, password = hash chars 8..40.
-     So the login screen (username + PIN) signs in to Firebase directly, Firebase checks the PIN, and no raw PIN is ever stored.
-     A changed PIN is a different email -> a new account; the old member document is removed, so the old account is dead.
-     dpb2/{ns}/members/{uid} holds role / active / procs (lower-case process names, or ["*"]) / profile (what the app's login reply carries):
-     firestore.rules read that document to decide what each person may write. */
-  function mPath(uid) { return 'dpb2/' + nsName() + '/members/' + uid; }
-  function acct(name, h) {
-    return sha256('dpbu|' + String(name == null ? '' : name).trim().toLowerCase()).then(function (u) {
-      return { email: 'u' + u.slice(0, 16) + '.' + String(h).slice(0, 8) + '@dpb.app', password: String(h).slice(8, 40) };
-    });
-  }
-  function procNames(u) {
-    var raw = u.processIds != null ? u.processIds : (u.processId || '');
-    var ids = Array.isArray(raw) ? raw.map(String) : String(raw).split(',').map(function (x) { return x.trim(); }).filter(Boolean);
-    var admin = String(u.role || '').toLowerCase() === 'admin';
-    var all = admin || u.allProcesses === true || String(u.allProcesses).toUpperCase() === 'TRUE' || ids.indexOf('*') >= 0;
-    if (all) return ['*'];
-    var map = {}; try { (typeof window.getAppliedProcessEntries === 'function' ? window.getAppliedProcessEntries() : []).forEach(function (p) { map[String(p.id)] = String(p.name || '').trim().toLowerCase(); }); } catch (e) {}
-    var out = []; ids.forEach(function (i) { var n = map[i] || String(i).trim().toLowerCase(); if (n && out.indexOf(n) < 0) out.push(n); });
-    // a later grouped stage fills the earlier stages of the same cell (cascade), so those need write access too (they are written only by that cascade)
-    var g = []; try { g = (typeof window.DPB_groupedProcessNames === 'function' ? window.DPB_groupedProcessNames() : []).map(function (x) { return String(x).trim().toLowerCase(); }).filter(Boolean); } catch (e) {}
-    out.slice().forEach(function (n) { var gi = g.indexOf(n); for (var k = 0; k < gi; k++) if (out.indexOf(g[k]) < 0) out.push(g[k]); });
-    return out;
-  }
-  function memberData(u) {
-    var pu = pubUser(u); delete pu.fbUid;
-    return { username: uName(u), role: String(u.role || '').toLowerCase() === 'admin' ? 'admin' : 'supervisor', active: isActive(u), procs: procNames(u), profile: JSON.stringify(pu), time: new Date().toISOString() };
-  }
-  // make sure the person has an account + an up-to-date member document; returns the uid (needs an admin session)
-  function memberEnsure(a, u, hash) {
-    var nm = uName(u); if (!nm || !hash) return Promise.resolve('');
-    return acct(nm, hash).then(function (ac) { return a.authCreate(ac.email, ac.password); }).then(function (r) {
-      var ops = [{ t: 's', path: mPath(r.uid), data: memberData(u) }];
-      if (u.fbUid && u.fbUid !== r.uid) ops.push({ t: 'd', path: mPath(u.fbUid) });   // PIN changed: the old account loses its member document
-      return a.write(ops).then(function () { return r.uid; });
-    });
-  }
-  function membersSync() {
-    return getStore().then(function (s) {
-      var a = s.adapter; if (!a.authCreate) return Promise.reject(new Error('إنشاء الحسابات مش متاح في الوضع ده'));
-      return usersLoad(a).then(function (list) {
-        if (!list) throw new Error('انقل المستخدمين الأول');
-        var made = 0, skipped = 0, errs = [];
-        return list.reduce(function (pr, u) {
-          return pr.then(function () {
-            if (!u.passHash) { skipped++; return; }
-            return memberEnsure(a, u, u.passHash).then(function (uid) { if (uid) { u.fbUid = uid; made++; } }, function (e) { errs.push(uName(u) + ': ' + (e && e.message || e)); });
-          });
-        }, Promise.resolve()).then(function () { return usersSave(a, list); }).then(function () { return { ok: true, made: made, skipped: skipped, errors: errs }; });
-      });
-    });
-  }
-  // login straight against Firebase: resolves {ok:true,user} / {ok:false,error:'wrong'} / null (fall back to the Apps Script login)
-  function loginFb(body) {
-    var name = String(body.username || '').trim(), pin = body.password;
-    if (!name || pin == null || String(pin).trim() === '' || !cfgOf() || !usersOn()) return Promise.resolve(null);
-    var noFall = ls('dpb_fs2_login_fallback', 'on') === 'off';
-    return pinHash(name, pin).then(function (h) { return acct(name, h); }).then(function (ac) {
-      var mk = window.__DPB_FS2_ADAPTER ? Promise.resolve(window.__DPB_FS2_ADAPTER) : makeAdapter(ac);
-      return mk.then(function (a) {
-        return (a.authSignIn ? a.authSignIn(ac.email, ac.password) : Promise.resolve()).then(function () {
-          var uid = a.uid ? a.uid() : '';
-          return a.get(mPath(uid)).then(function (m) {
-            if (!m) return null;                                   // signed in but no member document: let the old path decide
-            if (!m.active) return { ok: false, error: 'wrong' };
-            var pu = {}; try { pu = JSON.parse(m.profile || '{}'); } catch (e) {}
-            try { localStorage.setItem(LS.auth, JSON.stringify(ac)); localStorage.setItem('dpb_fs2_role', m.role === 'admin' ? 'admin' : 'supervisor'); } catch (e) {}
-            resetStore();
-            return { ok: true, user: pu };
-          });
-        }, function (e) {
-          var code = String(e && e.code || ''); if (/user-not-found|invalid-credential|wrong-password|invalid-login/.test(code) && noFall) return { ok: false, error: 'wrong' };
-          return null;
-        });
-      });
-    }).catch(function () { return null; });
   }
   function usersHandle(body, input, init) {
     return getStore().then(function (s) { return usersOp(s.adapter, body); }).then(function (r) { return r ? jsonRes(r) : prevFetch(input, init); }, function () { return prevFetch(input, init); });
@@ -388,7 +289,7 @@
         return Promise.all(res.users.map(function (u) {
           var c = clean(u), pw = c.password != null ? c.password : c.pin; delete c.password; delete c.pin;
           return (pw != null && String(pw).trim() !== '' ? pinHash(uName(c), pw) : Promise.resolve('')).then(function (h) { c.passHash = h; return c; });
-        })).then(function (list) { return getStore().then(function (s) { return usersSave(s.adapter, list); }).then(function () { return membersSync().then(function (m) { return { ok: true, count: list.length, made: m.made, errors: m.errors }; }, function (e) { return { ok: true, count: list.length, made: 0, errors: [String(e && e.message || e)] }; }); }); });
+        })).then(function (list) { return getStore().then(function (s) { return usersSave(s.adapter, list); }).then(function () { return { ok: true, count: list.length }; }); });
       });
   }
   function usersCount() { return getStore().then(function (s) { return usersLoad(s.adapter); }).then(function (l) { return l ? l.length : 0; }); }
@@ -415,18 +316,116 @@
     });
   }
 
+
+  /* ---- Everything the Google Sheet script used to do besides the map cells now lives in Firestore too (kv docs under dpb2/{ns}/kv):
+     - production records that are NOT map cells (no row/column): one kv doc per process, key rest_<process>, plus an index doc restidx
+     - history / productivity log (ring buffer, written in batches), build result of the Plan (buildresult + buildmeta)
+     - saveUnitMap: nothing reads it any more (it only served the Sheet's onEdit), so it is acknowledged and not stored.
+     When Firestore is not reachable these answer ok:false, so the app keeps its own queue and retries; they never fall back to the Sheet. */
+  function djb(s) { var h = 5381; s = String(s); for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(16); }
+  function restKey(p) { var s = CORE.slug(p || 'none') || 'none'; return 'rest_' + s.replace(/[^a-z0-9\-]/g, '').slice(0, 24) + '_' + djb(s); }
+  function jparse(str, d) { try { var v = JSON.parse(str); return v == null ? d : v; } catch (e) { return d; } }
+  var restCache = null, restCacheAt = 0, REST_TTL = 30000;
+  function restIndex(a) { return kvReadStr(a, 'restidx').then(function (s) { var l = jparse(s, []); return Array.isArray(l) ? l : []; }); }
+  function restAll(a, fresh) {
+    if (!fresh && restCache && Date.now() - restCacheAt < REST_TTL) return Promise.resolve(restCache);
+    return restIndex(a).then(function (idx) {
+      return Promise.all(idx.map(function (k) { return kvReadStr(a, k).then(function (s) { return jparse(s, {}); }); }));
+    }).then(function (shards) {
+      var out = []; shards.forEach(function (m) { Object.keys(m).forEach(function (id) { out.push(m[id]); }); });
+      restCache = out; restCacheAt = Date.now(); return out;
+    });
+  }
+  function tms(x) { var v = Date.parse(x); return isFinite(v) ? v : 0; }
+  // returns the ids it refused because a newer copy is already stored (same meaning as "stale" in the old reply)
+  function restPut(a, recs) {
+    var by = {}; recs.forEach(function (r) { if (r && r.id != null) { var k = restKey(r.process); (by[k] = by[k] || []).push(r); } });
+    var keys = Object.keys(by), stale = [];
+    if (!keys.length) return Promise.resolve(stale);
+    return restIndex(a).then(function (idx) {
+      var newIdx = idx.slice(), idxChanged = false;
+      return Promise.all(keys.map(function (k) {
+        return kvReadStr(a, k).then(function (s) {
+          var m = jparse(s, {}), changed = false;
+          by[k].forEach(function (r) {
+            var cur = m[String(r.id)];
+            if (cur && tms(cur.time) > tms(r.time)) { stale.push({ id: String(r.id) }); return; }
+            m[String(r.id)] = clean(r); changed = true;
+          });
+          if (newIdx.indexOf(k) < 0) { newIdx.push(k); idxChanged = true; }
+          return changed ? kvWriteStr(a, k, JSON.stringify(m)) : null;
+        });
+      })).then(function () { return idxChanged ? kvWriteStr(a, 'restidx', JSON.stringify(newIdx)) : null; });
+    }).then(function () { restCache = null; return stale; });
+  }
+  function restRemove(a, ids) {
+    var want = {}; ids.forEach(function (x) { want[String(x)] = true; });
+    return restIndex(a).then(function (idx) {
+      var n = 0;
+      return Promise.all(idx.map(function (k) {
+        return kvReadStr(a, k).then(function (s) {
+          var m = jparse(s, {}), ch = false;
+          Object.keys(m).forEach(function (id) { if (want[id]) { delete m[id]; n++; ch = true; } });
+          return ch ? kvWriteStr(a, k, JSON.stringify(m)) : null;
+        });
+      })).then(function () { restCache = null; return n; });
+    });
+  }
+  // one-time per device: records this device already had as "synced" (they came from the Sheet) are copied into Firestore; after that
+  // the pull no longer carries local copies, so a deletion made on another device really disappears here too
+  function restAdopt(a, have) {
+    var flag = 'dpb_fs2_rest_adopted_' + nsName();
+    if (ls(flag, '') === '1') return;
+    var mine = localInSync().filter(function (x) { return !have[String(x.id)]; });
+    var done = function () { try { localStorage.setItem(flag, '1'); } catch (e) {} };
+    if (!mine.length) { done(); return; }
+    restPut(a, mine).then(done, function () {});
+  }
+  var histBuf = [], histT = null;
+  function histFlush() {
+    clearTimeout(histT); histT = null;
+    if (!histBuf.length) return Promise.resolve();
+    var take = histBuf.splice(0, histBuf.length);
+    return getStore().then(function (s) {
+      return kvReadStr(s.adapter, 'history').then(function (str) {
+        var l = jparse(str, []); if (!Array.isArray(l)) l = [];
+        l = l.concat(take); if (l.length > 400) l = l.slice(l.length - 400);
+        return kvWriteStr(s.adapter, 'history', JSON.stringify(l));
+      });
+    }).catch(function () { histBuf = take.concat(histBuf).slice(-400); histT = setTimeout(histFlush, 60000); });
+  }
+  function histAdd(e) { histBuf.push(e); if (!histT) histT = setTimeout(histFlush, 20000); }
+  try { document.addEventListener('visibilitychange', function () { if (document.hidden) histFlush(); }); } catch (e) {}
+  function nowIsoSrv() { return new Date(Date.now() + clockOff()).toISOString(); }
+  // the app's logHistory call puts the event name in the SAME field as the command name (gsCall merges {action:"logHistory"} with {action:"login",...}),
+  // so a history entry arrives as action = "login" / "production_save" / ... with user + details and no username/password: recognise it by shape
+  function isHistory(b) { return b.action === 'logHistory' || (b.details !== undefined && b.user !== undefined && b.username === undefined && b.password === undefined && b.records === undefined); }
+  function sheetlessAction(body) {
+    if (isHistory(body)) { histAdd({ user: body.user || '', event: body.action === 'logHistory' ? '' : String(body.action || ''), details: body.details || '', time: body.time || nowIsoSrv() }); return Promise.resolve(jsonRes({ ok: true })); }
+    switch (body.action) {
+      case 'logProductivity': (body.entries || []).forEach(function (x) { histAdd({ action: 'productivity', entry: x, time: nowIsoSrv() }); }); return Promise.resolve(jsonRes({ ok: true }));
+      case 'saveUnitMap': return Promise.resolve(jsonRes({ ok: true, skipped: 'not needed without the Sheet' }));
+      case 'saveBuildResult':
+        return getStore().then(function (s) {
+          var t = nowIsoSrv();
+          return kvWriteStr(s.adapter, 'buildresult', String(body.json || '')).then(function () { return kvWriteStr(s.adapter, 'buildmeta', JSON.stringify({ updated: t })); }).then(function () { return jsonRes({ ok: true, updated: t }); });
+        }).catch(fail);
+      case 'getBuildResult':
+        return getStore().then(function (s) {
+          return kvReadStr(s.adapter, 'buildmeta').then(function (ms) {
+            var meta = jparse(ms, {}), up = meta.updated || '';
+            if (!up) return jsonRes({ ok: true });
+            if (body.metaOnly) return jsonRes({ ok: true, updated: up });
+            return kvReadStr(s.adapter, 'buildresult').then(function (js) { return jsonRes(js ? { ok: true, json: js, updated: up } : { ok: true }); });
+          });
+        }).catch(fail);
+    }
+    return null;
+  }
+
   window.fetch = function (input, init) {
     try {
-      if (!on()) {
-        try {
-          var b0u = window.DPB_getScriptUrl && window.DPB_getScriptUrl(), u0 = typeof input === 'string' ? input : (input && input.url) || '';
-          if (b0u && u0.indexOf(b0u) === 0 && String((init && init.method) || 'GET').toUpperCase() === 'POST') {
-            var b0 = JSON.parse((init && init.body) || '{}');
-            if (b0.action === 'login') return loginFb(b0).then(function (r) { return r ? jsonRes(r) : prevFetch(input, init); });
-          }
-        } catch (e) {}
-        return prevFetch(input, init);
-      }
+      if (!on()) return prevFetch(input, init);
       var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
       var url = typeof input === 'string' ? input : (input && input.url) || '';
       if (!base || url.indexOf(base) !== 0) return prevFetch(input, init);
@@ -436,46 +435,50 @@
         var body = {}; try { body = JSON.parse((init && init.body) || '{}'); } catch (e) { return prevFetch(input, init); }
         if ((body.action === 'kvGet' || body.action === 'kvPatch' || body.action === 'kvDelete') && kvMine(body.key)) return kvHandle(body);
         if (body.action === 'upsertMany') {
-          var recs = body.records || [], m = recs.filter(isCell);
-          if (!m.length) return prevFetch(input, init);
-          var rest = recs.filter(function (r) { return !isCell(r); });
-          return getStore().then(function (s) { return s.put(m.map(stamp), stagesOf(body)); }).then(function (pr) {
-            return rest.length ? prevFetch(input, withBody(init, Object.assign({}, body, { records: rest }))) : jsonRes({ ok: true, stale: pr.stale || [], serverTime: new Date().toISOString() });
-          }, fail);
+          var recs = body.records || [], m = recs.filter(isCell), rest = recs.filter(function (r) { return !isCell(r); });
+          return getStore().then(function (s) {
+            var p1 = m.length ? s.put(m.map(stamp), stagesOf(body)) : Promise.resolve({ stale: [] });
+            return p1.then(function (pr) {
+              return (rest.length ? restPut(s.adapter, rest.map(stamp)) : Promise.resolve([])).then(function (st) {
+                return jsonRes({ ok: true, stale: (pr.stale || []).concat(st), serverTime: new Date().toISOString() });
+              });
+            });
+          }).catch(fail);
         }
         if (body.action === 'deleteMany') {
-          // only ids that really live in the new layer are handled here; everything else (Torque Tube, Modules, ...) goes down untouched
+          // ids that live in the cell store are removed there (with the lock rule); every other id is a non-cell production record
           return getStore().then(function (s) {
             var ids = (body.ids || []).map(String), known = {}; s.all().forEach(function (d) { known[String(d.id)] = true; known[s.id(d.process, d.r1, d.c1)] = true; });
             var mineIds = ids.filter(function (x) { return known[x]; }), otherIds = ids.filter(function (x) { return !known[x]; });
-            if (!mineIds.length) return prevFetch(input, init);
-            return s.removeIds(mineIds, stagesOf(body)).then(function (r) {
+            var p1 = mineIds.length ? s.removeIds(mineIds, stagesOf(body)) : Promise.resolve({ ok: true, deleted: 0, blocked: [] });
+            return p1.then(function (r) {
               if (!otherIds.length) return jsonRes(r);
-              return prevFetch(input, withBody(init, Object.assign({}, body, { ids: otherIds }))).then(parse).then(function (o) { o.deleted = (o.deleted || 0) + r.deleted; o.blocked = (o.blocked || []).concat(r.blocked); return jsonRes(o); });
+              return restRemove(s.adapter, otherIds).then(function (n) { return jsonRes({ ok: r.ok !== false, deleted: (r.deleted || 0) + n, blocked: r.blocked || [] }); });
             });
-          }, function () { return prevFetch(input, init); });
+          }).catch(fail);
         }
         if (body.action === 'getGrid' && mine(body.process || body.sheet)) {
           var nm = body.process || body.sheet;
           return Promise.all([getStore(), prevFetch(input, init).then(parse)]).then(function (r) { return jsonRes(overlayGrid(r[0], nm, r[1])); }, fail);
         }
         if (body.action === 'getGridBatch') { return batchRes(input, init); }
-        if (body.action === 'login' && usersOn()) return loginFb(body).then(function (r) { return r ? jsonRes(r) : usersHandle(body, input, init); });
+        var sl = sheetlessAction(body); if (sl) return sl;
         if (USER_ACTIONS[body.action] === 1 && usersOn()) return usersHandle(body, input, init);
         return prevFetch(input, init);
       }
       if (q.action === 'getGrid' && mine(q.process || q.sheet)) { return Promise.all([getStore(), prevFetch(input, init).then(parse)]).then(function (r) { return jsonRes(overlayGrid(r[0], q.process || q.sheet, r[1])); }, fail); }
       if (q.action === 'getGridBatch') { return batchRes(input, init); }
-      if (!q.action && !q.debug) { // records pull: the grouped processes come only from Firestore; the rest from the layer underneath when it answers
+      if (!q.action && !q.debug) { // records pull: map cells + the other production records, both from Firestore only (the Sheet is not asked any more)
         return getStore().then(function (s) {
-          var mineRecs = function () { return s.all().map(function (d) { return stamp(Object.assign({ recordId: d.id }, d)); }); };
-          return prevFetch(input, init).then(parse).catch(function () { return null; }).then(function (o) {
-            if (o && o.ok !== false && !o.unchanged && Array.isArray(o.data)) {
-              o.data = o.data.filter(function (x) { return !isCell(x); }).concat(mineRecs());
-              o.rev = String(o.rev || '') + '|f2:' + version; return jsonRes(o);
-            }
-            if (o && /^unauthorized/i.test(String(o.error || ''))) { try { window.DPB_tokenRejected(); } catch (e) {} } // keep the app's login prompt for the other processes
-            return jsonRes({ ok: true, api: 99, data: localInSync().concat(mineRecs()) }); // no rev on purpose: the next pull is a full one
+          // the app keeps every record it pulls in the browser's localStorage (about 5 MB): send map cells without fields it never reads
+          // (recordId duplicates id; source 'SheetImport' is only a note), so a full Excel baseline (~19,000 cells) still fits
+          var mineRecs = function () { return s.all().map(function (d) { var o = stamp(Object.assign({}, d)); if (o.source === 'SheetImport') delete o.source; return o; }); };
+          return restAll(s.adapter).then(function (rest) {
+            var have = {}; rest.forEach(function (x) { have[String(x.id)] = true; });
+            var adopting = ls('dpb_fs2_rest_adopted_' + nsName(), '') !== '1';
+            var extra = adopting ? localInSync().filter(function (x) { return !have[String(x.id)]; }) : [];
+            if (adopting) restAdopt(s.adapter, have);
+            return jsonRes({ ok: true, api: 99, data: extra.concat(rest, mineRecs()) }); // no rev on purpose: every pull is a full one
           });
         }, function () { return jsonRes({ ok: true, unchanged: true }); }); // layer unavailable: change nothing locally, do not hang
       }
@@ -500,7 +503,7 @@
     });
     return m;
   }
-  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, syncMembers: membersSync, usersCount: usersCount, testConnection: testConn };
+  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, usersCount: usersCount, testConnection: testConn };
 
   /* ---- Import: make the new layer match what the layer underneath (the Google Sheet side) shows right now ---- */
   function readGrid(name) {
@@ -527,31 +530,22 @@
     });
   }
   window.DPB_FS2.importAll = importAll;
-  /* ---- First-run import, automatic: a map process that has NO cells in Firestore yet and was never imported is filled once from the sheet
-     (the sheet is the truth at that moment). A marker (kv key fs2imported) records which processes were handled, so a process that is
-     later emptied on purpose is never refilled from a stale sheet. A tab that cannot be read is skipped and retried on the next open. ---- */
-  var AI_KEY = 'fs2imported', aiRunning = false, aiFailed = {};
-  function autoImport(s) {
-    if (aiRunning || ls('dpb_fs2_autoimp', 'on') === 'off' || !isAdminDevice()) return Promise.resolve();
-    aiRunning = true; var a = s.adapter;
-    return kvReadStr(a, AI_KEY).then(function (str) {
-      var done = {}; try { (JSON.parse(str || '[]') || []).forEach(function (x) { done[CORE.slug(x)] = 1; }); } catch (e) {}
-      var have = {}; s.all().forEach(function (d) { have[CORE.slug(d.process)] = 1; });
-      var todo = procs().filter(function (p) { var k = CORE.slug(p); return !done[k] && !have[k] && !aiFailed[k]; });
-      var keep = Object.keys(done); procs().forEach(function (p) { var k = CORE.slug(p); if (have[k] && !done[k]) keep.push(k); });
-      if (!todo.length) { return keep.length > Object.keys(done).length ? kvWriteStr(a, AI_KEY, JSON.stringify(keep)) : null; }
-      return Promise.all(todo.map(function (p) {
-        return readGrid(p).then(function (g) { return { p: p, cells: cellsOf(g) }; }, function (e) { aiFailed[CORE.slug(p)] = 1; console.warn('dpb-fs2 auto-import skipped', p, e && e.message); return null; });
-      })).then(function (gs) {
-        gs = gs.filter(Boolean); if (!gs.length) return null;
-        return gs.reduce(function (pr, x) { return pr.then(function () { return s.importProcess(x.p, x.cells, false); }); }, Promise.resolve()).then(function () {
-          return kvWriteStr(a, AI_KEY, JSON.stringify(keep.concat(gs.map(function (x) { return CORE.slug(x.p); }))));
-        }).then(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); });
-      });
-    }).catch(function (e) { console.warn('dpb-fs2 auto-import failed', e); }).then(function () { aiRunning = false; });
+  // Excel baseline: the numbers already written in the uploaded Excel (the app reads them with the SAME map model that draws the map, so only real map cells count).
+  // ADD-ONLY: a cell that already has a live value in Firestore is never changed or removed. Run once after uploading the Excel; the preview (apply=false) writes nothing.
+  function importExcel(apply) {
+    var src = typeof window.__dpbExcelUnitCells === 'function' ? window.__dpbExcelUnitCells() : [];
+    if (!src.length) return Promise.reject(new Error('مفيش إكسل تنفيذ متطبّق على الجهاز ده (الإكسل بيتحمّل من Builder على جهاز الأدمن)'));
+    return getStore().then(function (s) {
+      var live = s.all();
+      return Promise.all(src.map(function (x) {
+        var have = live.filter(function (d) { return CORE.slug(d.process) === CORE.slug(x.name); }).map(function (d) { return { r: d.r1, c: d.c1, r2: d.r2, c2: d.c2, code: d.code }; });
+        var seen = {}; have.forEach(function (h) { seen[h.r + '|' + h.c] = 1; });
+        var fresh = x.cells.filter(function (c) { return !seen[c.r + '|' + c.c]; });
+        return s.importProcess(x.name, have.concat(fresh), !apply).then(function (r) { return { name: x.name, units: x.units, excel: x.cells.length, existing: have.length, add: r.add, bad: x.bad.length }; });
+      }));
+    });
   }
-  window.DPB_FS2.autoImport = function () { return getStore().then(autoImport); };
-
+  window.DPB_FS2.importExcel = importExcel;
   window.DPB_FS2.backup = bkExport; window.DPB_FS2.restore = bkRestore;
 
   /* ---- Backup / restore: one JSON file with everything the layer keeps in Firestore (dpb2/{ns}/rows = map cells, dpb2/{ns}/kv = map catalog, map shapes, original Excel files).
@@ -819,7 +813,7 @@
       '<input type="url" id="dpbFs2Url" autocomplete="off" placeholder="رابط سكربت النسخ الاحتياطي (ينتهي بـ /exec)" style="width:100%;box-sizing:border-box;margin-top:6px;padding:9px 10px;border-radius:8px;border:1px solid #567;background:#0d1b2e;color:#fff;direction:ltr;text-align:left">' +
       '<input type="email" id="dpbFs2Email" inputmode="email" autocomplete="off" placeholder="إيميل Google Drive اللي تترفع عليه النسخة" style="width:100%;box-sizing:border-box;margin-top:6px;padding:9px 10px;border-radius:8px;border:1px solid #567;background:#0d1b2e;color:#fff;direction:ltr;text-align:left">' +
       '<details style="margin-top:10px"><summary class="hint" style="cursor:pointer">⚙️ أدوات متقدمة (نادرًا ما تحتاجها)</summary>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button type="button" class="dpbAdminBtn" id="dpbFs2Toggle"></button><button type="button" class="dpbAdminBtn" id="dpbFs2Import">📥 مطابقة الخرائط على الشيت</button></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button type="button" class="dpbAdminBtn" id="dpbFs2Toggle"></button><button type="button" class="dpbAdminBtn" id="dpbFs2Import">📥 مطابقة الخرائط على الشيت</button><button type="button" class="dpbAdminBtn" id="dpbFs2ImportXl">📥 استيراد قيم الإكسل المرفوع (إضافة بس)</button><button type="button" class="dpbAdminBtn" id="dpbFs2CheckXl">🔎 فحص قيم الإكسل</button></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center"><select id="dpbFs2RestoreSrc" class="dpbAdminBtn"><option value="current">استعادة من: الحالية</option><option value="previous">استعادة من: السابقة</option><option value="file">استعادة من: ملف</option></select><button type="button" class="dpbAdminBtn" id="dpbFs2Restore">♻️ استعادة</button><input type="file" id="dpbFs2RestoreFile" accept=".json,application/json" style="display:none"></div>' +
       '</details>' +
       '<div class="hint" id="dpbFs2DriveInfo" style="margin-top:8px;line-height:1.9"></div>' +
@@ -832,6 +826,29 @@
     document.getElementById('dpbFs2Toggle').addEventListener('click', function () {
       window.DPB_FS2.setMode(!on()); paint();
       if (typeof alert === 'function') alert(on() ? 'اتشغّلت. اقفل التطبيق وافتحه تاني.' : 'اتقفلت. اقفل التطبيق وافتحه تاني.');
+    });
+    document.getElementById('dpbFs2CheckXl').addEventListener('click', function () {
+      var msg = document.getElementById('dpbFs2Msg');
+      var src = typeof window.__dpbExcelUnitCells === 'function' ? window.__dpbExcelUnitCells() : [];
+      if (!src.length) { msg.textContent = 'مفيش إكسل تنفيذ متطبّق على الجهاز ده.'; return; }
+      var enc = function (r, c) { try { return window.XLSX.utils.encode_cell({ r: r, c: c }); } catch (e) { return 'r' + r + 'c' + c; } };
+      var lines = src.map(function (x) {
+        var bad = x.bad.map(function (b) { return enc(b.r, b.c) + ' = "' + b.v + '"'; }).join('، ');
+        return x.name + ': ' + x.cells.length + ' خلية منفّذة من ' + x.units + (x.bad.length ? ' — قيم غلط بتتجاهل (' + x.bad.length + '): ' + bad : ' — مفيش قيم غلط ✅');
+      });
+      msg.textContent = lines.join('\n'); msg.style.whiteSpace = 'pre-wrap';
+      if (typeof alert === 'function') alert('فحص قيم الإكسل:\n\n' + lines.join('\n') + '\n\nلتصحيحها: امسح القيمة الغلط من الإكسل نفسه وارفعه تاني.');
+    });
+    document.getElementById('dpbFs2ImportXl').addEventListener('click', function () {
+      var msg = document.getElementById('dpbFs2Msg');
+      if (!on()) { msg.textContent = 'شغّل الطبقة الجديدة الأول.'; return; }
+      msg.textContent = 'بقرا الإكسل…';
+      importExcel(false).then(function (r) {
+        var line = r.map(function (x) { return x.name + ': في الإكسل ' + x.excel + ' خلية منفّذة من ' + x.units + ' — موجود في Firestore ' + x.existing + '، هيتضاف ' + x.add + (x.bad ? '، خلايا قيمتها غلط (هتتجاهل) ' + x.bad : ''); }).join('\n');
+        if (!confirm('استيراد قيم الإكسل المرفوع (بيضيف بس، مبيغيّرش ولا بيشيل أي حاجة موجودة):\n\n' + line + '\n\nنكمّل؟')) { msg.textContent = 'اتلغت.'; return; }
+        msg.textContent = 'بكتب…';
+        return importExcel(true).then(function () { msg.textContent = 'تم استيراد قيم الإكسل ✅'; paintState(); try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} });
+      }).catch(function (e) { msg.textContent = 'فشل: ' + permHint(e); });
     });
     document.getElementById('dpbFs2Import').addEventListener('click', function () {
       var msg = document.getElementById('dpbFs2Msg');
