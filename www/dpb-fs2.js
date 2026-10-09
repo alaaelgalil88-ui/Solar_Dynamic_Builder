@@ -16,7 +16,10 @@
   var EMU_HOST = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
   try { var me = /[?&]emu=(on|off)/.exec(location.search); if (me && EMU_HOST) localStorage.setItem('dpb_fs2_emu', me[1]); } catch (e) {}
   function emu() { return EMU_HOST && ls('dpb_fs2_emu', 'on') === 'on'; }   // on localhost the emulator is the default
-  function on() { return ls(LS.mode, 'off') === 'on' || emu(); }
+  // default: ON as soon as this device has a Firebase config + the app's Email/Password account saved (nothing to switch by hand).
+  // An explicit "off" (the toggle in the card, or ?fs2=off) still wins as a kill switch.
+  function hasCreds() { try { var c = JSON.parse(ls(LS.cfg, 'null')), a = JSON.parse(ls(LS.auth, 'null')); return !!(c && c.projectId && a && a.email && a.password); } catch (e) { return false; } }
+  function on() { var m = ls(LS.mode, null); return m === 'on' || emu() || (m === null && hasCreds()); }
   function procs() { return ls(LS.procs, 'Ramming,Saddle,Bearing,Torque Tube,Modules').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
   function mine(name) { var s = CORE.slug(name); return procs().some(function (p) { return CORE.slug(p) === s; }); }
   // a record belongs to this layer only if its process is a map process AND it points at a map cell; anything else (e.g. a tracker-level entry) goes down untouched
@@ -122,7 +125,7 @@
     creating = (window.__DPB_FS2_ADAPTER ? Promise.resolve(window.__DPB_FS2_ADAPTER) : makeAdapter()).then(function (a) {
       var s = CORE.create(a, { ns: nsName(), offset: clockOff });
       s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); clearTimeout(pullT); pullT = setTimeout(function () { try { if (window.DPB_CLOUD_PRODUCTION && window.DPB_CLOUD_PRODUCTION.cloudPull) window.DPB_CLOUD_PRODUCTION.cloudPull(); } catch (e) {} }, 1500); });
-      return s.ready.then(function () { store = s; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); syncClock(a); return s; });
+      return s.ready.then(function () { store = s; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); syncClock(a); setTimeout(function () { autoImport(s); }, 0); return s; });
     }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); throw e; });
     return creating;
   }
@@ -278,9 +281,13 @@
     var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl(); if (!base) return Promise.reject(new Error('مفيش رابط مشروع'));
     var pin = ls('DPB_ADMIN_PIN_V1', ''); if (!pin) return Promise.reject(new Error('مفيش PIN أدمن محفوظ على الجهاز — سجّل دخول الأدمن الأول'));
     return prevFetch(base, { method: 'POST', body: JSON.stringify({ action: 'getUsers', auth: { username: 'Admin', password: pin } }) })
-      .then(function (r) { return r.json(); })
+      .then(function (r) { return r.json(); }, function (e) { throw new Error('الاتصال بالشيت فشل: ' + (e && e.message || e)); })
       .then(function (res) {
-        if (!res || !res.ok || !Array.isArray(res.users)) throw new Error('قراءة المستخدمين من الشيت فشلت' + (res && res.error ? ': ' + res.error : ''));
+        if (!res || !res.ok || !Array.isArray(res.users)) {
+          var why = res && res.error ? String(res.error) : (res ? 'رد غير متوقع من السيرفر (ok=' + res.ok + ')' : 'رد فاضي');
+          var rejected = /unauthori|locked|wrong|pin|auth/i.test(why) || ls('DPB_ADMIN_AUTH_BAD_V1', '') === '1';
+          throw new Error('قراءة المستخدمين من الشيت فشلت: ' + why + (rejected ? ' — السيرفر رفض PIN الأدمن المحفوظ على الجهاز. اخرج من لوحة الأدمن وادخلها بالـ PIN الصح تاني (بيتحدّث المحفوظ)، وجرّب تاني.' : ''));
+        }
         if (res.pinsHidden === true) throw new Error('السيرفر خبّى الباسوردات — سجّل دخول الأدمن بالـ PIN وجرّب تاني');
         return Promise.all(res.users.map(function (u) {
           var c = clean(u), pw = c.password != null ? c.password : c.pin; delete c.password; delete c.pin;
@@ -414,6 +421,31 @@
     });
   }
   window.DPB_FS2.importAll = importAll;
+  /* ---- First-run import, automatic: a map process that has NO cells in Firestore yet and was never imported is filled once from the sheet
+     (the sheet is the truth at that moment). A marker (kv key fs2imported) records which processes were handled, so a process that is
+     later emptied on purpose is never refilled from a stale sheet. A tab that cannot be read is skipped and retried on the next open. ---- */
+  var AI_KEY = 'fs2imported', aiRunning = false, aiFailed = {};
+  function autoImport(s) {
+    if (aiRunning || ls('dpb_fs2_autoimp', 'on') === 'off') return Promise.resolve();
+    aiRunning = true; var a = s.adapter;
+    return kvReadStr(a, AI_KEY).then(function (str) {
+      var done = {}; try { (JSON.parse(str || '[]') || []).forEach(function (x) { done[CORE.slug(x)] = 1; }); } catch (e) {}
+      var have = {}; s.all().forEach(function (d) { have[CORE.slug(d.process)] = 1; });
+      var todo = procs().filter(function (p) { var k = CORE.slug(p); return !done[k] && !have[k] && !aiFailed[k]; });
+      var keep = Object.keys(done); procs().forEach(function (p) { var k = CORE.slug(p); if (have[k] && !done[k]) keep.push(k); });
+      if (!todo.length) { return keep.length > Object.keys(done).length ? kvWriteStr(a, AI_KEY, JSON.stringify(keep)) : null; }
+      return Promise.all(todo.map(function (p) {
+        return readGrid(p).then(function (g) { return { p: p, cells: cellsOf(g) }; }, function (e) { aiFailed[CORE.slug(p)] = 1; console.warn('dpb-fs2 auto-import skipped', p, e && e.message); return null; });
+      })).then(function (gs) {
+        gs = gs.filter(Boolean); if (!gs.length) return null;
+        return gs.reduce(function (pr, x) { return pr.then(function () { return s.importProcess(x.p, x.cells, false); }); }, Promise.resolve()).then(function () {
+          return kvWriteStr(a, AI_KEY, JSON.stringify(keep.concat(gs.map(function (x) { return CORE.slug(x.p); }))));
+        }).then(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); });
+      });
+    }).catch(function (e) { console.warn('dpb-fs2 auto-import failed', e); }).then(function () { aiRunning = false; });
+  }
+  window.DPB_FS2.autoImport = function () { return getStore().then(autoImport); };
+
   window.DPB_FS2.backup = bkExport; window.DPB_FS2.restore = bkRestore;
 
   /* ---- Backup / restore: one JSON file with everything the layer keeps in Firestore (dpb2/{ns}/rows = map cells, dpb2/{ns}/kv = map catalog, map shapes, original Excel files).
