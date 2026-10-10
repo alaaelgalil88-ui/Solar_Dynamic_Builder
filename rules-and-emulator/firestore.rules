@@ -1,0 +1,61 @@
+rules_version = '2';
+
+// DPB app: everything lives under dpb2/{ns}/...
+//   rows/{doc}     map cells (one doc per process row; field "process" = the process name)
+//   kv/{doc}       map catalog, map shapes, original Excel files, the users list (fingerprints), small shared keys
+//   members/{uid}  one document per signed-in person: role, active, procs (lower-case process names or ["*"]), profile
+// Everything else is closed.
+//
+// Who is who:
+//   owner  = the original Email/Password account (break-glass, always full access, needs no member document)
+//   member = an Email/Password account with an ACTIVE members/{uid} document (created by the admin from the users screen)
+//   admin  = a member whose role is "admin"
+// A supervisor reads every map but may write / delete cells ONLY of the processes listed in its own member document.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function pw() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+    function owner() {
+      return pw() && request.auth.token.email == 'alaa.elgalil88@gmail.com';
+    }
+    function memRef(ns) {
+      return /databases/$(database)/documents/dpb2/$(ns)/members/$(request.auth.uid);
+    }
+    function isMember(ns) {
+      return pw() && exists(memRef(ns)) && get(memRef(ns)).data.active == true;
+    }
+    function isAdmin(ns) {
+      return owner() || (isMember(ns) && get(memRef(ns)).data.role == 'admin');
+    }
+    function canProc(ns, p) {
+      return owner() || (isMember(ns) && p is string && ('*' in get(memRef(ns)).data.procs || p.lower() in get(memRef(ns)).data.procs));
+    }
+
+    match /dpb2/{ns}/rows/{docId} {
+      allow read: if owner() || isMember(ns);
+      // meta documents (epoch) have no process: any member may create them
+      allow create: if (docId.matches('meta-.*') && (owner() || isMember(ns))) || canProc(ns, request.resource.data.process);
+      // both the old and the new process must be allowed, so a doc can not be re-labelled into someone else's process
+      allow update: if (docId.matches('meta-.*') && (owner() || isMember(ns))) || (canProc(ns, request.resource.data.process) && canProc(ns, resource.data.process));
+      allow delete: if canProc(ns, resource.data.process);
+    }
+
+    match /dpb2/{ns}/kv/{docId} {
+      // the users list holds the PIN fingerprints (they are the Firebase passwords): admin only
+      allow read: if owner() || (isMember(ns) && !docId.matches('users.*'));
+      allow write: if isAdmin(ns) || (isMember(ns) && docId.matches('clock-.*'));
+    }
+
+    match /dpb2/{ns}/members/{uid} {
+      allow read: if isAdmin(ns) || (pw() && request.auth.uid == uid);
+      allow write: if isAdmin(ns);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
