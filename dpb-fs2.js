@@ -86,14 +86,9 @@
           // t:'s' = write a whole small doc (meta). t:'f' = write only the listed cells inside a row doc (mergeFields replaces exactly those cells, never the rest of the row)
           write: function (ops) {
             var p = Promise.resolve();
-            // batches are cut by SIZE as well as by count: one batch must stay far below Firestore's 10 MiB limit ("Transaction too big"); order is kept (a pointer doc stays last)
-            var chunks = [], cur = [], bytes = 0;
-            ops.forEach(function (o) {
-              var n = 0; try { n = JSON.stringify(o.data || o.cells || {}).length; } catch (e) {}
-              if (cur.length && (cur.length >= 200 || bytes + n > 3000000)) { chunks.push(cur); cur = []; bytes = 0; }
-              cur.push(o); bytes += n;
-            });
-            if (cur.length) chunks.push(cur);
+            // batches are cut by the NUMBER OF CELLS (every cell is a map with ~10 indexed sub-fields, so the index entries, not the JSON size, are what hit
+            // Firestore's 10 MiB limit = "Transaction too big"), and also by size and by op count; order is kept (a pointer doc stays last)
+            var chunks = cutOps(ops);
             chunks.forEach(function (chunk) {
               p = p.then(function () {
                 var b = fs.writeBatch(db);
@@ -178,6 +173,19 @@
      Same request format the app already sends (kvGet / kvPatch), so the app code does not change. Values longer than 600k chars are split into parts. ---- */
   var U_KEY = 'users';
   var P_KEY = 'projects';   // the list of projects (id + name + small facts): lets any signed-in device find the projects without typing an ID
+  // pure helper (also used by the Node test): cut a list of write ops into batches that stay far below Firestore's limit
+  function cutOps(ops) {
+    var chunks = [], cur = [], bytes = 0, cells = 0;
+    ops.forEach(function (o) {
+      var n = 0; try { n = JSON.stringify(o.data || o.cells || {}).length; } catch (e) {}
+      var w = o.cells ? Object.keys(o.cells).length : 1;
+      if (cur.length && (cur.length >= 100 || cells + w > 500 || bytes + n > 1500000)) { chunks.push(cur); cur = []; bytes = 0; cells = 0; }
+      cur.push(o); bytes += n; cells += w;
+    });
+    if (cur.length) chunks.push(cur);
+    return chunks;
+  }
+  window.__dpbCutOps = cutOps;
   var KV_CHUNK = 600000;
   function kvMine(key) { return /^(mapcat|mapsnap_|xlfile_)/.test(String(key || '')); }
   function kvDoc(key) {
