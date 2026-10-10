@@ -138,6 +138,12 @@
     return origClick.apply(this,arguments);
   };
   try{navigator.canShare=function(){return false;};}catch(e){}
+  // 3b) اختيار مجلد النسخ الاحتياطي (إضافة DpbFolder في الـ APK) - الواجهة اللي بيستخدمها البرنامج كله: window.DPB_NATIVE_BRIDGE
+  window.DPB_NATIVE_BRIDGE={
+    chooseFolder:async function(){if(!P.DpbFolder)throw new Error('إضافة اختيار المجلد مش موجودة في التطبيق ده - ثبّت أحدث APK');var r=await P.DpbFolder.choose();return (r&&r.name)||null;},
+    hasFolder:async function(){if(!P.DpbFolder)return false;var r=await P.DpbFolder.has();return !!(r&&r.has);},
+    writeBackupFile:async function(n,t){if(!P.DpbFolder)return false;var r=await P.DpbFolder.write({name:String(n),text:String(t)});return !!(r&&r.ok);}
+  };
   // 3) الطباعة / PDF عن طريق نافذة الطباعة بتاعة أندرويد (Save as PDF)
   var lastPrint=0;
   function nativePrint(landscape){
@@ -437,6 +443,9 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   body.print-activity .app #productionCard,
   body.print-activity .app .fileGrid,
   body.print-activity .app .notice{display:none!important}
+  body.print-activity>*:not(.app):not(script):not(style){display:none!important}
+  body.print-activity #dpbStartGate,body.print-activity #dpbProjectHome,body.print-activity #dpbSupOverlay,body.print-activity #dpbAdminOverlay,body.print-activity #dpbSupLaunch,body.print-activity #dpbAdminLaunch,body.print-activity #dpbAdminHammerBackBtn,body.print-activity #dpbBackupModal,body.print-activity #dpbAdminPinModal,body.print-activity #dpbAdminChangePinModal{display:none!important}
+  html:has(body.print-activity),body.print-activity{overflow:visible!important;height:auto!important;background:#fff!important}
   body.print-activity #printActivityArea{display:block!important;width:100%!important;color:#111!important}
   body.print-activity #printActivityArea .print-report-page{width:100%;height:283mm;page-break-after:always;display:flex;flex-direction:column;justify-content:flex-start;align-items:center;box-sizing:border-box;overflow:hidden}
   body.print-activity #printActivityArea .print-report-page:last-child{page-break-after:auto}
@@ -4146,6 +4155,7 @@ function options(){
   const c=currentCatalog();if(!c)return{fixed:[],operations:[]};
   return{fixed:c.maps.filter(m=>m.mode==='fixed').map(m=>({id:m.id,name:m.name})),operations:c.maps.filter(m=>m.mode==='dynamic').map(m=>({id:m.id,name:m.name}))};
 }
+window.__dpbCatalogProcesses=function(){const c=currentCatalog();return c&&c.maps?c.maps.filter(m=>m.mode==='dynamic'&&m.op&&m.op.kind!=='notstarted'&&m.op.name).map(m=>({id:String(m.op.id||m.id),code:m.op.code,name:String(m.op.name).trim(),grouped:!!m.op.grouped})):[];};
 function processNames(){const c=currentCatalog();return c?c.maps.filter(m=>m.op&&m.op.name).map(m=>m.op.name):[];}
 function viewSpec(id){
   const c=currentCatalog();if(!c)return null;
@@ -7630,7 +7640,9 @@ function populateMapFilters(){
   populateMapStatusFilter();
   const sel=document.getElementById('mapRowFilter');
   if(!sel) return;
-  const rows=(project.buildResult?.rows||[]).slice().sort((a,b)=>a.r1-b.r1);
+  // rows/trackers come from the map that is ON SCREEN (works on a supervisor device that has no Build of its own), Build rows only as fallback
+  let _pd=null;try{_pd=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null;}catch(_){}
+  const rows=((_pd&&_pd.rows&&_pd.rows.length)?_pd.rows:(project.buildResult?.rows||[])).slice().sort((a,b)=>a.r1-b.r1);
   const rowLabels=rows.map(r=>String(r.label||'')).filter(Boolean);
   const current=mapFilterState.row||'all';
   sel.innerHTML='<option value="all">All Rows</option>'+rowLabels.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('');
@@ -7665,7 +7677,7 @@ function applyMapRowFilter(value){
 }
 function applyMapNumberFilter(value){mapFilterState.number=(value==='all'?'':String(value||'').trim());DPBMap.refresh();}
 function applyMapStageFilter(value){mapFilterState.stage=value||'all';DPBMap.refresh();}
-function resetMapFilters(){mapFilterState={row:'all',number:'',stage:'all'};populateMapFilters();DPBMap.refresh();}
+function resetMapFilters(){mapFilterState={row:'all',number:'',stage:'all'};try{const j=document.getElementById('dpbSupMapTrackerJump');if(j)j.value='';}catch(_){}populateMapFilters();DPBMap.refresh();}
 
 function trackerPassesMapFilter(t){
   const rowHit=mapFilterState.row==='all'||String(t.row||'')===String(mapFilterState.row);
@@ -7694,7 +7706,7 @@ function populatePrintRangeRows(){
   onPrintRangeRow('from',printRange.fromRow,false); onPrintRangeRow('to',printRange.toRow,false);
 }
 // the row/tracker lists follow whichever map is on screen (Ramming has its own rows, Modules its own...)
-window.dpbOnMapRendered=function(){try{const d=DPBMap.printData();if(d&&d.sig!==_printSig)populatePrintRangeRows();else refreshPrintRangeClasses();}catch(_){}};
+window.dpbOnMapRendered=function(){try{const d=DPBMap.printData();if(d&&d.sig!==_printSig)populatePrintRangeRows();else refreshPrintRangeClasses();if(d&&d.sig!==window.__dpbSupSig){window.__dpbSupSig=d.sig;if(typeof window.supervisorRefreshMapButtons==='function')window.supervisorRefreshMapButtons();}}catch(_){}};
 function fillPrintTrackerSelect(which){
   const row=which==='from'?printRange.fromRow:printRange.toRow;
   const id=which==='from'?'printFromTracker':'printToTracker';
@@ -7849,6 +7861,32 @@ function printActivityReport(){
   setTimeout(()=>{window.print();},80);
 }
 window.addEventListener('afterprint',()=>document.body.classList.remove('print-activity','print-plan'));
+
+// Supervisor: prints EXACTLY the rows currently shown in the reports table, in the Builder's Activity Report print format
+// (white page, same header / summary boxes / panel table / page numbers, 150 rows per A4 page).
+window.dpbPrintSupTable=function(tbl,procName){
+  if(!tbl||!tbl.tBodies[0])return;
+  const fst=tbl.dataset.fst||'';
+  const rows=[...tbl.tBodies[0].rows].filter(r=>r.style.display!=='none'&&!r.hidden&&!(fst&&(fst==='cells'?r.dataset.nsc!=='1':r.dataset.st!==fst)));
+  if(!rows.length){alert('مفيش صفوف معروضة للطباعة.');return;}
+  const txt=c=>{const k=c.cloneNode(true);k.querySelectorAll('br').forEach(b=>b.replaceWith(' / '));return k.textContent.replace(/\s+/g,' ').trim();};
+  const head=[...tbl.tHead.rows[0].cells].map(txt);
+  const data=rows.map(r=>[...r.cells].map(txt));
+  const cnt={none:0,part:0,done:0};rows.forEach(r=>{if(cnt[r.dataset.st]!=null)cnt[r.dataset.st]++;});
+  const n=rows.length,pc=x=>n?Math.round(x*100/n)+'%':'0%';
+  const summary=[['Trackers',n,'100%'],['Not Started',cnt.none,pc(cnt.none)],['In Progress',cnt.part,pc(cnt.part)],['Done',cnt.done,pc(cnt.done)]];
+  const E=x=>String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const perPage=150,pages=Math.max(1,Math.ceil(data.length/perPage));
+  const html=Array.from({length:pages},(_,i)=>{const part=data.slice(i*perPage,(i+1)*perPage);
+    return `<div class="print-report-page"><div class="print-report-head"><h2 style="margin:0 0 1mm;font-size:13px">Activity Report — ${E(procName||'')} — Tracker Production Status</h2><div style="font-size:7px;color:#555">Page ${i+1} of ${pages} · ${part.length} Trackers</div></div>
+    <div class="print-summary">${summary.map(x=>`<div class="box"><div class="k">${E(x[0])}</div><div class="v">${x[1]}</div><div class="pct">${x[2]}</div></div>`).join('')}</div>
+    <div class="print-panel-grid"><table class="print-panel"><thead><tr>${head.map(h=>`<th>${E(h)}</th>`).join('')}</tr></thead><tbody>${part.map(r=>`<tr>${r.map(c=>`<td>${E(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+    <div class="print-page-number">Page ${i+1} of ${pages}</div></div>`;}).join('');
+  const area=document.getElementById('printActivityArea');if(!area){alert('منطقة الطباعة مش موجودة.');return;}
+  area.innerHTML=html;document.body.classList.add('print-activity');
+  setTimeout(()=>{window.print();},80);
+};
+
 
 // Reads a process source's own values at the workbook's own physical
 // (row, col) coordinates -- mirroring the reference app's proven rule:
@@ -15107,7 +15145,6 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     </div>
     <div class="master-super-title">SUPERVISOR LOGIN</div>
     <div class="msupFrame">
-      <div class="dpbSupField" id="dpbSupProjField" style="display:none;margin-bottom:6px"><select id="dpbSupProjSel" aria-label="Project" style="width:100%;height:38px;border-radius:12px;background:#132a40;color:#fff;border:1px solid #294966;padding:0 10px;font-size:13px"></select></div>
       <div class="dpbSupField">
         <div id="dpbSupAccounts" class="dpbSupAccountGrid master-account-grid" aria-label="Supervisor accounts"></div>
         <input id="dpbSupUser" type="hidden" value="">
@@ -15130,6 +15167,14 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   </div>
 </section>
 
+      <section class="dpbSupScreen" id="dpbSupProjects">
+        <div class="dpbSupHero">
+          <h2>اختار المشروع</h2>
+          <p id="dpbSupProjectsMsg">دوس على كارت المشروع، وبيتحمّل تلقائي من السحابة.</p>
+        </div>
+        <div class="dpbSupActions" id="dpbSupProjCards"></div>
+      </section>
+
       <section class="dpbSupScreen" id="dpbSupHomeScreen">
         <div class="dpbSupHero">
           <h2 id="dpbSupWelcome">Production</h2>
@@ -15146,6 +15191,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           <button class="dpbSupNavCard" id="dpbSupGoMyEdits">
             <strong>✎ تعديلاتي</strong><span>سجلاتي الخاصة + إمكانية التراجع عن أي عملية</span>
           </button>
+          <button class="dpbSupNavCard" id="dpbSupGoProjects"><strong>🗂️ تغيير المشروع</strong><span id="dpbSupCurProj">—</span></button>
           <button class="dpbSupNavCard dpbSupMapNavCard" id="dpbSupGoMaps"><strong>🗺️ Project Maps</strong><span>عرض وتحديد وتطبيق وحذف وتحديث الخلايا من نفس الخريطة</span></button>
         </div>
       </section>
@@ -15628,6 +15674,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       // بعدين) بنفس الوضع دا هتتحسب منفصلة تلقائيًا من غير أي تعديل كود.
       sourceMode:e.rec?.definition?.sourceMode||''
     }));
+    // العمليات من نفس مصدر الخرايط (الكتالوج) لو الجهاز ده معندوش ملفات مطبّقة (مشرف/أدمن على الموبايل) - بنفس أرقام صلاحيات الحسابات
+    if(!processes.length&&typeof window.__dpbCatalogProcesses==='function'){try{window.__dpbCatalogProcesses().forEach((e,i)=>processes.push({id:e.id,code:String(e.code==null?'':e.code).trim(),name:e.name,processIndex:i,source:'map catalog',sourceMode:''}));}catch(_){}}
     // FALLBACK: لو مفيش أي Process Source اتطبق لسه (أو مفيش إكسل خالص)،
     // كروت Production Entry بتعرض ليجند العمليات الثابت (1=Ramming،
     // 2=Saddle، 3=Bearing، 4=Torque Tube) - نفس الأرقام اللي في خلايا
@@ -16603,7 +16651,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
             <div class="dpbRpLegend"><span class="dpbRpC0">● 0</span><span class="dpbRpC1">● جاري</span><span class="dpbRpC2">● مكتمل</span></div>
             <div class="dpbSupActivityTableWrap" dir="ltr"><table class="dpbSupActivityTable" tabindex="-1" data-fst=""><thead></thead><tbody></tbody></table></div>
             <div class="dpbRpCount" id="dpbRpCount"></div>
-            <div id="dpbRpMaps"></div>
+            <button type="button" class="btn primary" id="dpbRpPrint" style="margin-top:8px;width:100%">🖨️ طباعة الجدول</button>
           </div>
           <div class="dpbRpCard dpbSupReportBlock dpbSupSupervisorReport">
             <div class="dpbRpTitle">👤 إنتاجي <small>${escapeHtml(state.user||'Supervisor')}</small></div>
@@ -16640,7 +16688,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
             return `<tr data-st="${st}" data-nsc="${t.cells-t.cellsDone>0?1:0}"><td><b>${escapeHtml(L.label)}</b>${rowTag}</td><td class="${cls}">${t.done}/${t.total}</td>${ram}<td><span class="badge ${st==='none'?'warn':'ok'}">${stTxt[st]}</span></td></tr>`;
           }).join('');
         };
-        const drawMaps=()=>{try{if(mapsBox&&window.DPBMap&&DPBMap.drawStatusMaps)DPBMap.drawStatusMaps(mapsBox,tbl.dataset.fst||'',Math.max(220,(mapsBox.clientWidth||340)-12),selP.id);}catch(e){console.warn('status maps',e);}};
+        const drawMaps=()=>{};/* الخريطة اتلغت عند المشرف: الجدول + زرار الطباعة بس */
         const updCount=()=>{try{const rows=[...tbl.tBodies[0].rows];const vis=rows.filter(r=>r.style.display!=='none'&&!(tbl.dataset.fst&&(tbl.dataset.fst==='cells'?r.dataset.nsc!=='1':r.dataset.st!==tbl.dataset.fst))).length;countEl.textContent='معروض '+vis+' من '+rows.length+' تراكر';}catch(_){}};
         const paintProcs=()=>{procsEl.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===selP.id));const nm=summary.querySelector('#dpbRpProcName');if(nm)nm.textContent='· '+selP.name;};
         const paintAll=()=>{paintProcs();paintSeg();paintTable();drawMaps();updCount();};
@@ -16662,6 +16710,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           try{if(typeof window.__dpbForcePoll==='function')await window.__dpbForcePoll();}catch(_){}
           try{renderHistory();}catch(_){}
         });
+        const prBtn=summary.querySelector('#dpbRpPrint');if(prBtn)prBtn.addEventListener('click',()=>{try{window.dpbPrintSupTable(tbl,selP.name);}catch(e){alert('تعذّرت الطباعة: '+(e&&e.message||e));}});
         paintAll();
         try{if(typeof window.applySupervisorTrackerFilter==='function')window.applySupervisorTrackerFilter();}catch(_){}
       } else {
@@ -16794,7 +16843,13 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const ok=new Set(allowed.map(String));
     return list.filter(x=>ok.has(String(x.id)));
   }
-  function supervisorRefreshMapButtons(){const groups=DPBMap.options(),f=q("dpbSupMapFixed"),o=q("dpbSupMapOps");if(!f||!o)return;supervisorFillMapSelect(f,groups.fixed,'Select Fixed Map');supervisorFillMapSelect(o,supervisorFilterOps(groups.operations),'Select Operation');f.onchange=()=>{if(f.value){applyMapView(f.value);o.value='';supervisorRefreshMapButtons()}};o.onchange=()=>{if(o.value){applyMapView(o.value);f.value='';supervisorRefreshMapButtons()}};const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");if(row){const old=row.value;row.innerHTML='<option value="all">All Rows</option>'+(project.buildResult?.rows||[]).map(r=>{const v=r.name||r.label||r.row||"";return `<option value="${esc(v)}">${esc(v)}</option>`}).join("");row.value=[...row.options].some(x=>x.value===old)?old:"all"}if(tr){const old=tr.value;const rowVal=row?row.value:"all";const src=(project.buildResult?.trackerMatches||[]).filter(t=>rowVal==="all"||String(t.row||"")===String(rowVal));tr.innerHTML='<option value="all">All Trackers</option>'+src.map(t=>{const v=String(t.label||"").replace(/^T/i,"");return `<option value="${esc(v)}">${esc(t.label||"")}</option>`}).join("");tr.value=[...tr.options].some(x=>x.value===old)?old:"all"}}
+  function supervisorRefreshMapButtons(){const groups=DPBMap.options(),f=q("dpbSupMapFixed"),o=q("dpbSupMapOps");if(!f||!o)return;supervisorFillMapSelect(f,groups.fixed,'Select Fixed Map');supervisorFillMapSelect(o,supervisorFilterOps(groups.operations),'Select Operation');f.onchange=()=>{if(f.value){applyMapView(f.value);o.value='';supervisorRefreshMapButtons()}};o.onchange=()=>{if(o.value){applyMapView(o.value);f.value='';supervisorRefreshMapButtons()}};const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");
+    let pd=null;try{pd=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null}catch(_){}
+    const rowsSrc=(pd&&pd.rows&&pd.rows.length)?pd.rows:(project.buildResult?.rows||[]).map(r=>({label:String(r.label||r.name||r.row||""),trackers:r.trackers||[]}));
+    const nOf=t=>String(t&&t.number!=null?t.number:String((t&&t.label)||"").replace(/\D/g,""));
+    if(row){const old=row.value;row.innerHTML='<option value="all">All Rows</option>'+rowsSrc.map(r=>{const v=String(r.label||"");return `<option value="${esc(v)}">${esc(v)}</option>`}).join("");row.value=[...row.options].some(x=>x.value===old)?old:"all"}
+    if(tr){const old=tr.value;const rowVal=row?row.value:"all";const seen=new Map();rowsSrc.filter(r=>rowVal==="all"||String(r.label)===String(rowVal)).forEach(r=>(r.trackers||[]).forEach(t=>{const n=nOf(t);if(n&&!seen.has(n))seen.set(n,t)}));const list=[...seen.values()].sort((a,b)=>Number(nOf(a))-Number(nOf(b)));tr.innerHTML='<option value="all">All Trackers</option>'+list.map(t=>`<option value="${esc(nOf(t))}">${esc(t.label||("T"+nOf(t)))}</option>`).join("");tr.value=[...tr.options].some(x=>x.value===old)?old:"all"}}
+  window.supervisorRefreshMapButtons=supervisorRefreshMapButtons;
   function jumpToMapTracker(){
     const el=q("dpbSupMapTrackerJump");if(!el)return;
     const num=String(el.value||"").replace(/[^0-9]/g,"").trim();
@@ -16845,6 +16900,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       liveCssText+
       '#excelMapShell{max-height:none!important;overflow:visible!important;padding:0!important}'+
       '.me-map td.me-u{cursor:default}'+
+      'html,body,body #excelMapShell,body #excelMapShell table.me-map{background:#fff!important}.me-map td.me-t{color:#222!important}'+
       '@page{size:landscape;margin:8mm}'+
       '</style></head><body>'+
       '<h2>'+title+'</h2><div class="sub">'+esc(legendHtml)+'</div>'+
@@ -16854,7 +16910,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     w.onload=doPrint;
     setTimeout(doPrint,400);
   }
-  function openSupervisorMaps(){DPBMap.sync();moveSupervisorMapNodes();populateMapViews();supervisorRefreshMapButtons();const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");if(row)row.onchange=e=>{applyMapRowFilter(e.target.value);supervisorRefreshMapButtons()};if(tr)tr.onchange=e=>applyMapNumberFilter(e.target.value);const reset=q("dpbSupMapReset");if(reset)reset.onclick=()=>{resetMapFilters();if(row)row.value="all";if(tr)tr.value="all";supervisorRefreshMapButtons()};const jump=q("dpbSupMapTrackerJump"),jumpBtn=q("dpbSupMapJumpBtn");if(jumpBtn)jumpBtn.onclick=jumpToMapTracker;if(jump)jump.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();jumpToMapTracker();}};const pdfBtn=q("dpbSupMapPdfBtn");if(pdfBtn)pdfBtn.onclick=exportSupervisorMapPdf;const syncBtn=q("dpbSupMapSyncBtn");if(syncBtn)syncBtn.onclick=async()=>{
+  function openSupervisorMaps(){DPBMap.sync();moveSupervisorMapNodes();populateMapViews();supervisorRefreshMapButtons();const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");if(row)row.onchange=e=>{applyMapRowFilter(e.target.value);supervisorRefreshMapButtons()};if(tr)tr.onchange=e=>applyMapNumberFilter(e.target.value);const jump=q("dpbSupMapTrackerJump");const reset=q("dpbSupMapReset");if(reset)reset.onclick=()=>{resetMapFilters();if(row)row.value="all";if(tr)tr.value="all";if(jump)jump.value="";supervisorRefreshMapButtons()};const jumpBtn=q("dpbSupMapJumpBtn");if(jumpBtn)jumpBtn.onclick=jumpToMapTracker;if(jump)jump.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();jumpToMapTracker();}};const pdfBtn=q("dpbSupMapPdfBtn");if(pdfBtn)pdfBtn.onclick=exportSupervisorMapPdf;const syncBtn=q("dpbSupMapSyncBtn");if(syncBtn)syncBtn.onclick=async()=>{
     // Same job as the old "رفع الحدود ☁️" button: push this device's Excel-sourced
     // boundaries/colors/catalog to the cloud so every other device picks them up.
     // Moved to Admin Control Center's top action row — wired in wireAdminSyncBtn().
@@ -16917,10 +16973,12 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   }
   function showScreen(name){ if(name==="home")renderHomeSummary();
     if(name!=="maps") restoreSupervisorMapNodes();
-    const map={login:"dpbSupLogin",home:"dpbSupHomeScreen",maps:"dpbSupMaps",production:"dpbSupProduction",selection:"dpbSupSelectionScreen",units:"dpbSupUnitsScreen",history:"dpbSupHistory",myedits:"dpbSupMyEdits"};
+    const map={login:"dpbSupLogin",projects:"dpbSupProjects",home:"dpbSupHomeScreen",maps:"dpbSupMaps",production:"dpbSupProduction",selection:"dpbSupSelectionScreen",units:"dpbSupUnitsScreen",history:"dpbSupHistory",myedits:"dpbSupMyEdits"};
     Object.values(map).forEach(id=>q(id).classList.remove("active"));q(map[name]).classList.add("active");state.screen=name;
     q("dpbSupTopTitle").textContent=name==="login"?"Supervisor Login":(state.user||"Supervisor");
-    q("dpbSupTopSub").textContent=(name==="production"||name==="selection")&&state.process?state.process.name:"Production workspace";
+    q("dpbSupTopSub").textContent=(name==="production"||name==="selection")&&state.process?state.process.name:(name==="projects"?"اختار المشروع":"Production workspace");
+    if(name==="home"){try{const cp=(window.__dpbProjectRecords||[]).find(x=>x.id===window.__dpbActiveProjectId);const el=q("dpbSupCurProj");if(el)el.textContent=cp?((cp.name||"Project")+" · "+cp.id):"—"}catch(_){}}
+    if(name==="projects")renderProjectCards();
     q("dpbSupBack").style.visibility=(name==="login")?"hidden":"visible";q("dpbSupHome").style.visibility=(name==="login")?"hidden":"visible";
     const save=q("dpbSupSave");if(save){save.style.display=(name==="units")?"block":"none";save.disabled=name!=="units"||(!Array.from(state.selectedUnits.values()).some(x=>x.size)&&!(progActive()&&progInputsReady()));}
     const contUnits=q("dpbSupContinueUnits");if(contUnits){contUnits.style.display=(name==="production"||name==="selection")?"":"none";}
@@ -16947,9 +17005,56 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(name==="history")renderHistory();
     if(name==="myedits")renderMyEdits();
   }
+  /* ---- Project cards (after the PIN): tapping a card opens that project and pulls its data from the cloud by itself ---- */
+  let projLoadSeq=0, projOpening=false;
+  function projList(){const all=window.__dpbProjectRecords||[];return all.filter(x=>!x.auto||all.length===1)}
+  function renderProjectCards(){
+    const root=q("dpbSupProjCards"),msg=q("dpbSupProjectsMsg"); if(!root||!msg)return;
+    const seq=++projLoadSeq, t0=Date.now();
+    const paint=()=>{
+      if(seq!==projLoadSeq||state.screen!=="projects")return;
+      const ps=projList();
+      root.innerHTML=ps.length?ps.map(p=>`<button type="button" class="dpbSupNavCard" data-proj="${escapeHtml(p.id)}"><strong>🗂️ ${escapeHtml(p.name||"Project")}</strong><span>${escapeHtml(p.id)}${p.trackerCount?" · "+Number(p.trackerCount).toLocaleString()+" Tracker":""}${p.built?" · جاهز ✅":""}</span></button>`).join(""):'<div class="hint">مفيش مشاريع لسه. الأدمن لازم ينشئ مشروع ويرفع الإكسل الأول.</div>';
+      root.querySelectorAll("[data-proj]").forEach(b=>b.onclick=()=>openProjectCard(b.dataset.proj,b));
+    };
+    const done=()=>{if(seq!==projLoadSeq)return;msg.textContent="دوس على كارت المشروع، وبيتحمّل تلقائي من السحابة.";paint()};
+    const F=window.DPB_FS2, sync=window.__dpbCloudProjectsSync;
+    if(typeof sync!=="function"||!F||typeof F.on!=="function"||!F.on()){done();return}
+    root.innerHTML="";msg.textContent="جاري تحميل المشاريع…";
+    const attempt=()=>{
+      if(seq!==projLoadSeq)return;
+      Promise.resolve().then(()=>sync()).then(ok=>{if(ok||Date.now()-t0>7000)done();else setTimeout(attempt,1200)}).catch(()=>{if(Date.now()-t0>7000)done();else setTimeout(attempt,1200)});
+    };
+    attempt();
+  }
+  async function openProjectCard(id,btn){
+    if(projOpening)return; projOpening=true;
+    const msg=q("dpbSupProjectsMsg"), cards=Array.from(q("dpbSupProjCards").querySelectorAll("button"));
+    const label=btn?btn.querySelector("span"):null, old=label?label.textContent:"";
+    cards.forEach(b=>b.disabled=true);
+    const wt=(p,ms)=>Promise.race([Promise.resolve(p).catch(()=>false),new Promise(r=>setTimeout(()=>r(false),ms))]);
+    try{
+      msg.textContent="جاري تحميل المشروع من السحابة…"; if(label)label.textContent="⏳ بيتحمّل…";
+      const pm=window.__dpbProjectManager;
+      if(id!==window.__dpbActiveProjectId&&pm&&pm.activate)await pm.activate(id,true);
+      if(typeof window.__dpbTryLoadBuildResultFromCloud==="function")await wt(window.__dpbTryLoadBuildResultFromCloud(),20000);
+      if(typeof window.__dpbRefreshBuildIfNewer==="function")await wt(window.__dpbRefreshBuildIfNewer(),12000);
+      if(typeof window.__dpbFetchLiveGrid==="function")await wt(window.__dpbFetchLiveGrid(),15000);
+      if(!(window.project&&window.project.buildResult)){
+        msg.textContent="⚠️ مفيش خرايط منشورة للمشروع ده لسه (الأدمن لازم يرفع الإكسل)، أو مفيش اتصال. جرّب تاني بعد شوية.";
+        return;
+      }
+      showScreen("home");
+    }catch(e){
+      msg.textContent="فشل تحميل المشروع، جرّب تاني.";
+    }finally{
+      projOpening=false; cards.forEach(b=>{b.disabled=false}); if(label)label.textContent=old;
+    }
+  }
   function back(){
     if(state.screen==="units"){showScreen("selection");return}
     if(state.screen==="selection"||state.screen==="production"||state.screen==="history"||state.screen==="maps"||state.screen==="myedits"){showScreen("home");return}
+    if(state.screen==="projects"){q("dpbSupLogout").click();return}
     if(state.screen==="home"){closeOverlay()}
   }
   function login(){
@@ -17005,7 +17110,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(!account){q("dpbSupLoginErr").textContent="اختار الحساب أولاً.";return}
     const finishLogin=(acc)=>{
       state.account=acc;state.assignedProcessIds=supervisorAllowedProcessIds(acc);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=acc.name;
-      q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";renderHomeSummary();showScreen("home");
+      q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";showScreen("projects");
       if(window.DPB_GS&&typeof window.DPB_GS.logHistory==="function")window.DPB_GS.logHistory({user:state.user,action:"login",details:acc.isAdmin?"Admin":"Supervisor"});
     };
     const rejectLogin=()=>{q("dpbSupLoginErr").textContent="الرقم السري غير صحيح لهذا الحساب.";q("dpbSupPass").value="";updateSupPinDots()};
@@ -17054,6 +17159,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(typeof window.__dpbTryLoadBuildResultFromCloud==="function") window.__dpbTryLoadBuildResultFromCloud();
   };
   q("dpbSupBack").onclick=back;
+  q("dpbSupGoProjects").onclick=()=>showScreen("projects");
   q("dpbSupHome").onclick=()=>showScreen("home");
   q("dpbSupSave").onclick=saveSelected;
   q("dpbSupContinueUnits").onclick=openSelectedTrackers;
@@ -17136,6 +17242,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     };
 
     if(!refresh()){
+      // الأدمن/المشرف على جهاز من غير Build محلي: هات الـ Build من السحابة (نفس اللي بتعمله كروت المشاريع)
+      try{if(typeof window.__dpbTryLoadBuildResultFromCloud==="function")window.__dpbTryLoadBuildResultFromCloud().then(()=>{try{refresh()}catch(_){}}).catch(()=>{});}catch(_){}
       let n=0;
       const retry=()=>{
         if(refresh() || ++n>=20) {
