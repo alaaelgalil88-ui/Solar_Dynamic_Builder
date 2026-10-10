@@ -17,7 +17,10 @@
   var EMU_HOST = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && location.protocol === 'http:' && !window.Capacitor;
   try { var me = /[?&]emu=(on|off)/.exec(location.search); if (me && EMU_HOST) localStorage.setItem('dpb_fs2_emu', me[1]); } catch (e) {}
   function emu() { return EMU_HOST && ls('dpb_fs2_emu', 'on') === 'on'; }   // on localhost the emulator is the default
-  function on() { return ls(LS.mode, 'off') === 'on' || emu(); }
+  // A device that was never switched by hand (no saved mode) follows the shipped dpb-config.js: when that file carries a Firebase project the
+  // layer is ON, so a new phone / new browser works without anyone opening the admin card first. An explicit choice saved on the device
+  // (the admin card toggle, ?fs2=off) always wins.
+  function on() { var v = ls(LS.mode, null); return v === 'on' || emu() || (v === null && !!(window.DPB_FIREBASE_CONFIG && window.DPB_FIREBASE_CONFIG.projectId)); }
   function procs() { return ls(LS.procs, 'Ramming,Saddle,Bearing,Torque Tube,Modules').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
   function mine(name) { var s = CORE.slug(name); return procs().some(function (p) { return CORE.slug(p) === s; }); }
   // a record belongs to this layer only if its process is a map process AND it points at a map cell; anything else (e.g. a tracker-level entry) goes down untouched
