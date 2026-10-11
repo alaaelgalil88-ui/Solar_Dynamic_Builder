@@ -923,7 +923,7 @@
     });
     var $ = function (i) { return document.getElementById(i); }, say = function (t) { $('dpbFs2Msg').textContent = t; };
     var paintBk = bkPaint, where = BK_WHERE;
-    $('dpbFs2Dir').addEventListener('click', function () { bkPickFolder().then(function () { say('📁 اتحدد مكان الحفظ. النسخ الجاية بتتكتب فيه ملفين بس.'); }).catch(function (e) { say(e && e.name === 'AbortError' ? 'اتلغى اختيار المكان.' : 'فشل: ' + permHint(e)); }); });
+    $('dpbFs2Dir').addEventListener('click', function () { if (!window.DPB_NATIVE_BRIDGE && !window.showDirectoryPicker && capFs()) { say('📁 على الموبايل النسخ بتتحفظ تلقائي في مجلد Documents/DPB (ملفين بس بيتكتبوا فوق بعض). اختيار مجلد تاني محتاج إضافة أندرويد مخصوصة — مش متركّبة في النسخة دي.'); return; } bkPickFolder().then(function () { say('📁 اتحدد مكان الحفظ. النسخ الجاية بتتكتب فيه ملفين بس.'); }).catch(function (e) { say(e && e.name === 'AbortError' ? 'اتلغى اختيار المكان.' : 'فشل: ' + permHint(e)); }); });
     var uu = $('dpbFs2Url'); uu.value = ls('DPB_BACKUP_URL_V1', '');
     uu.addEventListener('change', function () {
       var v = uu.value.trim();

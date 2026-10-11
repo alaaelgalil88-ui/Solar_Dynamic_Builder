@@ -138,12 +138,6 @@
     return origClick.apply(this,arguments);
   };
   try{navigator.canShare=function(){return false;};}catch(e){}
-  // 3b) اختيار مجلد النسخ الاحتياطي (إضافة DpbFolder في الـ APK) - الواجهة اللي بيستخدمها البرنامج كله: window.DPB_NATIVE_BRIDGE
-  window.DPB_NATIVE_BRIDGE={
-    chooseFolder:async function(){if(!P.DpbFolder)throw new Error('إضافة اختيار المجلد مش موجودة في التطبيق ده - ثبّت أحدث APK');var r=await P.DpbFolder.choose();return (r&&r.name)||null;},
-    hasFolder:async function(){if(!P.DpbFolder)return false;var r=await P.DpbFolder.has();return !!(r&&r.has);},
-    writeBackupFile:async function(n,t){if(!P.DpbFolder)return false;var r=await P.DpbFolder.write({name:String(n),text:String(t)});return !!(r&&r.ok);}
-  };
   // 3) الطباعة / PDF عن طريق نافذة الطباعة بتاعة أندرويد (Save as PDF)
   var lastPrint=0;
   function nativePrint(landscape){
@@ -434,6 +428,8 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   @page activityA4{size:A4 portrait;margin:7mm 8mm 7mm 8mm}
   body{background:#fff!important;color:#111!important}
   body.print-activity{page:activityA4}
+  body.print-activity>*:not(.app):not(script):not(style):not(link){display:none!important}
+  body.print-activity #dpbStartGate,body.print-activity #dpbSupOverlay,body.print-activity #dpbAdminOverlay,body.print-activity #dpbProjectHome,body.print-activity #dpbSupLaunch,body.print-activity #dpbAdminLaunch{display:none!important}
   body.print-activity .app{display:block!important}
   body.print-activity .app>aside,
   body.print-activity .app>.top,
@@ -443,9 +439,6 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   body.print-activity .app #productionCard,
   body.print-activity .app .fileGrid,
   body.print-activity .app .notice{display:none!important}
-  body.print-activity>*:not(.app):not(script):not(style){display:none!important}
-  body.print-activity #dpbStartGate,body.print-activity #dpbProjectHome,body.print-activity #dpbSupOverlay,body.print-activity #dpbAdminOverlay,body.print-activity #dpbSupLaunch,body.print-activity #dpbAdminLaunch,body.print-activity #dpbAdminHammerBackBtn,body.print-activity #dpbBackupModal,body.print-activity #dpbAdminPinModal,body.print-activity #dpbAdminChangePinModal{display:none!important}
-  html:has(body.print-activity),body.print-activity{overflow:visible!important;height:auto!important;background:#fff!important}
   body.print-activity #printActivityArea{display:block!important;width:100%!important;color:#111!important}
   body.print-activity #printActivityArea .print-report-page{width:100%;height:283mm;page-break-after:always;display:flex;flex-direction:column;justify-content:flex-start;align-items:center;box-sizing:border-box;overflow:hidden}
   body.print-activity #printActivityArea .print-report-page:last-child{page-break-after:auto}
@@ -4155,7 +4148,6 @@ function options(){
   const c=currentCatalog();if(!c)return{fixed:[],operations:[]};
   return{fixed:c.maps.filter(m=>m.mode==='fixed').map(m=>({id:m.id,name:m.name})),operations:c.maps.filter(m=>m.mode==='dynamic').map(m=>({id:m.id,name:m.name}))};
 }
-window.__dpbCatalogProcesses=function(){const c=currentCatalog();return c&&c.maps?c.maps.filter(m=>m.mode==='dynamic'&&m.op&&m.op.kind!=='notstarted'&&m.op.name).map(m=>({id:String(m.op.id||m.id),code:m.op.code,name:String(m.op.name).trim(),grouped:!!m.op.grouped})):[];};
 function processNames(){const c=currentCatalog();return c?c.maps.filter(m=>m.op&&m.op.name).map(m=>m.op.name):[];}
 function viewSpec(id){
   const c=currentCatalog();if(!c)return null;
@@ -5956,7 +5948,7 @@ window.__dpbExcelUnitCells=function(){
   }catch(err){try{console.warn('__dpbExcelUnitCells',err);}catch(_){}}
   return out;
 };
-window.DPBMap={refresh,renderNow,applyLiveDiff,select,sync,publish,options,processNames,model:buildModel,pack,unpack,state,exportCellValue,reportData,printData,drawStatusMaps,
+window.DPBMap={refresh,renderNow,applyLiveDiff,select,sync,publish,options,processNames,model:buildModel,pack,unpack,state,exportCellValue,reportData,printData,drawStatusMaps,viewSpec,
   summary(){const s=state.last;if(!s)return null;const m=s.model;return{view:s.spec.id,mode:s.spec.mode,color:s.spec.color,site:m.siteName,base:m.siteBase,areas:m.siteAreas,bounds:m.bounds,units:m.units.length,trackers:m.trackers.size,types:m.types,siteCodes:[...m.siteCodes]};}};
 })();
 </script>
@@ -7561,6 +7553,7 @@ function populateMapViews(){
 function applyMapView(value){
   if(!value) return;
   mapViewState=value;
+  try{if(window.__dpbSupSyncProcessFromMap)window.__dpbSupSyncProcessFromMap(value);}catch(_){}
   // FIX (this is the real bug from the screenshots): Site Color Code must
   // render through the PLAN branch (stage='plan') which paints each cell's
   // REAL Excel fill and builds its legend from the real colors actually
@@ -7640,9 +7633,7 @@ function populateMapFilters(){
   populateMapStatusFilter();
   const sel=document.getElementById('mapRowFilter');
   if(!sel) return;
-  // rows/trackers come from the map that is ON SCREEN (works on a supervisor device that has no Build of its own), Build rows only as fallback
-  let _pd=null;try{_pd=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null;}catch(_){}
-  const rows=((_pd&&_pd.rows&&_pd.rows.length)?_pd.rows:(project.buildResult?.rows||[])).slice().sort((a,b)=>a.r1-b.r1);
+  const rows=(project.buildResult?.rows||[]).slice().sort((a,b)=>a.r1-b.r1);
   const rowLabels=rows.map(r=>String(r.label||'')).filter(Boolean);
   const current=mapFilterState.row||'all';
   sel.innerHTML='<option value="all">All Rows</option>'+rowLabels.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('');
@@ -7677,7 +7668,7 @@ function applyMapRowFilter(value){
 }
 function applyMapNumberFilter(value){mapFilterState.number=(value==='all'?'':String(value||'').trim());DPBMap.refresh();}
 function applyMapStageFilter(value){mapFilterState.stage=value||'all';DPBMap.refresh();}
-function resetMapFilters(){mapFilterState={row:'all',number:'',stage:'all'};try{const j=document.getElementById('dpbSupMapTrackerJump');if(j)j.value='';}catch(_){}populateMapFilters();DPBMap.refresh();}
+function resetMapFilters(){mapFilterState={row:'all',number:'',stage:'all'};populateMapFilters();DPBMap.refresh();}
 
 function trackerPassesMapFilter(t){
   const rowHit=mapFilterState.row==='all'||String(t.row||'')===String(mapFilterState.row);
@@ -7706,7 +7697,7 @@ function populatePrintRangeRows(){
   onPrintRangeRow('from',printRange.fromRow,false); onPrintRangeRow('to',printRange.toRow,false);
 }
 // the row/tracker lists follow whichever map is on screen (Ramming has its own rows, Modules its own...)
-window.dpbOnMapRendered=function(){try{const d=DPBMap.printData();if(d&&d.sig!==_printSig)populatePrintRangeRows();else refreshPrintRangeClasses();if(d&&d.sig!==window.__dpbSupSig){window.__dpbSupSig=d.sig;if(typeof window.supervisorRefreshMapButtons==='function')window.supervisorRefreshMapButtons();}}catch(_){}};
+window.dpbOnMapRendered=function(){try{const d=DPBMap.printData();if(d&&d.sig!==_printSig)populatePrintRangeRows();else refreshPrintRangeClasses();}catch(_){}try{if(window.__dpbSupMapsRefresh)window.__dpbSupMapsRefresh();}catch(_){}};
 function fillPrintTrackerSelect(which){
   const row=which==='from'?printRange.fromRow:printRange.toRow;
   const id=which==='from'?'printFromTracker':'printToTracker';
@@ -7861,32 +7852,6 @@ function printActivityReport(){
   setTimeout(()=>{window.print();},80);
 }
 window.addEventListener('afterprint',()=>document.body.classList.remove('print-activity','print-plan'));
-
-// Supervisor: prints EXACTLY the rows currently shown in the reports table, in the Builder's Activity Report print format
-// (white page, same header / summary boxes / panel table / page numbers, 150 rows per A4 page).
-window.dpbPrintSupTable=function(tbl,procName){
-  if(!tbl||!tbl.tBodies[0])return;
-  const fst=tbl.dataset.fst||'';
-  const rows=[...tbl.tBodies[0].rows].filter(r=>r.style.display!=='none'&&!r.hidden&&!(fst&&(fst==='cells'?r.dataset.nsc!=='1':r.dataset.st!==fst)));
-  if(!rows.length){alert('مفيش صفوف معروضة للطباعة.');return;}
-  const txt=c=>{const k=c.cloneNode(true);k.querySelectorAll('br').forEach(b=>b.replaceWith(' / '));return k.textContent.replace(/\s+/g,' ').trim();};
-  const head=[...tbl.tHead.rows[0].cells].map(txt);
-  const data=rows.map(r=>[...r.cells].map(txt));
-  const cnt={none:0,part:0,done:0};rows.forEach(r=>{if(cnt[r.dataset.st]!=null)cnt[r.dataset.st]++;});
-  const n=rows.length,pc=x=>n?Math.round(x*100/n)+'%':'0%';
-  const summary=[['Trackers',n,'100%'],['Not Started',cnt.none,pc(cnt.none)],['In Progress',cnt.part,pc(cnt.part)],['Done',cnt.done,pc(cnt.done)]];
-  const E=x=>String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  const perPage=150,pages=Math.max(1,Math.ceil(data.length/perPage));
-  const html=Array.from({length:pages},(_,i)=>{const part=data.slice(i*perPage,(i+1)*perPage);
-    return `<div class="print-report-page"><div class="print-report-head"><h2 style="margin:0 0 1mm;font-size:13px">Activity Report — ${E(procName||'')} — Tracker Production Status</h2><div style="font-size:7px;color:#555">Page ${i+1} of ${pages} · ${part.length} Trackers</div></div>
-    <div class="print-summary">${summary.map(x=>`<div class="box"><div class="k">${E(x[0])}</div><div class="v">${x[1]}</div><div class="pct">${x[2]}</div></div>`).join('')}</div>
-    <div class="print-panel-grid"><table class="print-panel"><thead><tr>${head.map(h=>`<th>${E(h)}</th>`).join('')}</tr></thead><tbody>${part.map(r=>`<tr>${r.map(c=>`<td>${E(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-    <div class="print-page-number">Page ${i+1} of ${pages}</div></div>`;}).join('');
-  const area=document.getElementById('printActivityArea');if(!area){alert('منطقة الطباعة مش موجودة.');return;}
-  area.innerHTML=html;document.body.classList.add('print-activity');
-  setTimeout(()=>{window.print();},80);
-};
-
 
 // Reads a process source's own values at the workbook's own physical
 // (row, col) coordinates -- mirroring the reference app's proven rule:
@@ -9253,6 +9218,7 @@ function dpbTrackersFromMapModel_(processName){
     return out;
   }catch(_){ return []; }
 }
+window.__dpbTrackersFromMapModel=dpbTrackersFromMapModel_;
 function pickLiveGrid_(processName){
   try{
     const byProc=window.__dpbLiveGridByProcess;
@@ -12241,7 +12207,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   window.__dpbLiveGridByProcess=window.__dpbLiveGridByProcess||{};
   async function fetchOneProcessGrid_(processName){
     // Firestore layer owns this process: read the cells locally, never ask Apps Script (null = not connected yet; the layer's onChange refetches)
-    try{ const FS=window.DPB_FS2; if(FS&&FS.owns&&FS.owns(processName)){ const L=FS.liveValues(processName); const prev=window.__dpbLiveGridByProcess[processName]; return L?{sheet:processName,valuesByCoord:L,trackers:(prev&&prev.trackers)||[]}:null; } }catch(_){}
+    try{ const FS=window.DPB_FS2; if(FS&&FS.owns&&FS.owns(processName)){ const L=FS.liveValues(processName); const prev=window.__dpbLiveGridByProcess[processName]; return L?{sheet:processName,valuesByCoord:L,trackers:(prev&&prev.trackers&&prev.trackers.length)?prev.trackers:(window.__dpbTrackersFromMapModel?window.__dpbTrackersFromMapModel(processName):[])}:null; } }catch(_){}
     const res=await dpbGuardedFetch(CLOUD_URL_NOW()+"?action=getGrid&process="+encodeURIComponent(processName)+"&t="+Date.now());
     if(!res.ok) return null;
     const json=JSON.parse(await res.text());
@@ -15192,7 +15158,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
             <strong>✎ تعديلاتي</strong><span>سجلاتي الخاصة + إمكانية التراجع عن أي عملية</span>
           </button>
           <button class="dpbSupNavCard" id="dpbSupGoProjects"><strong>🗂️ تغيير المشروع</strong><span id="dpbSupCurProj">—</span></button>
-          <button class="dpbSupNavCard dpbSupMapNavCard" id="dpbSupGoMaps"><strong>🗺️ Project Maps</strong><span>عرض وتحديد وتطبيق وحذف وتحديث الخلايا من نفس الخريطة</span></button>
+          <button class="dpbSupNavCard dpbSupMapNavCard" id="dpbSupGoMaps"><strong>📊 Activity Report</strong><span>Tracker Production Status — حالة كل Tracker في كل عملية، مع الطباعة</span></button>
         </div>
       </section>
 
@@ -15205,16 +15171,15 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       </section>
 
       <section class="dpbSupScreen" id="dpbSupMaps">
-        <div class="dpbSupHero dpbSupMapHero"><h2>🗺️ Project Maps</h2><p>الخريطة التفاعلية — اختر خريطة ثابتة أو عملية لعرضها، واضغط أي خلية لعرض تفاصيلها.</p></div>
+        <div class="dpbSupHero dpbSupMapHero"><h2>📊 Activity Report</h2><p>Tracker Production Status — حالة كل Tracker في كل عملية (المنفّذ / الإجمالي).</p></div>
         <div class="dpbSupMapControls">
-          <div class="dpbSupMapSectionTitle">FIXED MAPS</div><select id="dpbSupMapFixed" class="dpbSupSelect"><option value="">Select Fixed Map</option></select>
-          <div class="dpbSupMapSectionTitle">OPERATIONS</div><select id="dpbSupMapOps" class="dpbSupSelect" style="margin-top:8px"><option value="">Select Operation</option></select>
           <div class="dpbSupMapFilters"><label>ROW<select id="dpbSupMapRow" class="dpbSupSelect"><option value="all">All Rows</option></select></label><label>TRACKER<select id="dpbSupMapTracker" class="dpbSupSelect"><option value="all">All Trackers</option></select></label></div>
-          <div class="dpbSupSearchRow" style="margin-top:7px"><input id="dpbSupMapTrackerJump" class="dpbSupInput" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="دور برقم Tracker (مثلاً 51)"><button type="button" class="dpbQuickBtn" id="dpbSupMapJumpBtn">بحث</button></div>
-          <button type="button" class="dpbQuickBtn" id="dpbSupMapReset">Reset Map</button>
-          <button type="button" class="dpbQuickBtn" id="dpbSupMapPdfBtn">🖨️ Export PDF</button>
+          <div class="dpbSupSearchRow" style="margin-top:7px"><input id="dpbSupMapTrackerJump" class="dpbSupInput" inputmode="numeric" autocomplete="off" placeholder="دور برقم Tracker (مثلاً 51 أو 1-2-3)"><button type="button" class="dpbQuickBtn" id="dpbSupMapJumpBtn">بحث</button></div>
+          <button type="button" class="dpbQuickBtn" id="dpbSupMapReset">Reset</button>
+          <button type="button" class="dpbQuickBtn" id="dpbSupMapPdfBtn">🖨️ طباعة</button>
         </div>
-        <div id="dpbSupMapCanvas" class="dpbSupMapCanvas"></div>
+        <div id="dpbSupActSummary"></div>
+        <div id="dpbSupActTable" class="dpbActWrap"></div>
       </section>
 
       <section class="dpbSupScreen" id="dpbSupProduction">
@@ -15652,7 +15617,18 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const liveTrackers=(window.__dpbLiveGrid && Array.isArray(window.__dpbLiveGrid.trackers) && window.__dpbLiveGrid.trackers.length)
       ? window.__dpbLiveGrid.trackers : null;
     const excelTrackers=(br && Array.isArray(br.trackerMatches) && br.trackerMatches.length) ? br.trackerMatches : null;
-    if(!excelTrackers && !liveTrackers) return {ok:false,processes:[],trackers:[]};
+    // Admin / supervisor phones have no local Excel and the Firestore layer gives cell values only. Operations and trackers then come from the
+    // SAME map catalog the map lists use (one source), so Production Entry and the maps always show the same operations.
+    const catalogProcs=()=>{try{return (DPBMap.options().operations||[]).map(o=>{const sp=DPBMap.viewSpec?DPBMap.viewSpec(o.id):null,op=sp&&sp.op;if(!op||op.kind==='notstarted'||!op.name)return null;return{id:o.id,code:String(op.code==null?'':op.code).trim(),name:String(op.name).trim(),processIndex:0,source:'Map catalog',sourceMode:''};}).filter(Boolean);}catch(_){return [];}};
+    const catProcs=catalogProcs();
+    let modelTrackers=null;
+    if(!excelTrackers && !liveTrackers){
+      for(const cp of catProcs.slice().sort((a,b)=>(Number(a.code)||0)-(Number(b.code)||0))){
+        const tr=window.__dpbTrackersFromMapModel?window.__dpbTrackersFromMapModel(cp.name):null;
+        if(tr&&tr.length){modelTrackers=tr;break;}
+      }
+    }
+    if(!excelTrackers && !liveTrackers && !modelTrackers) return {ok:false,processes:[],trackers:[]};
 
     // IMPORTANT: operations come from the APPLIED process sources, not from
     // tracker color/type codes. A tracker code is a layout/type code; it is
@@ -15674,12 +15650,11 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       // بعدين) بنفس الوضع دا هتتحسب منفصلة تلقائيًا من غير أي تعديل كود.
       sourceMode:e.rec?.definition?.sourceMode||''
     }));
-    // العمليات من نفس مصدر الخرايط (الكتالوج) لو الجهاز ده معندوش ملفات مطبّقة (مشرف/أدمن على الموبايل) - بنفس أرقام صلاحيات الحسابات
-    if(!processes.length&&typeof window.__dpbCatalogProcesses==='function'){try{window.__dpbCatalogProcesses().forEach((e,i)=>processes.push({id:e.id,code:String(e.code==null?'':e.code).trim(),name:e.name,processIndex:i,source:'map catalog',sourceMode:''}));}catch(_){}}
     // FALLBACK: لو مفيش أي Process Source اتطبق لسه (أو مفيش إكسل خالص)،
     // كروت Production Entry بتعرض ليجند العمليات الثابت (1=Ramming،
     // 2=Saddle، 3=Bearing، 4=Torque Tube) - نفس الأرقام اللي في خلايا
     // الشيت بالظبط، من غير ما يحتاج أي ملف إكسل مرفوع خالص.
+    if(!processes.length && catProcs.length) catProcs.forEach(p=>processes.push(p));
     if(!processes.length){
       Object.keys(SHEET_OPERATION_LEGEND).forEach((k,i)=>processes.push({
         id:'sheetlegend:'+i,
@@ -15694,7 +15669,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
 
     // Every built tracker belongs to every applicable operation. Do NOT filter
     // trackers by t.code === process.code; t.code describes the tracker type.
-    const trackers=(excelTrackers||liveTrackers).slice().sort((a,b)=>{
+    const trackers=(excelTrackers||liveTrackers||modelTrackers).slice().sort((a,b)=>{
       const ra=Number(String(a.row||'').replace(/\D/g,''))||0;
       const rb=Number(String(b.row||'').replace(/\D/g,''))||0;
       return ra-rb || Number(a.number)-Number(b.number);
@@ -15905,6 +15880,25 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(status)status.textContent=`${n} selected`;
     if(cont){cont.disabled=n===0;cont.textContent=`التالي: اختيار الوحدات (${n} Tracker${n===1?'':'s'})`}
   }
+  // Operation cards and maps are one list: picking an operation here shows its map (Builder/Admin map), and picking it on a map picks it here.
+  function selectSupProcess(p,fromMap){
+    hideSupKeyboard(); state.process=p; state.selectedRows.clear(); state.selectedTrackers.clear(); state.selectedUnits.clear(); state.tracker=null;
+    syncSupTopSub();
+    renderProcesses();renderRows();renderTrackers();
+    if(typeof window.__dpbFetchLiveGrid==='function') window.__dpbFetchLiveGrid();
+    if(!fromMap){try{
+      const ok=(DPBMap.options().operations||[]).some(o=>String(o.id)===String(p.id));
+      if(ok&&typeof applyMapView==='function'&&String(mapViewState)!==String(p.id))applyMapView(p.id);
+    }catch(_){}}
+  }
+  window.__dpbSupSyncProcessFromMap=function(id){
+    try{
+      const p=visibleProcesses().find(x=>String(x.id)===String(id));
+      if(!p||(state.process&&String(state.process.id)===String(id)))return;
+      if(!state.user)return; // nobody is inside the supervisor workspace
+      selectSupProcess(p,true);
+    }catch(_){}
+  };
   function renderProcesses(){
     const root=q("dpbSupProcesses");root.innerHTML="";
     const step=q("dpbSupProcessStep"), stepState=q("dpbSupProcessStepState");
@@ -15929,12 +15923,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     }
     allowed.forEach(p=>{
       const b=document.createElement("button"); b.type="button"; b.className="dpbSupPill"+(state.process&&state.process.id===p.id?" active":""); b.textContent=p.name;
-      b.onclick=()=>{
-        hideSupKeyboard(); state.process=p; state.selectedRows.clear(); state.selectedTrackers.clear(); state.selectedUnits.clear(); state.tracker=null;
-        syncSupTopSub();
-        renderProcesses();renderRows();renderTrackers();
-        if(typeof window.__dpbFetchLiveGrid==='function') window.__dpbFetchLiveGrid();
-      };
+      b.onclick=()=>selectSupProcess(p,false);
       root.appendChild(b);
     });
   }
@@ -16651,7 +16640,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
             <div class="dpbRpLegend"><span class="dpbRpC0">● 0</span><span class="dpbRpC1">● جاري</span><span class="dpbRpC2">● مكتمل</span></div>
             <div class="dpbSupActivityTableWrap" dir="ltr"><table class="dpbSupActivityTable" tabindex="-1" data-fst=""><thead></thead><tbody></tbody></table></div>
             <div class="dpbRpCount" id="dpbRpCount"></div>
-            <button type="button" class="btn primary" id="dpbRpPrint" style="margin-top:8px;width:100%">🖨️ طباعة الجدول</button>
+            <div id="dpbRpMaps"></div>
           </div>
           <div class="dpbRpCard dpbSupReportBlock dpbSupSupervisorReport">
             <div class="dpbRpTitle">👤 إنتاجي <small>${escapeHtml(state.user||'Supervisor')}</small></div>
@@ -16688,7 +16677,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
             return `<tr data-st="${st}" data-nsc="${t.cells-t.cellsDone>0?1:0}"><td><b>${escapeHtml(L.label)}</b>${rowTag}</td><td class="${cls}">${t.done}/${t.total}</td>${ram}<td><span class="badge ${st==='none'?'warn':'ok'}">${stTxt[st]}</span></td></tr>`;
           }).join('');
         };
-        const drawMaps=()=>{};/* الخريطة اتلغت عند المشرف: الجدول + زرار الطباعة بس */
+        const drawMaps=()=>{try{if(mapsBox&&window.DPBMap&&DPBMap.drawStatusMaps)DPBMap.drawStatusMaps(mapsBox,tbl.dataset.fst||'',Math.max(220,(mapsBox.clientWidth||340)-12),selP.id);}catch(e){console.warn('status maps',e);}};
         const updCount=()=>{try{const rows=[...tbl.tBodies[0].rows];const vis=rows.filter(r=>r.style.display!=='none'&&!(tbl.dataset.fst&&(tbl.dataset.fst==='cells'?r.dataset.nsc!=='1':r.dataset.st!==tbl.dataset.fst))).length;countEl.textContent='معروض '+vis+' من '+rows.length+' تراكر';}catch(_){}};
         const paintProcs=()=>{procsEl.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.p===selP.id));const nm=summary.querySelector('#dpbRpProcName');if(nm)nm.textContent='· '+selP.name;};
         const paintAll=()=>{paintProcs();paintSeg();paintTable();drawMaps();updCount();};
@@ -16710,7 +16699,6 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           try{if(typeof window.__dpbForcePoll==='function')await window.__dpbForcePoll();}catch(_){}
           try{renderHistory();}catch(_){}
         });
-        const prBtn=summary.querySelector('#dpbRpPrint');if(prBtn)prBtn.addEventListener('click',()=>{try{window.dpbPrintSupTable(tbl,selP.name);}catch(e){alert('تعذّرت الطباعة: '+(e&&e.message||e));}});
         paintAll();
         try{if(typeof window.applySupervisorTrackerFilter==='function')window.applySupervisorTrackerFilter();}catch(_){}
       } else {
@@ -16843,13 +16831,12 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const ok=new Set(allowed.map(String));
     return list.filter(x=>ok.has(String(x.id)));
   }
-  function supervisorRefreshMapButtons(){const groups=DPBMap.options(),f=q("dpbSupMapFixed"),o=q("dpbSupMapOps");if(!f||!o)return;supervisorFillMapSelect(f,groups.fixed,'Select Fixed Map');supervisorFillMapSelect(o,supervisorFilterOps(groups.operations),'Select Operation');f.onchange=()=>{if(f.value){applyMapView(f.value);o.value='';supervisorRefreshMapButtons()}};o.onchange=()=>{if(o.value){applyMapView(o.value);f.value='';supervisorRefreshMapButtons()}};const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");
-    let pd=null;try{pd=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null}catch(_){}
-    const rowsSrc=(pd&&pd.rows&&pd.rows.length)?pd.rows:(project.buildResult?.rows||[]).map(r=>({label:String(r.label||r.name||r.row||""),trackers:r.trackers||[]}));
-    const nOf=t=>String(t&&t.number!=null?t.number:String((t&&t.label)||"").replace(/\D/g,""));
-    if(row){const old=row.value;row.innerHTML='<option value="all">All Rows</option>'+rowsSrc.map(r=>{const v=String(r.label||"");return `<option value="${esc(v)}">${esc(v)}</option>`}).join("");row.value=[...row.options].some(x=>x.value===old)?old:"all"}
-    if(tr){const old=tr.value;const rowVal=row?row.value:"all";const seen=new Map();rowsSrc.filter(r=>rowVal==="all"||String(r.label)===String(rowVal)).forEach(r=>(r.trackers||[]).forEach(t=>{const n=nOf(t);if(n&&!seen.has(n))seen.set(n,t)}));const list=[...seen.values()].sort((a,b)=>Number(nOf(a))-Number(nOf(b)));tr.innerHTML='<option value="all">All Trackers</option>'+list.map(t=>`<option value="${esc(nOf(t))}">${esc(t.label||("T"+nOf(t)))}</option>`).join("");tr.value=[...tr.options].some(x=>x.value===old)?old:"all"}}
-  window.supervisorRefreshMapButtons=supervisorRefreshMapButtons;
+  function supervisorRefreshMapButtons(){const groups=DPBMap.options(),f=q("dpbSupMapFixed"),o=q("dpbSupMapOps");if(!f||!o)return;supervisorFillMapSelect(f,groups.fixed,'Select Fixed Map');supervisorFillMapSelect(o,supervisorFilterOps(groups.operations),'Select Operation');f.onchange=()=>{if(f.value){applyMapView(f.value);o.value='';supervisorRefreshMapButtons()}};o.onchange=()=>{if(o.value){applyMapView(o.value);f.value='';supervisorRefreshMapButtons()}};const d=DPBMap.printData(),rows=d?d.rows:[];const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");if(row){const old=row.value;row.innerHTML='<option value="all">All Rows</option>'+rows.map(r=>`<option value="${esc(r.label)}">${esc(r.label)}</option>`).join("");row.value=[...row.options].some(x=>x.value===old)?old:"all"}if(tr){const old=tr.value,rv=row?row.value:"all",seen=new Map();rows.forEach(r=>{if(rv!=="all"&&String(r.label)!==String(rv))return;r.trackers.forEach(t=>{if(!seen.has(String(t.number)))seen.set(String(t.number),t)})});const list=[...seen.values()].sort((a,b)=>a.number-b.number);tr.innerHTML='<option value="all">All Trackers</option>'+list.map(t=>`<option value="${esc(String(t.number))}">${esc(t.label||("T"+t.number))}</option>`).join("");tr.value=[...tr.options].some(x=>x.value===old)?old:"all"}}
+  window.__dpbSupMapsRefresh=function(){
+    const ov=q("dpbSupOverlay");if(!ov||ov.style.display!=="block")return;
+    const mp=q("dpbSupMaps");if(mp&&mp.classList.contains("active"))renderSupActivity();
+    if(!(state.trackers&&state.trackers.length)&&typeof window.__dpbRefreshSupervisorUI==="function")window.__dpbRefreshSupervisorUI();
+  };
   function jumpToMapTracker(){
     const el=q("dpbSupMapTrackerJump");if(!el)return;
     const num=String(el.value||"").replace(/[^0-9]/g,"").trim();
@@ -16873,48 +16860,111 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     });
   }
   function exportSupervisorMapPdf(){
-    const s=DPBMap.state.last;
-    if(!s){showToast("محدش عارض خريطة دلوقتي.");return;}
-    const shell=document.getElementById("excelMapShell");
-    const table=shell&&shell.querySelector("table");
-    if(!table){showToast("مفيش خريطة لتصديرها دلوقتي.");return;}
-    const title=esc(s.spec.name||"Map");
-    const legend=document.getElementById("mapLegend");
-    const legendHtml=legend?legend.innerText.trim():"";
-    // Reuse the EXACT live map stylesheet (same classes/CSS vars the screen
-    // uses) so the printed grid matches what's on screen pixel-for-pixel,
-    // instead of a hand-rolled stylesheet that drifts from it (empty <td>
-    // cells with no width/height rule collapse and visually merge together).
-    const liveCss=document.getElementById("dpbMapEngineCss");
-    const liveCssText=liveCss?liveCss.textContent:"";
-    const w=window.open("","_blank");
-    if(!w){showToast("المتصفح منع فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة وحاول تاني.");return;}
-    w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+title+'</title><style>'+
-      // On-screen the map uses a dark canvas (like AutoCAD's model space), but
-      // printed pages should default to a white background to save ink/toner —
-      // only the map's own cell colors should print, not the app's dark chrome.
-      'body{font-family:sans-serif;background:#fff;color:#222;margin:14px}'+
-      'h2{margin:0 0 4px}.sub{color:#555;font-size:11px;margin-bottom:12px}'+
-      '@media print{body{background:#fff!important;color:#222!important}}'+
-      '*{print-color-adjust:exact!important;-webkit-print-color-adjust:exact!important}'+
-      liveCssText+
-      '#excelMapShell{max-height:none!important;overflow:visible!important;padding:0!important}'+
-      '.me-map td.me-u{cursor:default}'+
-      'html,body,body #excelMapShell,body #excelMapShell table.me-map{background:#fff!important}.me-map td.me-t{color:#222!important}'+
-      '@page{size:landscape;margin:8mm}'+
-      '</style></head><body>'+
-      '<h2>'+title+'</h2><div class="sub">'+esc(legendHtml)+'</div>'+
-      '<div id="excelMapShell">'+table.outerHTML+'</div></body></html>');
-    w.document.close();
-    const doPrint=()=>{try{w.focus();w.print();}catch(_){}};
-    w.onload=doPrint;
-    setTimeout(doPrint,400);
+    // same print as the Builder map report (white A3 pages, one ROW band each, native Android print dialog)
+    if(!DPBMap.printData()){showToast("محدش عارض خريطة دلوقتي.");return;}
+    printRange={fromRow:'',fromTracker:'',toRow:'',toTracker:''};
+    try{refreshPrintRangeClasses();}catch(_){}
+    printPlanRange();
   }
-  function openSupervisorMaps(){DPBMap.sync();moveSupervisorMapNodes();populateMapViews();supervisorRefreshMapButtons();const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");if(row)row.onchange=e=>{applyMapRowFilter(e.target.value);supervisorRefreshMapButtons()};if(tr)tr.onchange=e=>applyMapNumberFilter(e.target.value);const jump=q("dpbSupMapTrackerJump");const reset=q("dpbSupMapReset");if(reset)reset.onclick=()=>{resetMapFilters();if(row)row.value="all";if(tr)tr.value="all";if(jump)jump.value="";supervisorRefreshMapButtons()};const jumpBtn=q("dpbSupMapJumpBtn");if(jumpBtn)jumpBtn.onclick=jumpToMapTracker;if(jump)jump.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();jumpToMapTracker();}};const pdfBtn=q("dpbSupMapPdfBtn");if(pdfBtn)pdfBtn.onclick=exportSupervisorMapPdf;const syncBtn=q("dpbSupMapSyncBtn");if(syncBtn)syncBtn.onclick=async()=>{
-    // Same job as the old "رفع الحدود ☁️" button: push this device's Excel-sourced
-    // boundaries/colors/catalog to the cloud so every other device picks them up.
-    // Moved to Admin Control Center's top action row — wired in wireAdminSyncBtn().
-  };DPBMap.refresh()}
+  /* ===== Activity Report — Tracker Production Status (supervisor) =====
+     Same data the maps use (DPBMap.reportData: every operation's map model + live cells), so it works on a phone with no Excel. */
+  let dpbActCssDone=false,dpbActBound=false,dpbActTimer=null;
+  function dpbActCss(){
+    if(dpbActCssDone)return;dpbActCssDone=true;
+    const st=document.createElement("style");
+    st.textContent=".dpbActWrap{overflow:auto;max-height:62vh;border:1px solid #2c4d69;border-radius:12px;margin:8px 0 90px;background:#0b1623}"+
+    ".dpbActTbl{width:100%;border-collapse:collapse;font-size:12px;color:#e8f1f8}.dpbActTbl th{position:sticky;top:0;background:#16293d;padding:7px 5px;font-size:11px;white-space:nowrap}"+
+    ".dpbActTbl td{padding:5px;text-align:center;border-top:1px solid #1d3148;white-space:nowrap}.dpbActTbl td:first-child{text-align:left;font-weight:700}"+
+    ".dpbActTbl td.full{color:#37e07a;font-weight:800}.dpbActTbl td.part{color:#ffc857}.dpbActTbl td.none{color:#7d93a8}"+
+    ".dpbActSum{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:6px;margin:8px 0}.dpbActSum div{border:1px solid #2c4d69;border-radius:10px;padding:7px 4px;text-align:center;background:#0f1d2d}"+
+    ".dpbActSum small{display:block;font-size:10px;color:#8fa8be;text-transform:uppercase}.dpbActSum b{font-size:17px}.dpbActSum i{display:block;font-size:10px;color:#8fa8be;font-style:normal}";
+    document.head.appendChild(st);
+  }
+  function supActData(){
+    let rd=null;try{rd=DPBMap.reportData();}catch(_){}
+    if(!rd||!rd.procs||!rd.procs.length)return null;
+    const procs=rd.procs.slice().sort((a,b)=>(a.code||0)-(b.code||0));
+    const all=new Map();
+    procs.forEach(pr=>pr.trackers.forEach(t=>{
+      let e=all.get(t.key);
+      if(!e){e={key:t.key,row:t.row||"",label:t.label||"",number:Number(String(t.label||"").replace(/\D/g,""))||0,rowNo:Number(String(t.row||"").replace(/\D/g,""))||0,by:{}};all.set(t.key,e);}
+      e.by[pr.id]={done:t.done,total:t.total};
+    }));
+    const rows=[...all.values()].sort((a,b)=>a.rowNo-b.rowNo||a.number-b.number);
+    return{procs,rows};
+  }
+  function supActFiltered(d){
+    const rv=q("dpbSupMapRow")?q("dpbSupMapRow").value:"all",tv=q("dpbSupMapTracker")?q("dpbSupMapTracker").value:"all";
+    const raw=(q("dpbSupMapTrackerJump")?q("dpbSupMapTrackerJump").value:"").trim();
+    const wanted=new Set([...raw.matchAll(/\d+/g)].map(m=>String(Number(m[0]))));
+    return d.rows.filter(r=>{
+      if(rv!=="all"&&String(r.row)!==String(rv))return false;
+      if(tv!=="all"&&String(r.number)!==String(tv))return false;
+      if(wanted.size&&!wanted.has(String(r.number)))return false;
+      return true;
+    });
+  }
+  function supActFillSelects(d){
+    const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");if(!row||!tr)return;
+    const oldR=row.value,rowsU=[...new Set(d.rows.map(r=>r.row))];
+    row.innerHTML='<option value="all">All Rows</option>'+rowsU.map(r=>`<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join("");
+    row.value=rowsU.includes(oldR)?oldR:"all";
+    const oldT=tr.value,seen=new Map();
+    d.rows.forEach(r=>{if(row.value!=="all"&&r.row!==row.value)return;if(!seen.has(String(r.number)))seen.set(String(r.number),r.label)});
+    const list=[...seen.entries()].sort((a,b)=>Number(a[0])-Number(b[0]));
+    tr.innerHTML='<option value="all">All Trackers</option>'+list.map(([n,l])=>`<option value="${escapeHtml(n)}">${escapeHtml(l||("T"+n))}</option>`).join("");
+    tr.value=seen.has(oldT)?oldT:"all";
+  }
+  function renderSupActivity(){
+    dpbActCss();
+    const box=q("dpbSupActTable"),sum=q("dpbSupActSummary");if(!box)return false;
+    const d=supActData();
+    if(!d){box.innerHTML='<p style="color:#8fa8be;padding:14px;font-size:13px">لسه مفيش بيانات خرائط. افتح المشروع من الكارت وانتظر التحميل من السحابة.</p>';if(sum)sum.innerHTML="";return false;}
+    supActFillSelects(d);
+    const rows=supActFiltered(d);
+    const totals=d.procs.map(pr=>{let dn=0,tt=0;rows.forEach(r=>{const c=r.by[pr.id];if(c){dn+=c.done;tt+=c.total}});return{name:pr.name,dn,tt};});
+    if(sum)sum.innerHTML='<div class="dpbActSum"><div><small>Trackers</small><b>'+rows.length+'</b><i>100%</i></div>'+totals.map(t=>`<div><small>${escapeHtml(t.name)}</small><b>${t.dn}</b><i>${t.tt?Math.round(t.dn*100/t.tt):0}%</i></div>`).join("")+'</div>';
+    box.innerHTML='<table class="dpbActTbl"><thead><tr><th>TRACKER</th>'+d.procs.map(pr=>`<th>${escapeHtml(String(pr.name).toUpperCase())}</th>`).join("")+'</tr></thead><tbody>'+
+      rows.map(r=>'<tr><td>'+escapeHtml(r.row+" · "+r.label)+'</td>'+d.procs.map(pr=>{const c=r.by[pr.id];if(!c)return'<td class="none">—</td>';const k=c.total>0&&c.done>=c.total?"full":(c.done>0?"part":"none");return`<td class="${k}">${c.done}/${c.total}</td>`}).join("")+'</tr>').join("")+'</tbody></table>';
+    return true;
+  }
+  function printSupActivity(){
+    const d=supActData();if(!d){showToast("مفيش بيانات للطباعة دلوقتي.");return;}
+    const rows=supActFiltered(d);if(!rows.length){showToast("مفيش Trackers مطابقة للفلتر.");return;}
+    const area=q("printActivityArea");if(!area){showToast("منطقة الطباعة مش موجودة.");return;}
+    const perPage=150,pc=Math.max(1,Math.ceil(rows.length/perPage));
+    const totals=d.procs.map(pr=>{let dn=0,tt=0;rows.forEach(r=>{const c=r.by[pr.id];if(c){dn+=c.done;tt+=c.total}});return[pr.name,dn,tt?Math.round(dn*100/tt)+"%":"0%"];});
+    const summary=[["Trackers",rows.length,"100%"]].concat(totals);
+    area.innerHTML=Array.from({length:pc},(_,idx)=>{
+      const pr=rows.slice(idx*perPage,(idx+1)*perPage);
+      return `<div class="print-report-page">
+    <div class="print-report-head"><h2 style="margin:0 0 1mm;font-size:13px">Activity Report — Tracker Production Status</h2><div style="font-size:7px;color:#555">Page ${idx+1} of ${pc} · ${pr.length} Trackers</div></div>
+    <div class="print-summary">${summary.map(x=>`<div class="box"><div class="k">${escapeHtml(x[0])}</div><div class="v">${x[1]}</div><div class="pct">${x[2]}</div></div>`).join("")}</div>
+    <div class="print-panel-grid"><table class="print-panel"><thead><tr>${["TRACKER"].concat(d.procs.map(p=>String(p.name).toUpperCase())).map(x=>`<th>${escapeHtml(x)}</th>`).join("")}</tr></thead><tbody>${pr.map(r=>`<tr><td>${escapeHtml(r.row+" "+r.label)}</td>${d.procs.map(p=>{const c=r.by[p.id];return`<td>${c?c.done+"/"+c.total:"—"}</td>`}).join("")}</tr>`).join("")}</tbody></table></div>
+    <div class="print-page-number">Page ${idx+1} of ${pc}</div>
+  </div>`}).join("");
+    document.body.classList.add("print-activity");
+    setTimeout(()=>{window.print();},80);
+  }
+  function openSupervisorMaps(){
+    dpbActCss();
+    try{DPBMap.sync();}catch(_){}
+    const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker"),jump=q("dpbSupMapTrackerJump");
+    if(row)row.onchange=()=>{if(tr)tr.value="all";renderSupActivity()};
+    if(tr)tr.onchange=()=>renderSupActivity();
+    if(jump){jump.oninput=()=>renderSupActivity();jump.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();hideSupKeyboard();renderSupActivity();}}}
+    const jb=q("dpbSupMapJumpBtn");if(jb)jb.onclick=()=>{hideSupKeyboard();renderSupActivity()};
+    const reset=q("dpbSupMapReset");if(reset)reset.onclick=()=>{if(row)row.value="all";if(tr)tr.value="all";if(jump)jump.value="";renderSupActivity()};
+    const pdf=q("dpbSupMapPdfBtn");if(pdf)pdf.onclick=printSupActivity;
+    if(!dpbActBound){dpbActBound=true;
+      const live=()=>{const mp=q("dpbSupMaps");if(mp&&mp.classList.contains("active"))renderSupActivity()};
+      window.addEventListener("dpbCloudDataMerged",live);
+    }
+    // models arrive from the cloud a moment after opening: retry a few times until there is data
+    clearTimeout(dpbActTimer);let n=0;
+    const tick=()=>{const mp=q("dpbSupMaps");if(!mp||!mp.classList.contains("active"))return;if(renderSupActivity()||++n>=12)return;dpbActTimer=setTimeout(tick,700)};
+    tick();
+  }
   let dpbEntrySelectionMoved=false;
   function moveEntrySelectionToSubscreen(){
     if(dpbEntrySelectionMoved)return;
@@ -17242,8 +17292,6 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     };
 
     if(!refresh()){
-      // الأدمن/المشرف على جهاز من غير Build محلي: هات الـ Build من السحابة (نفس اللي بتعمله كروت المشاريع)
-      try{if(typeof window.__dpbTryLoadBuildResultFromCloud==="function")window.__dpbTryLoadBuildResultFromCloud().then(()=>{try{refresh()}catch(_){}}).catch(()=>{});}catch(_){}
       let n=0;
       const retry=()=>{
         if(refresh() || ++n>=20) {
