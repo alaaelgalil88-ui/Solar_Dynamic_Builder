@@ -4107,8 +4107,8 @@ function localCatalog(){
   const list=entries(),maps=[];
   maps.push({id:'site',name:'Site Color Code',mode:'fixed',color:'siteCode',snap:'plan'});
   // The Ramming map is fully independent of Plan: it is drawn from the Ramming sheet itself (grouped or separate, no matter)
-  const ramE=list.find(e=>/ramming/i.test(String(e.name||''))&&L.entryKey.get(e.id))||list.filter(e=>/^grouped:/.test(String(e.id))&&L.entryKey.get(e.id)).sort((a,b)=>Number(a.code)-Number(b.code))[0]||null;
-  maps.push({id:'ramming',name:'Ramming Code',mode:'fixed',color:'excel',snap:ramE?L.entryKey.get(ramE.id):'plan'});
+  const ramE=list.filter(e=>/^grouped:/.test(String(e.id))&&L.entryKey.get(e.id)).sort((a,b)=>Number(a.code)-Number(b.code))[0]||null;   // أول مرحلة في العمليات المجمّعة = أصغر كود (من processcode)، مش اسم ثابت
+  if(ramE)maps.push({id:'firststage',name:String(ramE.name||'').trim()+' Code',mode:'fixed',color:'excel',snap:L.entryKey.get(ramE.id)});
   const seen=new Set();
   for(const e of list){
     if(/^grouped:/.test(String(e.id)))continue;const key=L.entryKey.get(e.id);if(!key||seen.has(key))continue;seen.add(key);
@@ -4196,7 +4196,8 @@ async function publish(){
     else if(meta[key].f&&rs&&rs.f&&rs.f.h===meta[key].f.h&&!rs.f.s){meta[key].f=rs.f;delete files[key];}}
   const cat={v:1,maps:lc.maps,snaps:meta,savedAt:new Date().toISOString()};
   cat.hash=hash(JSON.stringify({maps:lc.maps,snaps:meta}));
-  if(remote&&remote.hash===cat.hash){await cleanLegacyXl(meta);return true;}
+  const bsig=hash(JSON.stringify(meta));
+  if(remote&&remote.hash===cat.hash){await cleanLegacyXl(meta);autoBaseline(bsig);return true;}
   for(const key of Object.keys(packs)){
     if(remote&&remote.snaps&&remote.snaps[key]&&remote.snaps[key].h===meta[key].h)continue;
     const z=await gz(packs[key]);
@@ -4213,8 +4214,24 @@ async function publish(){
     wrote.add(fh);
   }
   const okCat=await kvWrite('mapcat',cat);   // catalog last: readers never see a catalog pointing at a missing snapshot or file
-  if(okCat)await cleanLegacyXl(meta);
+  if(okCat){await cleanLegacyXl(meta);autoBaseline(bsig);}
   return okCat;
+}
+// الخلايا المنفّذة اللي في الإكسل (القيمة = كود العملية، من رينج processcode) بتنزل على السحابة تلقائي بعد نشر الخرايط، من غير زرار استيراد.
+// إضافة بس (مبيغيّرش ولا بيمسح حاجة موجودة)، وبتتكرر بس لو الإكسل نفسه اتغيّر (بصمة الملفات).
+async function autoBaseline(sig){
+  try{
+    const F=window.DPB_FS2;if(!F||typeof F.importExcel!=='function'||typeof F.status!=='function')return;
+    const st=F.status();if(!(st&&st.on&&st.connected))return;
+    const k='DPB_BASELINE_SIG_'+(st.ns||'');
+    let last=null;try{last=localStorage.getItem(k);}catch(_){}
+    if(last===sig)return;
+    const r=await F.importExcel(true);
+    try{localStorage.setItem(k,sig);}catch(_){}
+    const n=(r||[]).reduce((a,x)=>a+(Number(x.add)||0),0);
+    if(n&&typeof window.showToast==='function')window.showToast('✅ اتحمّلت '+n+' خلية منفّذة من الإكسل تلقائي');
+    try{if(typeof window.__dpbFetchLiveGrid==='function')window.__dpbFetchLiveGrid();}catch(_){}
+  }catch(_){}
 }
 // the original Excel file behind a map: this device first, otherwise the stored copy (any device)
 async function sourceFile(key){
@@ -4849,6 +4866,8 @@ function groupedOps(){
 function _laterOps(k){return groupedOps().filter(o=>Number(o.code)>k);}
 // the "Ramming" stage = the first stage of the grouped chain (lowest code) - taken from the project's own process list, never a fixed name
 function firstStageOp(){const g=groupedOps();return g.length?g.slice().sort((a,b)=>Number(a.code)-Number(b.code))[0]:null;}
+function isFirstStageName(n){try{const f=firstStageOp();return !!f&&String(n||'').trim().toLowerCase()===String(f.name||'').trim().toLowerCase();}catch(_){return false;}}
+window.__dpbIsFirstStage=isFirstStageName;window.__dpbFirstStageName=function(){try{const f=firstStageOp();return f?String(f.name||'').trim():'';}catch(_){return '';}};
 // Not Started is the Ramming map turned inside out, so it looks at the same stage; a cell counts as started once that stage is done
 function notStartedBright(){const f=firstStageOp();return f?(u=>!isDone(f,u)):(()=>true);}
 
@@ -5433,7 +5452,7 @@ function dpbAllProductionRecords(){
     return pid?arr.filter(r=>String(r.projectId||'')===String(pid)):arr;
   }catch(_){return []}
 }
-function isRammingSpec(spec){return !!(spec&&spec.op&&String(spec.op.name||'').trim().toLowerCase()==='ramming');}
+function isRammingSpec(spec){return !!(spec&&spec.op&&isFirstStageName(spec.op.name));}
 function markMasterData(){
   try{
     const d=JSON.parse(localStorage.getItem('DPB_COMPANY_OPERATOR_MASTER_V1')||'{}');
@@ -5565,7 +5584,7 @@ async function obPump(){
           const missing=job.units.filter(u=>{const v=((g.values||[])[u.r1]||[])[u.c1];return!(Number.isFinite(Number(v))&&Number(v)>0);});
           if(!missing.length)continue;
           const now=new Date().toISOString();
-          const ex=String(e.name).trim().toLowerCase()==='ramming'?(job.rammingExtra||{}):{};
+          const ex=isFirstStageName(e.name)?(job.rammingExtra||{}):{};
           const recs=missing.map(u=>Object.assign({id:'mapeng_'+e.code+'_'+e.name+'_'+u.r1+'_'+u.c1,time:now,user:job.user,owner:job.user,editedBy:job.user,source:'MapEngine',process:e.name,code:Number(e.code),tracker:u.label||'',row:u.rowLabel||'',unit:u.post||'',sheet:e.name,r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2},ex));
           const r2=await kvCall({action:'upsertMany',records:recs,groupedProcessNames:job.grouped});
           if(r2&&r2.ok!==false)done.push(e.name);
@@ -5744,13 +5763,13 @@ function details(id){
     const stLine=o=>{let t='';try{if(tu.length)t=' · '+tu.filter(x=>isDone(o,x)).length+' / '+tu.length;}catch(_){}return '✔️ '+esc(o.name)+t;};
     cards+='<div class="map-detail-item map-detail-wide"><div class="k">STATUS</div><div class="v">'+done.map(stLine).join('<br>')+'</div></div>';
   }
-  const ramOp=ops.find(o=>String(o.name||'').trim().toLowerCase()==='ramming');
+  const ramOp=ops.find(o=>isFirstStageName(o.name));
   if(ramOp&&isDone(ramOp,u)){
     // the device's own copy of the records only catches up on the next full pull, so also ask Firestore directly
     // (the cell is coloured from Firestore at once; the operator must show just as fast). The newer of the two wins.
     const cands=dpbAllProductionRecords()
-      .filter(r=>String(r.process||'').trim().toLowerCase()==='ramming'&&Number(r.r1)===u.r1&&Number(r.c1)===u.c1);
-    try{const f=window.DPB_FS2&&window.DPB_FS2.recordAt&&window.DPB_FS2.recordAt('Ramming',u.r1,u.c1);if(f)cands.push(f);}catch(_){}
+      .filter(r=>isFirstStageName(r.process)&&Number(r.r1)===u.r1&&Number(r.c1)===u.c1);
+    try{const f=window.DPB_FS2&&window.DPB_FS2.recordAt&&window.DPB_FS2.recordAt((ramOp&&ramOp.name)||'',u.r1,u.c1);if(f)cands.push(f);}catch(_){}
     const rec=cands.sort((a,b)=>String(b.time||'').localeCompare(String(a.time||'')))[0];
     // Ramming only. A record with no operator/company (e.g. it arrived via
     // the Google Sheet import, not the app's own operator picker) still gets
@@ -7514,7 +7533,7 @@ window.executionOverlay={
 // الأسماء هنا هي النسخة الطبيعية (Case عادي) لنفس قيم الشيت بالظبط،
 // وأي كود رقمي تاني مش موجود في الشيت بيسيب اسمه زي ما اترفع من الملف
 // من غير اختراع أي اسم له.
-const SHEET_OPERATION_LEGEND={1:'Ramming',2:'Saddle',3:'Bearing',4:'Torque Tube'};
+const SHEET_OPERATION_LEGEND={};   // مفيش أسماء عمليات ثابتة: الاسم دايمًا من processcode/اسم التاب في الملف
 function sheetOperationName(rawName,rawCode){
   const n=Number(String(rawCode??'').trim());
   if(Number.isFinite(n) && SHEET_OPERATION_LEGEND[n]) return SHEET_OPERATION_LEGEND[n];
@@ -7596,7 +7615,7 @@ function buildStatusOverlay(){
     // The workbook Process Code is the real stage number.
     // A cell that reaches code 3 therefore represents completion of 1 + 2 + 3.
     const stageNum=Number(entry.code);
-    if(/torque\s*tube/i.test(String(entry.name||'')) && entry.rec?.torqueSourceModel){
+    if(entry.rec?.torqueSourceModel){
       const src=entry.rec.torqueSourceModel, sheet=project.wb.SheetNames[0];
       for(const t of (project.buildResult?.trackerMatches||[])){
         const rn=Number(String(t.row||'').replace(/\D/g,''))||0;
@@ -9513,7 +9532,7 @@ function rebuildDynamicExecutionOverlay(merge){
   const stages=entries.slice().sort((a,b)=>Number(a.code)-Number(b.code));
   stages.forEach((entry,idx)=>{
     const stageNum=Number(entry.code);
-    if(/torque\s*tube/i.test(String(entry.name||'')) && entry.rec?.torqueSourceModel){
+    if(entry.rec?.torqueSourceModel){
       const src=entry.rec.torqueSourceModel, sheet=project.wb.SheetNames[0];
       for(const t of (project.buildResult.trackerMatches||[])){
         const rn=Number(String(t.row||'').replace(/\D/g,''))||0, sr=src.trackerMap.get(rn+'|'+String(t.label||'').toUpperCase());
@@ -9645,9 +9664,9 @@ function linkDynamicExecutionToPlan(){
 }
 
 function dpbOperatorBadge(procName,label,row){
-  if(String(procName||'').trim().toLowerCase()!=='ramming'||typeof dpbAllProductionRecords!=='function')return '';
+  if(!(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(procName))||typeof dpbAllProductionRecords!=='function')return '';
   try{
-    const recs=dpbAllProductionRecords().filter(rec=>String(rec.process||'').trim().toLowerCase()==='ramming'&&String(rec.tracker||'')===String(label||'')&&(!rec.row||!row||String(rec.row)===String(row)));
+    const recs=dpbAllProductionRecords().filter(rec=>window.__dpbIsFirstStage(rec.process)&&String(rec.tracker||'')===String(label||'')&&(!rec.row||!row||String(rec.row)===String(row)));
     const ops=[...new Set(recs.map(rec=>rec.operator||'By Admin'))];
     const cos=[...new Set(recs.map(rec=>rec.company).filter(Boolean))];
     if(!ops.length)return '';
@@ -9762,10 +9781,10 @@ function renderProduction(rows){
       // Ramming operator, per marked cell: show whoever ran that tracker's
       // ramming cells next to its count in this same table, instead of only
       // being visible one cell at a time on the Map screen.
-      if(String(e.name||'').trim().toLowerCase()==='ramming'&&typeof dpbAllProductionRecords==='function'){
+      if(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(e.name)&&typeof dpbAllProductionRecords==='function'){
         try{
           const recs=dpbAllProductionRecords()
-            .filter(rec=>String(rec.process||'').trim().toLowerCase()==='ramming'&&String(rec.tracker||'')===String(r.tracker||'')&&String(rec.row||'')===String(r.row||''));
+            .filter(rec=>window.__dpbIsFirstStage(rec.process)&&String(rec.tracker||'')===String(r.tracker||'')&&String(rec.row||'')===String(r.row||''));
           const ops=[...new Set(recs.map(rec=>rec.operator||'By Admin'))];
           const cos=[...new Set(recs.map(rec=>rec.company).filter(Boolean))];
           if(ops.length){
@@ -10443,7 +10462,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,active:a.active!==false,photo:a.photo||""});
   }
   function toggleAccount(id){const a=accounts();const i=a.findIndex(x=>x.id===id);if(i<0)return;a[i].active=a[i].active===false;saveAccounts(a);pushAccountToSheet(a[i])}
-  function deleteAccount(id){const a=accounts().find(x=>x.id===id);if(!a)return;if(!confirm(`حذف حساب المشرف ${a.name}؟`))return;saveAccounts(accounts().filter(x=>x.id!==id));if(editingId===id)resetForm();if(window.DPB_GS&&typeof window.DPB_GS.removeUser==="function")window.DPB_GS.removeUser(a.name)}
+  function deleteAccount(id){const a=accounts().find(x=>x.id===id);if(!a)return;if(!confirm(`حذف حساب المشرف ${a.name}؟`))return;saveAccounts(accounts().filter(x=>x.id!==id));if(editingId===id)resetForm();const rm=window.DPB_GS&&window.DPB_GS.removeUserSafe;if(typeof rm==="function"){rm(a.name).then(r=>{if(!(r&&r.ok))alert("اتحذف المشرف "+a.name+" من الجهاز ده. مقدرتش أحذفه من السيرفر دلوقتي (مفيش اتصال أو الاتصال فشل)، وهيتحذف لوحده أول ما النت يرجع.")})}}
   function saveAccount(){
     let name=q("dpbAdminSupName").value.trim();
     name=name?name.charAt(0).toUpperCase()+name.slice(1):name;
@@ -11032,6 +11051,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     q("dpbAdminPinModal").style.display="none";q("dpbAdminPinModal").setAttribute("aria-hidden","true");
     q("dpbStartGate").classList.add('dpbForceHidden');q("dpbStartGate").style.display="none";q("dpbProjectHome").style.display="none";q("dpbAdminOverlay").style.display="block";q("dpbAdminOverlay").setAttribute("aria-hidden","false");
     refreshProcessSelect();renderAccounts();renderProductionEdits();
+    try{ if(window.DPB_GS&&window.DPB_GS.syncUsersFromSheet) window.DPB_GS.syncUsersFromSheet().then(ch=>{ if(ch){ try{renderAccounts();}catch(_){} } }).catch(()=>{}); }catch(_){}
     dpbSyncAdminTopOffset();
     // FIX (فحص اتصال تلقائي): بدل ما نكتشف إن الرابط غلط بعد ما نحفظ
     // ونستنى ونتفاجئ، بنفحص الاتصال فورًا كل مرة Admin Control Center
@@ -11588,9 +11608,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // (ACC_KEY); the Admin role is kept in a side cache so the Admin Portal's
   // own "Supervisor accounts" list isn't cluttered with the Admin row.
   function syncUsersFromSheet(){
-    return gsCall("getUsers",{}).then(res=>{
+    return flushUserDeletes().catch(()=>{}).then(()=>gsCall("getUsers",{})).then(res=>{
       if(!res||res.ok===false||!Array.isArray(res.users))return false;
-      const accounts=res.users.map(rowToAccount).filter(a=>a.name);
+      const hidden=pendDel();   // مشرفين اتحذفوا ولسه الحذف ماوصلش السيرفر: مبيرجعوش في القايمة
+      const accounts=res.users.map(rowToAccount).filter(a=>a.name&&hidden.indexOf(a.name.toLowerCase())<0);
       // FIX (الأمان): السيرفر دلوقتي مبيبعتش الباسوردات إلا للأدمن. قبل ما نستبدل الكاش القديم، اللي كان فيه
       // باسوردات على الجهاز ده بيتحوّل لبصمات (عشان الدخول الأوفلاين يفضل شغال من غير ما حد يضطر يدخل أونلاين تاني).
       try{
@@ -11658,8 +11679,31 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     if(!entries||!entries.length)return Promise.resolve({ok:true});
     return gsCall("logProductivity",{entries});
   }
-  function pushUser(user){ return gsCall("saveUser",{user}); }
+  // حذف المشرف: بيتسجّل على الجهاز الأول (علشان الاسم مايرجعش من مزامنة قديمة)، وبعدين بيتنفّذ على السيرفر. لو فشل بيتعاد لوحده لما النت يرجع.
+  const PEND_DEL_KEY="DPB_PENDING_USER_DELETES_V1";
+  function pendDel(){ try{ const a=JSON.parse(localStorage.getItem(PEND_DEL_KEY)||"[]"); return Array.isArray(a)?a:[]; }catch(_){ return []; } }
+  function setPendDel(a){ try{ localStorage.setItem(PEND_DEL_KEY,JSON.stringify(a)); }catch(_){} }
+  function pushUser(user){
+    try{ const n=String(user&&user.username||"").trim().toLowerCase(); if(n){ const a=pendDel(); if(a.indexOf(n)>=0) setPendDel(a.filter(x=>x!==n)); } }catch(_){}
+    return gsCall("saveUser",{user});
+  }
   function removeUser(username){ return gsCall("deleteUser",{username}); }
+  async function removeUserSafe(username){
+    const n=String(username||"").trim().toLowerCase(); if(!n) return {ok:true};
+    const a=pendDel(); if(a.indexOf(n)<0){ a.push(n); setPendDel(a); }
+    const res=await removeUser(username);
+    const ok=!!(res&&res.ok!==false&&res.__reachable!==false);
+    if(ok) setPendDel(pendDel().filter(x=>x!==n));
+    return {ok,reachable:!!(res&&res.__reachable!==false)};
+  }
+  async function flushUserDeletes(){
+    const a=pendDel(); if(!a.length) return;
+    for(const n of a.slice()){
+      const res=await removeUser(n);
+      if(res&&res.ok!==false&&res.__reachable!==false) setPendDel(pendDel().filter(x=>x!==n));
+    }
+  }
+  window.addEventListener("online",()=>{ setTimeout(()=>{ flushUserDeletes().catch(()=>{}); },1500); });
   // Uploads the physical-cell -> logical-unit map (sheet,row,tracker,unit,
   // r1,c1,r2,c2) once the Plan is built, so a manual edit made directly in
   // the EXCUTION Sheet can be traced back to the right unit and mirrored
@@ -11724,7 +11768,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     return gsCall("getUsers",{}).then(res=>(res && res.ok!==false && Array.isArray(res.users)) ? res.users : []);
   }
 
-  window.DPB_GS={syncUsersFromSheet,verifyLogin,verifyLoginEx,verifyAdminPin,getUsersRaw,logHistory,logProductivity,pushUser,removeUser,saveUnitMap,saveBuildResult,getBuildResult,getBuildMeta};
+  window.DPB_GS={removeUserSafe,flushUserDeletes,syncUsersFromSheet,verifyLogin,verifyLoginEx,verifyAdminPin,getUsersRaw,logHistory,logProductivity,pushUser,removeUser,saveUnitMap,saveBuildResult,getBuildResult,getBuildMeta};
 })();
 </script>
 <script id="dpbCloudBuildSync">
@@ -11746,6 +11790,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       try{
         if(window.project.buildResult && !force) return false; // Build محلي حصل أثناء الانتظار - سيبه هو الأولوية
         window.project.buildResult=data.buildResult;
+        try{ saveBuildCache(data); }catch(_){}
         try{ localStorage.setItem("DPB_BUILD_FROM_CLOUD_V1","1"); localStorage.setItem("DPB_BUILD_CLOUD_UPDATED_V1",data.__updated||""); }catch(_){}
         if(Array.isArray(data.types) && data.types.length) window.project.types=data.types;
         if(data.colors && typeof window.EXACT_CODE_COLORS==="object") Object.assign(window.EXACT_CODE_COLORS,data.colors);
@@ -11768,6 +11813,30 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       }catch(_){ return false; }
     }).catch(()=>false);
   }
+  // نسخة محفوظة من الـ Build لكل مشروع على الجهاز نفسه: المشروع يفتح فورًا من غير نت، والتحديث بيتم في الخلفية.
+  function cacheKey(){ return "buildcache:"+(window.__dpbActiveProjectId||""); }
+  function saveBuildCache(data){
+    if(typeof testCachePut!=="function"||typeof TEST_CACHE_META==="undefined"||!window.__dpbActiveProjectId||!data||!data.buildResult) return;
+    Promise.resolve(testCachePut(TEST_CACHE_META,cacheKey(),{buildResult:data.buildResult,types:data.types||null,colors:data.colors||null,updated:data.__updated||"",savedAt:Date.now()})).catch(()=>{});
+  }
+  async function restoreBuildCache(){
+    try{
+      if(typeof testCacheGet!=="function"||typeof TEST_CACHE_META==="undefined"||!window.__dpbActiveProjectId) return false;
+      const c=await testCacheGet(TEST_CACHE_META,cacheKey());
+      if(!c||!c.buildResult) return false;
+      window.project.buildResult=c.buildResult;
+      try{ localStorage.setItem("DPB_BUILD_FROM_CLOUD_V1","1"); localStorage.setItem("DPB_BUILD_CLOUD_UPDATED_V1",c.updated||""); }catch(_){}
+      if(Array.isArray(c.types)&&c.types.length) window.project.types=c.types;
+      if(c.colors&&typeof window.EXACT_CODE_COLORS==="object") Object.assign(window.EXACT_CODE_COLORS,c.colors);
+      ["renderBuildResults","refreshProjState","renderExecutionStatus"].forEach(n=>{try{ if(typeof window[n]==="function") window[n](); }catch(_){}});
+      try{ if(typeof window.rebuildDynamicExecutionOverlay==="function") window.rebuildDynamicExecutionOverlay(false); }catch(_){}
+      try{ if(typeof window.linkDynamicExecutionToPlan==="function") window.linkDynamicExecutionToPlan(); }catch(_){}
+      ["syncStepAccess","__dpbMarkDataChanged","supervisorRefreshMapButtons"].forEach(n=>{try{ if(typeof window[n]==="function") window[n](); }catch(_){}});
+      try{ if(typeof DPBMap!=="undefined") DPBMap.refresh(); }catch(_){}
+      return true;
+    }catch(_){ return false; }
+  }
+  window.__dpbRestoreBuildCache=restoreBuildCache;
   window.__dpbTryLoadBuildResultFromCloud=tryLoadBuildResultFromCloud;
   // FIX (المرحلة 2): الجهاز اللي استلم الـ Build من السحابة كان بيفضل على النسخة القديمة للأبد.
   // دلوقتي بيفحص (بطلب خفيف بيرجّع تاريخ التعديل بس) ويحدّث لو فيه Build أحدث. الجهاز اللي عمل
@@ -12237,7 +12306,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       });
     }catch(_){}
     try{ (DPBMap.processNames()||[]).forEach(n=>{ n=String(n||'').trim(); if(n && !names.some(x=>x.toLowerCase()===n.toLowerCase())) names.push(n); }); }catch(_){}
-    if(!names.length) ['Ramming','Saddle','Bearing'].forEach(n=>names.push(n));
+    if(!names.length){/* مفيش أسماء ثابتة: القايمة بتتعلّم من كتالوج الخرايط */}
     else{ // the real list is known: entries kept from the startup defaults (before the catalog existed) are stale copies - drop them
       try{ const by=window.__dpbLiveGridByProcess||{}; const keep=new Set(names.map(n=>n.toLowerCase()));
         Object.keys(by).forEach(k=>{ if(!keep.has(k.toLowerCase())) delete by[k]; else if(!names.includes(k)) delete by[k]; }); }catch(_){}
@@ -13475,7 +13544,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   async function deleteProject(id){
     let ps=await projects(); if(ps.length<=1){alert('لا يمكن حذف آخر مشروع. أنشئ مشروعًا جديدًا أولًا.');return;}
     const idx=ps.findIndex(x=>x.id===id); if(idx<0)return;
-    const wasCurrent=id===window.__dpbActiveProjectId; ps.splice(idx,1); await saveProjects(ps); cloudRemove(id);
+    const wasCurrent=id===window.__dpbActiveProjectId; ps.splice(idx,1); await saveProjects(ps); const cloudOk=await cloudRemove(id); if(cloudOk===false)alert('اتحذف المشروع من الجهاز ده. مقدرتش أسجّل الحذف على السحابة (مفيش اتصال دلوقتي)، وهيتسجّل لوحده أول ما النت يرجع من غير ما تعمل حاجة.');
     if(typeof testCacheDeleteProject==='function') await testCacheDeleteProject(id);
     try{const raw=JSON.parse(localStorage.getItem('DPB_SHARED_PRODUCTION_V2')||'{}');if(Array.isArray(raw.records)){raw.records=raw.records.filter(r=>String(r.projectId||'')!==String(id));localStorage.setItem('DPB_SHARED_PRODUCTION_V2',JSON.stringify(raw));}}catch(_){ }
     if(wasCurrent){
@@ -13566,7 +13635,29 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   const pubRec=r=>{const o={};PUBK.forEach(k=>{if(r[k]!==undefined)o[k]=r[k]});return o};
   const isReal=r=>!r.auto&&!!(r.user||r.planFileName||r.planApplied||r.built||r.trackerCount);
   let cloudBusy=false, cloudDone=false, cloudAgain=false;
-  function cloudRemove(id){try{const F=window.DPB_FS2;if(F&&F.projectsUpdate&&F.on&&F.on())F.projectsUpdate(cur=>cur.filter(x=>x.id!==id)).catch(()=>{})}catch(_){}}
+  // الحذف بقى بعلامة حذف (قبر) بتتسجّل في السحابة وعلى الجهاز: أي جهاز لسه عنده المشروع مبيرجّعهوش تاني، وفشل الكتابة مبيتسكتش (بيتعاد تلقائي).
+  const TOMB_KEY='DPB_PROJ_TOMBS_V1';
+  function tombStore(){try{const o=JSON.parse(localStorage.getItem(TOMB_KEY)||'{}');return o&&typeof o==='object'?o:{}}catch(_){return {}}}
+  function saveTombStore(o){try{localStorage.setItem(TOMB_KEY,JSON.stringify(o))}catch(_){}}
+  function mergeCloudTombs(cl){const o=tombStore();cl.forEach(x=>{if(x&&x.deleted&&x.id){const t=Number(x.deletedAt)||0,c=o[x.id];if(!c||c.t<t)o[x.id]={t:t,p:0}}});saveTombStore(o);const m={};Object.keys(o).forEach(k=>m[k]=o[k].t);return m}
+  async function flushTombs(){
+    const F=window.DPB_FS2;if(!F||!F.projectsUpdate||!F.on||!F.on())return true;
+    const o=tombStore(),pend=Object.keys(o).filter(k=>o[k]&&o[k].p);if(!pend.length)return true;
+    try{
+      await F.projectsUpdate(cur=>{
+        const old=Date.now()-180*86400000;
+        const m=cur.filter(x=>x&&!(pend.indexOf(x.id)>=0)&&!(x.deleted&&(Number(x.deletedAt)||0)<old));
+        pend.forEach(id=>m.push({id:id,deleted:true,deletedAt:o[id].t}));
+        return m;
+      });
+      const o2=tombStore();pend.forEach(id=>{if(o2[id]&&o2[id].t===o[id].t)o2[id].p=0});saveTombStore(o2);
+      return true;
+    }catch(_){return false}
+  }
+  async function cloudRemove(id){
+    const o=tombStore();o[id]={t:Date.now(),p:1};saveTombStore(o);
+    return flushTombs();
+  }
   function paintPicker(){
     const box=document.getElementById('dpbSupProjField'),sel=document.getElementById('dpbSupProjSel'); if(!box||!sel)return;
     const ps=(window.__dpbProjectRecords||[]).filter(x=>!x.auto||(window.__dpbProjectRecords||[]).length===1);
@@ -13579,15 +13670,26 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     if(cloudBusy){cloudAgain=true;return false}
     cloudBusy=true;
     try{
-      const cloud=await F.projectsGet(); const local=await projects();
+      const cloud=await F.projectsGet(); let local=await projects();
       let cl=Array.isArray(cloud)?cloud:[];
-      const toPush=local.filter(r=>isReal(r)&&(()=>{const c=cl.find(x=>x.id===r.id);return !c||((r.trackerCount||0)>0&&(r.updatedAt||0)>(c.updatedAt||0))})());
-      if(toPush.length) cl=await F.projectsUpdate(cur=>{const m=cur.slice();toPush.forEach(r=>{const i=m.findIndex(x=>x.id===r.id);if(i<0)m.push(pubRec(r));else if((r.updatedAt||0)>(m[i].updatedAt||0))m[i]=pubRec(r)});return m});
+      await flushTombs();                         // حذف لسه ماتسجّلش على السحابة بيتعاد هنا
+      const tb=mergeCloudTombs(cl);               // قبور الحذف من السحابة بتتحفظ على الجهاز
+      const dead=r=>{const t=tb[r.id];return t!=null&&(Number(r.createdAt)||0)<=t};   // مشروع بنفس الـ id اتعمل بعد الحذف يعتبر جديد
+      let forceSave=false;
+      const gone=local.filter(dead);
+      if(gone.length&&local.filter(r=>!dead(r)).length){
+        for(const g of gone){try{if(typeof testCacheDeleteProject==='function')await testCacheDeleteProject(g.id);dbPut('buildcache:'+g.id,null)}catch(_){}}
+        local=local.filter(r=>!dead(r));forceSave=true;
+      }
+      cl=cl.filter(x=>x&&!x.deleted);
+      const toPush=local.filter(r=>isReal(r)&&!dead(r)&&(()=>{const c=cl.find(x=>x.id===r.id);return !c||((r.trackerCount||0)>0&&(r.updatedAt||0)>(c.updatedAt||0))})());
+      if(toPush.length) cl=(await F.projectsUpdate(cur=>{const m=cur.filter(x=>!(x&&x.deleted&&toPush.some(r=>r.id===x.id&&(Number(r.createdAt)||0)>(Number(x.deletedAt)||0))));toPush.forEach(r=>{const i=m.findIndex(x=>x.id===r.id&&!x.deleted);if(i<0)m.push(pubRec(r));else if((r.updatedAt||0)>(m[i].updatedAt||0))m[i]=pubRec(r)});return m})).filter(x=>x&&!x.deleted);
+      if(forceSave&&!cl.length){await saveProjects(local);const act0=window.__dpbActiveProjectId;if(!local.some(x=>x.id===act0)){const pm=window.__dpbProjectManager;await (pm&&pm.activate?pm.activate(local[0].id,true):activate(local[0].id,true));}else renderList();}
       if(cl.length){
         const ids=new Set(cl.map(x=>x.id)), next=[];
         cl.forEach(c=>{const l=local.find(x=>x.id===c.id);if(l){const o={...l,name:c.name||l.name,fromCloud:true};delete o.auto;next.push(o)}else next.push({...c,fromCloud:true})});
-        local.forEach(l=>{if(!ids.has(l.id)&&!l.auto&&!l.fromCloud)next.push(l)});
-        if(JSON.stringify(next.map(x=>[x.id,x.name,!!x.auto,!!x.fromCloud]))!==JSON.stringify(local.map(x=>[x.id,x.name,!!x.auto,!!x.fromCloud]))){
+        local.forEach(l=>{if(!ids.has(l.id)&&!l.auto&&!l.fromCloud&&!dead(l))next.push(l)});
+        if(forceSave||JSON.stringify(next.map(x=>[x.id,x.name,!!x.auto,!!x.fromCloud]))!==JSON.stringify(local.map(x=>[x.id,x.name,!!x.auto,!!x.fromCloud]))){
           await saveProjects(next);
           const act=window.__dpbActiveProjectId;
           if(!next.some(x=>x.id===act)){const pm=window.__dpbProjectManager; await (pm&&pm.activate?pm.activate(next[0].id,true):activate(next[0].id,true));}
@@ -16057,7 +16159,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     // way tabNameForProcess_/processNameForTab_ already do on the server:
     // strip anything that isn't a letter/digit before comparing.
     const norm=String(state.process?.name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'');
-    return Number(state.process?.code)===1 || norm==='ramming';
+    return !!(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(state.process?.name));
   }
   function rammingMeta(t,u,i){
     try{
@@ -16555,7 +16657,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const rammingByTracker=new Map();
     all.forEach(x=>{
       const hasAssign=String(x.operator||"").trim() || String(x.company||"").trim();
-      const isRammingRec=/ramming/i.test(String(x.process||""));
+      const isRammingRec=!!(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(x.process));
       if(!hasAssign && !isRammingRec) return;
       const tr=String(x.tracker||"");
       if(!tr) return;
@@ -16620,8 +16722,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
         const nsPctT=V.pct(V.counts.none,V.list.length),nsPctC=V.pct(V.nsCells,V.nsTotal);
         const nsBar=`<div class="dpbRpBar dpbRpBarNS"><div class="dpbRpBarTop"><b>لم يبدأ (تراكرات كاملة)</b><span>${fmt(V.counts.none)} / ${fmt(V.list.length)} تراكر</span><em style="color:#e6eef7">${nsPctT}%</em></div><div class="dpbRpTrack"><i style="width:${nsPctT}%;background:#e6eef7"></i></div></div><div class="dpbRpBar dpbRpBarNS"><div class="dpbRpBarTop"><b>لم يبدأ (خلايا)</b><span>${fmt(V.nsCells)} / ${fmt(V.nsTotal)} خلية</span><em style="color:#cbd5e1">${nsPctC}%</em></div><div class="dpbRpTrack"><i style="width:${nsPctC}%;background:#cbd5e1"></i></div></div>`;
         const myChips=Object.entries(myByProcess).sort((a,b)=>b[1]-a[1]).map(([name,n])=>`<span class="dpbRpChip">${escapeHtml(name)} <b>${n}</b></span>`).join('')||'<span class="dpbRpMuted">لا توجد إدخالات محفوظة لهذا المشرف.</span>';
-        const hasRam=V.procs.some(p=>/ramming/i.test(String(p.name||'')));
-        const head=['Tracker',...V.procs.map(p=>p.name),...(hasRam?['Ramming Operator']:[]),'Overall Stage'];
+        const hasRam=V.procs.some(p=>window.__dpbIsFirstStage(p.name));
+        const head=['Tracker',...V.procs.map(p=>p.name),...(hasRam?[window.__dpbFirstStageName()+' Operator']:[]),'Overall Stage'];
         const rowsHtml=V.list.map(L=>{
           const cells=V.procs.map(p=>{
             const t=p.trackers.get(L.key);if(!t)return '<td class="dpbRpC0" style="opacity:.45">—</td>';
@@ -16673,7 +16775,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
         const procsEl=summary.querySelector('#dpbRpProcs');
         let selP=(V.procs.find(p=>p.id===window.__dpbRpSel)||V.procs[0]);
         const stOfT=t=>t.done<=0?'none':(t.total>0&&t.done>=t.total?'done':'part');
-        const hasRamSel=()=>/ramming/i.test(String(selP.name||''));
+        const hasRamSel=()=>window.__dpbIsFirstStage(selP.name);
         const stTxt={none:'Not Started',part:'In Progress',done:'Done'};
         // everything below follows the ONE selected process: counts, table columns, the map
         const paintSeg=()=>{
@@ -17024,15 +17126,16 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       root.innerHTML=ps.length?ps.map(p=>`<button type="button" class="dpbSupNavCard" data-proj="${escapeHtml(p.id)}"><strong>🗂️ ${escapeHtml(p.name||"Project")}</strong><span>${escapeHtml(p.id)}${p.trackerCount?" · "+Number(p.trackerCount).toLocaleString()+" Tracker":""}${p.built?" · جاهز ✅":""}</span></button>`).join(""):'<div class="hint">مفيش مشاريع لسه. الأدمن لازم ينشئ مشروع ويرفع الإكسل الأول.</div>';
       root.querySelectorAll("[data-proj]").forEach(b=>b.onclick=()=>openProjectCard(b.dataset.proj,b));
     };
-    const done=()=>{if(seq!==projLoadSeq)return;msg.textContent="دوس على كارت المشروع، وبيتحمّل تلقائي من السحابة.";paint()};
+    const done=()=>{if(seq!==projLoadSeq)return;msg.textContent="دوس على كارت المشروع. بيفتح فورًا من الجهاز، والتحديث بيتم في الخلفية.";paint()};
+    // الكروت بتظهر فورًا من القايمة المحفوظة على الجهاز، ومزامنة قايمة المشاريع من السحابة بتحصل في الخلفية وبتحدّث الكروت لما تخلص
+    done();
     const F=window.DPB_FS2, sync=window.__dpbCloudProjectsSync;
-    if(typeof sync!=="function"||!F||typeof F.on!=="function"||!F.on()){done();return}
-    root.innerHTML="";msg.textContent="جاري تحميل المشاريع…";
-    const attempt=()=>{
+    if(typeof sync!=="function"||!F||typeof F.on!=="function"||!F.on())return;
+    const attempt=(n)=>{
       if(seq!==projLoadSeq)return;
-      Promise.resolve().then(()=>sync()).then(ok=>{if(ok||Date.now()-t0>7000)done();else setTimeout(attempt,1200)}).catch(()=>{if(Date.now()-t0>7000)done();else setTimeout(attempt,1200)});
+      Promise.resolve().then(()=>sync()).then(ok=>{if(ok)done();else if(n<3)setTimeout(()=>attempt(n+1),3000)}).catch(()=>{if(n<3)setTimeout(()=>attempt(n+1),3000)});
     };
-    attempt();
+    attempt(0);
   }
   async function openProjectCard(id,btn){
     if(projOpening)return; projOpening=true;
@@ -17041,12 +17144,20 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     cards.forEach(b=>b.disabled=true);
     const wt=(p,ms)=>Promise.race([Promise.resolve(p).catch(()=>false),new Promise(r=>setTimeout(()=>r(false),ms))]);
     try{
-      msg.textContent="جاري تحميل المشروع من السحابة…"; if(label)label.textContent="⏳ بيتحمّل…";
       const pm=window.__dpbProjectManager;
       if(id!==window.__dpbActiveProjectId&&pm&&pm.activate)await pm.activate(id,true);
+      // أول حاجة: النسخة المحفوظة على الجهاز (فورية، بدون نت). السحابة بتتسأل في الخلفية بس.
+      let have=!!(window.project&&window.project.buildResult);
+      if(!have&&typeof window.__dpbRestoreBuildCache==="function")have=await window.__dpbRestoreBuildCache();
+      const bg=()=>{try{
+        const a=typeof window.__dpbRefreshBuildIfNewer==="function"?window.__dpbRefreshBuildIfNewer():null;
+        Promise.resolve(a).catch(()=>{}).then(()=>{try{if(typeof window.__dpbFetchLiveGrid==="function")return window.__dpbFetchLiveGrid();}catch(_){}}).catch(()=>{});
+      }catch(_){}};
+      if(have){showScreen("home");bg();return;}
+      // مفيش نسخة على الجهاز (أول مرة): لازم نجيبها من السحابة مرة واحدة بس
+      msg.textContent="أول مرة على الجهاز ده: بيتحمّل المشروع من السحابة…"; if(label)label.textContent="⏳ بيتحمّل…";
       if(typeof window.__dpbTryLoadBuildResultFromCloud==="function")await wt(window.__dpbTryLoadBuildResultFromCloud(),20000);
-      if(typeof window.__dpbRefreshBuildIfNewer==="function")await wt(window.__dpbRefreshBuildIfNewer(),12000);
-      if(typeof window.__dpbFetchLiveGrid==="function")await wt(window.__dpbFetchLiveGrid(),15000);
+      if(window.project&&window.project.buildResult&&typeof window.__dpbFetchLiveGrid==="function"){try{window.__dpbFetchLiveGrid();}catch(_){}}
       if(!(window.project&&window.project.buildResult)){
         let why="";
         try{
@@ -18095,7 +18206,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     var current=keep||'';
     var heads=[].slice.call(table.querySelectorAll('thead th')).slice(1);
     var names=heads.map(function(h){return String(h.textContent||'').trim()})
-      .filter(function(x){return x&&!/^overall stage$/i.test(x)&&!/^ramming operator$/i.test(x);});
+      .filter(function(x){return x&&!/^overall stage$/i.test(x)&&!/ operator$/i.test(x);});
     proc.innerHTML='<option value="">Select operation</option>';
     names.forEach(function(name){var o=document.createElement('option');o.value=name;o.textContent=name;proc.appendChild(o)});
     if(names.some(function(x){return x.toLowerCase()===String(current).toLowerCase()})) proc.value=current;

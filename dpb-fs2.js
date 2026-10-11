@@ -21,7 +21,7 @@
   // layer is ON, so a new phone / new browser works without anyone opening the admin card first. An explicit choice saved on the device
   // (the admin card toggle, ?fs2=off) always wins.
   function on() { var v = ls(LS.mode, null); return v === 'on' || emu() || (v === null && !!(window.DPB_FIREBASE_CONFIG && window.DPB_FIREBASE_CONFIG.projectId)); }
-  function procs() { return ls(LS.procs, 'Ramming,Saddle,Bearing,Torque Tube,Modules').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
+  function procs() { return ls(LS.procs, '').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
   function mine(name) { var s = CORE.slug(name); return procs().some(function (p) { return CORE.slug(p) === s; }); }
   // a record belongs to this layer only if its process is a map process AND it points at a map cell; anything else (e.g. a tracker-level entry) goes down untouched
   function isCell(r) { return !!r && mine(r.process) && r.r1 != null && r.c1 != null; }
@@ -851,7 +851,7 @@
   }
   if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
   window.DPB_FS2.autoTick = bkAutoTick;
-  window.DPB_FS2.status = function () { return { on: on(), connected: !!curStore(), failed: !!failedAt, err: String(lastErr || '') }; };
+  window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), failed: !!failedAt, err: String(lastErr || '') }; };
   window.DPB_FS2.backupNow = bkBackupNow; window.DPB_FS2.saveExternal = bkSaveExternal;
 
   /* ---- Admin card (Admin > sync tab): on/off, live status, counts, import ---- */
