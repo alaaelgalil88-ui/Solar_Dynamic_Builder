@@ -123,12 +123,13 @@
     if (!clockT) clockT = setInterval(function () { if (!document.hidden) syncClock(a); }, 30 * 60 * 1000);
   }
   var store = null, creating = null, failedAt = 0, lastErr = '', version = 0, notifyT = null, pullT = null, storePid = '', adapterP = null;
+  var adErr = '', adOk = false;   // state of the ONE shared connection (login / users / clock), so the login screen can say WHY it cannot connect
   // the id of the project that is open right now (empty until the project manager has opened one)
   function pidS() { return String(pid() || '').replace(/[^A-Za-z0-9_\-]/g, '_'); }
   // ONE connection for the whole app (login, users list, clock) - not tied to a project
   function getAdapter() {
     if (window.__DPB_FS2_ADAPTER) return Promise.resolve(window.__DPB_FS2_ADAPTER);
-    if (!adapterP) adapterP = makeAdapter().catch(function (e) { adapterP = null; throw e; });
+    if (!adapterP) adapterP = makeAdapter().then(function (a) { adOk = true; adErr = ''; return a; }, function (e) { adapterP = null; adOk = false; adErr = permHint(e); throw e; });
     return adapterP;
   }
   // the cell store belongs to ONE project; when another project is opened the old listener is stopped and a new one is started
@@ -308,8 +309,19 @@
       return null;
     });
   }
+  // Login / accounts go to Firestore ONLY. The old Apps Script is asked in exactly one case: the accounts were never moved (the users doc does not exist yet).
+  // If Firestore cannot be reached the request FAILS like a network error (the app then says "no connection" and uses its cached PIN), it no longer
+  // waits on a script link that may be dead. Never hangs: 25 s at most (a first start on a weak network has to download the Firebase SDK).
   function usersHandle(body, input, init) {
-    return getAdapter().then(function (a) { return usersOp(a, body); }).then(function (r) { return r ? jsonRes(r) : prevFetch(input, init); }, function () { return prevFetch(input, init); });
+    var tm, to = new Promise(function (_, rej) { tm = setTimeout(function () { rej(new Error('انتهت مهلة الاتصال بـ Firebase (25 ثانية)')); }, 25000); });
+    return Promise.race([getAdapter().then(function (a) { return usersOp(a, body); }), to]).then(function (r) {
+      clearTimeout(tm);
+      return r ? jsonRes(r) : prevFetch(input, init);
+    }, function (e) {
+      clearTimeout(tm);
+      if (!adErr) adErr = permHint(e);
+      return Promise.reject(new TypeError('Firebase: ' + permHint(e)));
+    });
   }
   var USER_ACTIONS = { login: 1, getUsers: 1, saveUser: 1, deleteUser: 1, renewToken: 1 };
   // one-time: copy the accounts from the Sheet's Users tab into Firestore (hashes only). Asks the script through the layer UNDER this one on purpose.
@@ -851,7 +863,11 @@
   }
   if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
   window.DPB_FS2.autoTick = bkAutoTick;
-  window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), failed: !!failedAt, err: String(lastErr || '') }; };
+  window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), adapter: adOk, failed: !!failedAt || (!!adErr && !adOk), err: String(lastErr || adErr || '') }; };
+  // warm the shared connection in the background as soon as the app opens (and retry while it is down), so by the time someone types the Admin /
+  // Supervisor PIN the Firebase SDK is already loaded and signed in
+  setTimeout(function () { try { if (on() && !adOk) getAdapter().catch(function () {}); } catch (e) {} }, 300);
+  if (typeof setInterval === 'function') setInterval(function () { try { if (on() && !adOk && !document.hidden) getAdapter().catch(function () {}); } catch (e) {} }, 20000);
   window.DPB_FS2.backupNow = bkBackupNow; window.DPB_FS2.saveExternal = bkSaveExternal;
 
   /* ---- Admin card (Admin > sync tab): on/off, live status, counts, import ---- */

@@ -11150,7 +11150,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // gate still works with no internet — it is refreshed automatically
   // every time a Sheet-verified login succeeds.
   function checkAdminPin(v){
-    q("dpbAdminPinErr").textContent="";
+    q("dpbAdminPinErr").textContent="⏳ جاري التحقق…";
     const gs=window.DPB_GS;
     if(gs && typeof gs.verifyAdminPin==="function"){
       gs.verifyAdminPin(v).then(function(res){
@@ -11168,7 +11168,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         // Sheet unreachable (offline / no network) -> fall back to the
         // last Sheet-verified PIN cached on this device.
         const storedPin=localStorage.getItem("DPB_ADMIN_PIN_V1")||"";
-        if(storedPin&&v===storedPin){showAdminAfterPin()}else{adminPinReject();if(!storedPin)q("dpbAdminPinErr").textContent="مفيش اتصال، ورقم الأدمن لسه متفعّلش على الجهاز ده. اتصل بالنت مرة واحدة.";}
+        if(storedPin&&v===storedPin){showAdminAfterPin()}else{adminPinReject();if(!storedPin){let why="";try{const st=window.DPB_FS2&&window.DPB_FS2.status&&window.DPB_FS2.status();why=(st&&st.err)||"";}catch(_){}
+          q("dpbAdminPinErr").textContent="مفيش اتصال بـ Firebase، ورقم الأدمن لسه متفعّلش على الجهاز ده. اتصل بالنت مرة واحدة."+(why?" (السبب: "+why+")":"");}}
       });
     }else{
       const storedPin=localStorage.getItem("DPB_ADMIN_PIN_V1")||"";
