@@ -851,6 +851,7 @@
   }
   if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
   window.DPB_FS2.autoTick = bkAutoTick;
+  window.DPB_FS2.status = function () { return { on: on(), connected: !!curStore(), failed: !!failedAt, err: String(lastErr || '') }; };
   window.DPB_FS2.backupNow = bkBackupNow; window.DPB_FS2.saveExternal = bkSaveExternal;
 
   /* ---- Admin card (Admin > sync tab): on/off, live status, counts, import ---- */
