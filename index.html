@@ -11171,7 +11171,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         // Sheet unreachable (offline / no network) -> fall back to the
         // last Sheet-verified PIN cached on this device.
         const storedPin=localStorage.getItem("DPB_ADMIN_PIN_V1")||"";
-        if(storedPin&&v===storedPin){showAdminAfterPin()}else{adminPinReject();if(!storedPin){let why="";try{const st=window.DPB_FS2&&window.DPB_FS2.status&&window.DPB_FS2.status();why=(st&&st.err)||"";}catch(_){}
+        if(storedPin&&v===storedPin){showAdminAfterPin()}else{adminPinReject();if(!storedPin){let why="";try{const f=window.DPB_FS2;if(!f)why="ملف dpb-fs2.js مش محمّل";else if(typeof f.status!=="function")why="dpb-fs2.js نسخة قديمة (امسح بيانات الموقع)";else{const st=f.status();why="الطبقة "+(st.on?"شغالة":"مقفولة")+" | الاتصال: "+(st.adapter?"تمام":(st.stage||"لسه ما بدأش"))+(st.err?" | "+st.err:"");}}catch(e){why="خطأ: "+(e&&e.message||e);}
           q("dpbAdminPinErr").textContent="مفيش اتصال بـ Firebase، ورقم الأدمن لسه متفعّلش على الجهاز ده. اتصل بالنت مرة واحدة."+(why?" (السبب: "+why+")":"");}}
       });
     }else{
