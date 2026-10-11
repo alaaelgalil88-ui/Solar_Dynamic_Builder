@@ -49,7 +49,7 @@
     var conf; try { conf = JSON.parse(ls(LS.cfg, 'null')); } catch (e) { conf = null; }
     if (emu()) conf = { apiKey: 'demo', projectId: 'demo-no-project', appId: 'demo' };   // emulator needs no real config
     if (!conf || !conf.projectId) return Promise.reject(new Error('مفيش Firebase config'));
-    return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
+    adStage = 'تحميل مكتبة Firebase'; return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
       var appM = m[0], fs = m[1], authM = m[2], db, app;
       if (emu()) {
         // own named app + own Firestore instance: dpb-fs.js already calls getFirestore() on the DEFAULT app (real config), and two layers
@@ -69,7 +69,7 @@
         try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); } catch (e) { db = fs.getFirestore(app); }
       }
       var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
-      var ready = emu() ? Promise.resolve() : (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
+      adStage = 'تسجيل الدخول لـ Firebase'; var ready = emu() ? Promise.resolve() : (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
@@ -123,7 +123,7 @@
     if (!clockT) clockT = setInterval(function () { if (!document.hidden) syncClock(a); }, 30 * 60 * 1000);
   }
   var store = null, creating = null, failedAt = 0, lastErr = '', version = 0, notifyT = null, pullT = null, storePid = '', adapterP = null;
-  var adErr = '', adOk = false;   // state of the ONE shared connection (login / users / clock), so the login screen can say WHY it cannot connect
+  var adErr = '', adOk = false, adStage = '';   // state of the ONE shared connection (login / users / clock), so the login screen can say WHY it cannot connect
   // the id of the project that is open right now (empty until the project manager has opened one)
   function pidS() { return String(pid() || '').replace(/[^A-Za-z0-9_\-]/g, '_'); }
   // ONE connection for the whole app (login, users list, clock) - not tied to a project
@@ -314,7 +314,7 @@
   // waits on a script link that may be dead. Never hangs: 25 s at most (a first start on a weak network has to download the Firebase SDK).
   function usersHandle(body, input, init) {
     var tm, to = new Promise(function (_, rej) { tm = setTimeout(function () { rej(new Error('انتهت مهلة الاتصال بـ Firebase (25 ثانية)')); }, 25000); });
-    return Promise.race([getAdapter().then(function (a) { return usersOp(a, body); }), to]).then(function (r) {
+    return Promise.race([getAdapter().then(function (a) { adStage = 'قراءة الحسابات'; return usersOp(a, body); }), to]).then(function (r) {
       clearTimeout(tm);
       return r ? jsonRes(r) : prevFetch(input, init);
     }, function (e) {
@@ -863,7 +863,7 @@
   }
   if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
   window.DPB_FS2.autoTick = bkAutoTick;
-  window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), adapter: adOk, failed: !!failedAt || (!!adErr && !adOk), err: String(lastErr || adErr || '') }; };
+  window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), adapter: adOk, stage: adOk ? '' : adStage, failed: !!failedAt || (!!adErr && !adOk), err: String(lastErr || adErr || '') }; };
   // warm the shared connection in the background as soon as the app opens (and retry while it is down), so by the time someone types the Admin /
   // Supervisor PIN the Firebase SDK is already loaded and signed in
   setTimeout(function () { try { if (on() && !adOk) getAdapter().catch(function () {}); } catch (e) {} }, 300);

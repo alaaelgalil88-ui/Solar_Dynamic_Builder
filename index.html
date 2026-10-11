@@ -11153,7 +11153,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     q("dpbAdminPinErr").textContent="⏳ جاري التحقق…";
     const gs=window.DPB_GS;
     if(gs && typeof gs.verifyAdminPin==="function"){
+      const waitTmr=setInterval(function(){try{const st=window.DPB_FS2&&window.DPB_FS2.status&&window.DPB_FS2.status();const el=q("dpbAdminPinErr");
+        if(st&&el&&/جاري التحقق/.test(el.textContent))el.textContent="⏳ جاري التحقق… ("+(st.stage||"بيتصل")+")"+(st.err?" — "+st.err:"");}catch(_){}},700);
       gs.verifyAdminPin(v).then(function(res){
+        clearInterval(waitTmr);
         if(res && res.reachable){
           // Sheet reached: it decides, full stop (right or wrong).
           if(res.ok){
