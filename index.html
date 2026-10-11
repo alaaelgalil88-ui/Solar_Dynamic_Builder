@@ -11149,7 +11149,30 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // (DPB_ADMIN_PIN_V1) is kept only as an offline fallback so the Admin
   // gate still works with no internet — it is refreshed automatically
   // every time a Sheet-verified login succeeds.
+  let adminSetupFirst=null;
+  function adminPinClear(msg){
+    q("dpbAdminPinInput").value="";
+    q("dpbAdminPinDots").querySelectorAll("i").forEach(d=>d.classList.remove("filled"));
+    q("dpbAdminPinErr").textContent=msg||"";
+  }
+  // الدخول كله على Firebase. أول مرة (مفيش حساب أدمن على Firebase): الكود الأول بيتكتب، والتاني للتأكيد، وبعدها بيتحفظ كحساب الأدمن (مشفّر).
+  // الكود المحفوظ على الجهاز بيستخدم بس لو مفيش اتصال.
+  // الدخول كله على Firebase. أول مرة (مفيش حساب أدمن على Firebase): الكود الأول بيتكتب، والتاني للتأكيد، وبعدها بيتحفظ كحساب الأدمن (مشفّر).
+  // الكود المحفوظ على الجهاز بيستخدم بس لو مفيش اتصال.
   function checkAdminPin(v){
+    if(adminSetupFirst){
+      const s=adminSetupFirst; adminSetupFirst=null;
+      if(Date.now()-s.t<120000){
+        if(v!==s.pin){ adminPinClear("الكودين مش متطابقين. اكتب الكود الجديد من الأول."); return; }
+        q("dpbAdminPinErr").textContent="⏳ بيتحفظ…";
+        const f=window.DPB_FS2;
+        (f&&typeof f.adminSetup==="function"?f.adminSetup(v):Promise.reject(new Error("dpb-fs2.js نسخة قديمة"))).then(function(){
+          try{localStorage.setItem("DPB_ADMIN_PIN_V1",v);}catch(_){}
+          showAdminAfterPin();
+        },function(e){ adminPinClear("فشل حفظ الكود: "+(e&&e.message||e)); });
+        return;
+      }
+    }
     q("dpbAdminPinErr").textContent="⏳ جاري التحقق…";
     const gs=window.DPB_GS;
     if(gs && typeof gs.verifyAdminPin==="function"){
@@ -11158,21 +11181,25 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       gs.verifyAdminPin(v).then(function(res){
         clearInterval(waitTmr);
         if(res && res.reachable){
-          // Sheet reached: it decides, full stop (right or wrong).
           if(res.ok){
             try{localStorage.setItem("DPB_ADMIN_PIN_V1",v);}catch(_){}
             showAdminAfterPin();
           }else{
+            if(res.needSetup){ adminSetupFirst={pin:v,t:Date.now()}; adminPinClear("مفيش كود أدمن متسجّل لسه. الكود اللي كتبته هيبقى كود الأدمن — اكتبه تاني للتأكيد."); return; }
             adminPinReject();
             if(res.locked)q("dpbAdminPinErr").textContent="محاولات غلط كتير. الدخول متوقف مؤقتًا، جرّب بعد "+Math.max(1,Math.ceil((res.retryAfterSec||600)/60))+" دقيقة.";
           }
           return;
         }
-        // Sheet unreachable (offline / no network) -> fall back to the
-        // last Sheet-verified PIN cached on this device.
+        // مفيش اتصال بـ Firebase -> آخر كود اتحقق منه على الجهاز ده
         const storedPin=localStorage.getItem("DPB_ADMIN_PIN_V1")||"";
-        if(storedPin&&v===storedPin){showAdminAfterPin()}else{adminPinReject();if(!storedPin){let why="";try{const f=window.DPB_FS2;if(!f)why="ملف dpb-fs2.js مش محمّل";else if(typeof f.status!=="function")why="dpb-fs2.js نسخة قديمة (امسح بيانات الموقع)";else{const st=f.status();why="الطبقة "+(st.on?"شغالة":"مقفولة")+" | الاتصال: "+(st.adapter?"تمام":(st.stage||"لسه ما بدأش"))+(st.err?" | "+st.err:"");}}catch(e){why="خطأ: "+(e&&e.message||e);}
-          q("dpbAdminPinErr").textContent="مفيش اتصال بـ Firebase، ورقم الأدمن لسه متفعّلش على الجهاز ده. اتصل بالنت مرة واحدة."+(why?" (السبب: "+why+")":"");}}
+        if(storedPin&&v===storedPin){showAdminAfterPin()}else{
+          adminPinReject();
+          if(!storedPin){
+            let why="";try{const f=window.DPB_FS2;if(!f)why="ملف dpb-fs2.js مش محمّل";else if(typeof f.status!=="function")why="dpb-fs2.js نسخة قديمة (امسح بيانات الموقع)";else{const st=f.status();why="الطبقة "+(st.on?"شغالة":"مقفولة")+" | الاتصال: "+(st.adapter?"تمام":(st.stage||"لسه ما بدأش"))+(st.err?" | "+st.err:"");}}catch(e){why="خطأ: "+(e&&e.message||e);}
+            q("dpbAdminPinErr").textContent="مفيش اتصال بـ Firebase ورقم الأدمن لسه متفعّلش على الجهاز ده. اتصل بالنت مرة واحدة. (السبب: "+why+")";
+          }
+        }
       });
     }else{
       const storedPin=localStorage.getItem("DPB_ADMIN_PIN_V1")||"";
@@ -11672,7 +11699,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         try{ if(localStorage.getItem("DPB_ADMIN_PIN_V1")===String(pin)){ localStorage.removeItem("DPB_ADMIN_PIN_V1"); } }catch(_){}
         if(dpbOfflineAuthOk("Admin",pin)) dpbOfflineAuthForget("Admin");
       }
-      return {reachable,ok,locked:!!(res&&res.locked),retryAfterSec:Number(res&&res.retryAfterSec)||0,account:ok?rowToAccount(res.user):null};
+      return {reachable,ok,needSetup:!!(res&&res.reason==="noadmin"),locked:!!(res&&res.locked),retryAfterSec:Number(res&&res.retryAfterSec)||0,account:ok?rowToAccount(res.user):null};
     });
   }
 

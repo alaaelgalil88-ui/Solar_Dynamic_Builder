@@ -280,14 +280,14 @@
   // resolves null when the accounts were not moved to Firestore yet (the caller then sends the request to Apps Script)
   function usersOp(a, body) {
     return usersLoad(a).then(function (list) {
-      if (!list) return null;
+      if (!list) list = [];   // no accounts doc yet = an empty list (nothing falls back to Apps Script any more); the first saveUser / adminSetup creates it
       var find = function (n) { n = String(n || '').trim().toLowerCase(); for (var i = 0; i < list.length; i++) if (uName(list[i]).toLowerCase() === n) return i; return -1; };
       switch (body.action) {
         case 'login':
-          var i = find(body.username); if (i < 0) return { ok: false, error: 'wrong' };
+          var i = find(body.username); if (i < 0) return { ok: false, reason: (String(body.username || '').trim().toLowerCase() === 'admin') ? 'noadmin' : 'wrong' };   // no 'error' key on purpose: a wrong PIN is an answer, not a network failure
           var u = list[i];
           return pinHash(uName(u), body.password).then(function (h) {
-            if (!u.passHash || u.passHash !== h || !isActive(u)) return { ok: false, error: 'wrong' };
+            if (!u.passHash || u.passHash !== h || !isActive(u)) return { ok: false, reason: 'wrong' };
             return { ok: true, user: pubUser(u) };
           });
         case 'getUsers': return { ok: true, users: list.map(pubUser), pinsHidden: true };
@@ -342,6 +342,18 @@
           return (pw != null && String(pw).trim() !== '' ? pinHash(uName(c), pw) : Promise.resolve('')).then(function (h) { c.passHash = h; return c; });
         })).then(function (list) { return getAdapter().then(function (a) { return usersSave(a, list); }).then(function () { return { ok: true, count: list.length }; }); });
       });
+  }
+  // first-time setup: when Firestore has no Admin account yet, the first device creates it (4-digit code, stored as a hash). Refuses if an Admin already exists.
+  function adminSetup(pin) {
+    pin = String(pin == null ? '' : pin).trim();
+    if (!/^\d{4}$/.test(pin)) return Promise.reject(new Error('الكود لازم 4 أرقام'));
+    return getAdapter().then(function (a) {
+      return usersLoad(a).then(function (list) {
+        list = list || [];
+        for (var i = 0; i < list.length; i++) if (uName(list[i]).toLowerCase() === 'admin') return Promise.reject(new Error('كود الأدمن موجود فعلًا — ادخل بيه'));
+        return pinHash('Admin', pin).then(function (h) { list.push({ username: 'Admin', isAdmin: true, active: true, passHash: h }); return usersSave(a, list); });
+      });
+    });
   }
   function usersCount() { return getAdapter().then(function (a) { return usersLoad(a); }).then(function (l) { return l ? l.length : 0; }); }
   // connection check for the admin card: forget a failed/old connection and connect again, return how long it took
@@ -574,7 +586,7 @@
     });
     return m;
   }
-  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, usersCount: usersCount, testConnection: testConn, projectsGet: projectsGet, projectsUpdate: projectsUpdate };
+  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, adminSetup: adminSetup, usersCount: usersCount, testConnection: testConn, projectsGet: projectsGet, projectsUpdate: projectsUpdate };
 
   /* ---- Import: make the new layer match what the layer underneath (the Google Sheet side) shows right now ---- */
   function readGrid(name) {
