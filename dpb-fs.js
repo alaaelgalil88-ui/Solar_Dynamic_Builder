@@ -112,8 +112,7 @@
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsSave">حفظ الإعدادات</button>' +
       '<button type="button" class="dpbAdminBtn" id="dpbFsTest">اختبار الاتصال</button>' +
-      '<button type="button" class="dpbAdminBtn" id="dpbFsUsers">👤 نقل المستخدمين لـ Firestore</button></div>' +
-      '<div class="hint" style="margin-top:6px">نقل المستخدمين: بيقرا الحسابات من الشيت مرة واحدة (محتاج PIN الأدمن محفوظ على الجهاز، سجّل دخول الأدمن الأول)، والباسوردات بتتخزّن كبصمة بس. بعدها الدخول وإدارة المستخدمين بيتمّوا من Firestore. لو Firestore مش متاح بيرجع للشيت تلقائي.</div>' +
+      '</div>' +
       '<div class="hint" id="dpbFsStatus" style="margin-top:8px;white-space:pre-line"></div>' +
       '<div class="hint" id="dpbFsMsg" style="margin-top:8px;white-space:pre-line"></div>';
     host.appendChild(c);
@@ -143,13 +142,6 @@
       F.testConnection().then(function (r) {
         msg('✅ الاتصال شغال (' + r.ms + ' ms) على المشروع: ' + r.ns + ' — الدخول: ' + (r.auth === 'email' ? 'Email/Password 🔒' : r.auth === 'emulator' ? 'Emulator محلي' : 'مجهول (القواعد هترفض)'));
       }, function (e) { msg('❌ فشل: ' + (e && e.message || e)); });
-    };
-    $('dpbFsUsers').onclick = function () {
-      if (!save()) return;
-      var F = window.DPB_FS2; status(); if (!F || !F.seedUsers) { msg(layerMissing()); return; }
-      if (!F.on()) { msg('❌ شغّل الطبقة الجديدة الأول (كارت 🧩 تحت).'); return; }
-      msg('جاري نقل المستخدمين...');
-      F.seedUsers().then(function (r) { msg('✅ اتنقل ' + r.count + ' مستخدم. الباسوردات متخزنة كبصمة بس، والدخول بقى من Firestore.'); }, function (e) { msg('❌ ' + (e && e.message || e)); });
     };
   }
   function boot() { mountCard(); try { new MutationObserver(mountCard).observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {} }

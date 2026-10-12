@@ -20,7 +20,8 @@
   // A device that was never switched by hand (no saved mode) follows the shipped dpb-config.js: when that file carries a Firebase project the
   // layer is ON, so a new phone / new browser works without anyone opening the admin card first. An explicit choice saved on the device
   // (the admin card toggle, ?fs2=off) always wins.
-  function on() { var v = ls(LS.mode, null); return v === 'on' || emu() || (v === null && !!(window.DPB_FIREBASE_CONFIG && window.DPB_FIREBASE_CONFIG.projectId)); }
+  // Apps Script اتلغى: طبقة Firestore هي الطبقة الوحيدة، فمفيش حاجة اسمها "مقفولة" (ولا مفتاح تشغيل/إيقاف).
+  function on() { return true; }
   function procs() { return ls(LS.procs, '').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
   function mine(name) { var s = CORE.slug(name); return procs().some(function (p) { return CORE.slug(p) === s; }); }
   // a record belongs to this layer only if its process is a map process AND it points at a map cell; anything else (e.g. a tracker-level entry) goes down untouched
@@ -49,7 +50,7 @@
     var conf; try { conf = JSON.parse(ls(LS.cfg, 'null')); } catch (e) { conf = null; }
     if (emu()) conf = { apiKey: 'demo', projectId: 'demo-no-project', appId: 'demo' };   // emulator needs no real config
     if (!conf || !conf.projectId) return Promise.reject(new Error('مفيش Firebase config'));
-    adStage = 'تحميل مكتبة Firebase'; return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
+    return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
       var appM = m[0], fs = m[1], authM = m[2], db, app;
       if (emu()) {
         // own named app + own Firestore instance: dpb-fs.js already calls getFirestore() on the DEFAULT app (real config), and two layers
@@ -69,7 +70,7 @@
         try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); } catch (e) { db = fs.getFirestore(app); }
       }
       var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
-      adStage = 'تسجيل الدخول لـ Firebase'; var ready = emu() ? Promise.resolve() : (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
+      var ready = emu() ? Promise.resolve() : (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
@@ -123,13 +124,12 @@
     if (!clockT) clockT = setInterval(function () { if (!document.hidden) syncClock(a); }, 30 * 60 * 1000);
   }
   var store = null, creating = null, failedAt = 0, lastErr = '', version = 0, notifyT = null, pullT = null, storePid = '', adapterP = null;
-  var adErr = '', adOk = false, adStage = '';   // state of the ONE shared connection (login / users / clock), so the login screen can say WHY it cannot connect
   // the id of the project that is open right now (empty until the project manager has opened one)
   function pidS() { return String(pid() || '').replace(/[^A-Za-z0-9_\-]/g, '_'); }
   // ONE connection for the whole app (login, users list, clock) - not tied to a project
   function getAdapter() {
     if (window.__DPB_FS2_ADAPTER) return Promise.resolve(window.__DPB_FS2_ADAPTER);
-    if (!adapterP) adapterP = makeAdapter().then(function (a) { adOk = true; adErr = ''; return a; }, function (e) { adapterP = null; adOk = false; adErr = permHint(e); throw e; });
+    if (!adapterP) adapterP = makeAdapter().catch(function (e) { adapterP = null; throw e; });
     return adapterP;
   }
   // the cell store belongs to ONE project; when another project is opened the old listener is stopped and a new one is started
@@ -280,14 +280,14 @@
   // resolves null when the accounts were not moved to Firestore yet (the caller then sends the request to Apps Script)
   function usersOp(a, body) {
     return usersLoad(a).then(function (list) {
-      if (!list) list = [];   // no accounts doc yet = an empty list (nothing falls back to Apps Script any more); the first saveUser / adminSetup creates it
+      if (!list) return null;
       var find = function (n) { n = String(n || '').trim().toLowerCase(); for (var i = 0; i < list.length; i++) if (uName(list[i]).toLowerCase() === n) return i; return -1; };
       switch (body.action) {
         case 'login':
-          var i = find(body.username); if (i < 0) return { ok: false, reason: (String(body.username || '').trim().toLowerCase() === 'admin') ? 'noadmin' : 'wrong' };   // no 'error' key on purpose: a wrong PIN is an answer, not a network failure
+          var i = find(body.username); if (i < 0) return { ok: false, error: 'wrong' };
           var u = list[i];
           return pinHash(uName(u), body.password).then(function (h) {
-            if (!u.passHash || u.passHash !== h || !isActive(u)) return { ok: false, reason: 'wrong' };
+            if (!u.passHash || u.passHash !== h || !isActive(u)) return { ok: false, error: 'wrong' };
             return { ok: true, user: pubUser(u) };
           });
         case 'getUsers': return { ok: true, users: list.map(pubUser), pinsHidden: true };
@@ -309,19 +309,8 @@
       return null;
     });
   }
-  // Login / accounts go to Firestore ONLY. The old Apps Script is asked in exactly one case: the accounts were never moved (the users doc does not exist yet).
-  // If Firestore cannot be reached the request FAILS like a network error (the app then says "no connection" and uses its cached PIN), it no longer
-  // waits on a script link that may be dead. Never hangs: 25 s at most (a first start on a weak network has to download the Firebase SDK).
   function usersHandle(body, input, init) {
-    var tm, to = new Promise(function (_, rej) { tm = setTimeout(function () { rej(new Error('انتهت مهلة الاتصال بـ Firebase (25 ثانية)')); }, 25000); });
-    return Promise.race([getAdapter().then(function (a) { adStage = 'قراءة الحسابات'; return usersOp(a, body); }), to]).then(function (r) {
-      clearTimeout(tm);
-      return r ? jsonRes(r) : prevFetch(input, init);
-    }, function (e) {
-      clearTimeout(tm);
-      if (!adErr) adErr = permHint(e);
-      return Promise.reject(new TypeError('Firebase: ' + permHint(e)));
-    });
+    return getAdapter().then(function (a) { return usersOp(a, body); }).then(function (r) { return r ? jsonRes(r) : prevFetch(input, init); }, function () { return prevFetch(input, init); });
   }
   var USER_ACTIONS = { login: 1, getUsers: 1, saveUser: 1, deleteUser: 1, renewToken: 1 };
   // one-time: copy the accounts from the Sheet's Users tab into Firestore (hashes only). Asks the script through the layer UNDER this one on purpose.
@@ -342,18 +331,6 @@
           return (pw != null && String(pw).trim() !== '' ? pinHash(uName(c), pw) : Promise.resolve('')).then(function (h) { c.passHash = h; return c; });
         })).then(function (list) { return getAdapter().then(function (a) { return usersSave(a, list); }).then(function () { return { ok: true, count: list.length }; }); });
       });
-  }
-  // first-time setup: when Firestore has no Admin account yet, the first device creates it (4-digit code, stored as a hash). Refuses if an Admin already exists.
-  function adminSetup(pin) {
-    pin = String(pin == null ? '' : pin).trim();
-    if (!/^\d{4}$/.test(pin)) return Promise.reject(new Error('الكود لازم 4 أرقام'));
-    return getAdapter().then(function (a) {
-      return usersLoad(a).then(function (list) {
-        list = list || [];
-        for (var i = 0; i < list.length; i++) if (uName(list[i]).toLowerCase() === 'admin') return Promise.reject(new Error('كود الأدمن موجود فعلًا — ادخل بيه'));
-        return pinHash('Admin', pin).then(function (h) { list.push({ username: 'Admin', isAdmin: true, active: true, passHash: h }); return usersSave(a, list); });
-      });
-    });
   }
   function usersCount() { return getAdapter().then(function (a) { return usersLoad(a); }).then(function (l) { return l ? l.length : 0; }); }
   // connection check for the admin card: forget a failed/old connection and connect again, return how long it took
@@ -511,7 +488,8 @@
       if (!on()) return prevFetch(input, init);
       var base = window.DPB_getScriptUrl && window.DPB_getScriptUrl();
       var url = typeof input === 'string' ? input : (input && input.url) || '';
-      if (!base || url.indexOf(base) !== 0) return prevFetch(input, init);
+      var firebaseRoute = url.indexOf('https://dpb-firebase.local/') === 0;
+      if (!firebaseRoute && (!base || url.indexOf(base) !== 0)) return prevFetch(input, init);
       var method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase(), q = {}, qi = url.indexOf('?');
       if (qi >= 0) url.slice(qi + 1).split('&').forEach(function (kv) { var p = kv.split('='); q[decodeURIComponent(p[0])] = decodeURIComponent((p[1] || '').replace(/\+/g, ' ')); });
       if (method === 'POST') {
@@ -586,7 +564,7 @@
     });
     return m;
   }
-  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, adminSetup: adminSetup, usersCount: usersCount, testConnection: testConn, projectsGet: projectsGet, projectsUpdate: projectsUpdate };
+  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, usersCount: usersCount, testConnection: testConn, projectsGet: projectsGet, projectsUpdate: projectsUpdate };
 
   /* ---- Import: make the new layer match what the layer underneath (the Google Sheet side) shows right now ---- */
   function readGrid(name) {
@@ -875,11 +853,7 @@
   }
   if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
   window.DPB_FS2.autoTick = bkAutoTick;
-  window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), adapter: adOk, stage: adOk ? '' : adStage, failed: !!failedAt || (!!adErr && !adOk), err: String(lastErr || adErr || '') }; };
-  // warm the shared connection in the background as soon as the app opens (and retry while it is down), so by the time someone types the Admin /
-  // Supervisor PIN the Firebase SDK is already loaded and signed in
-  setTimeout(function () { try { if (on() && !adOk) getAdapter().catch(function () {}); } catch (e) {} }, 300);
-  if (typeof setInterval === 'function') setInterval(function () { try { if (on() && !adOk && !document.hidden) getAdapter().catch(function () {}); } catch (e) {} }, 20000);
+  window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), failed: !!failedAt, err: String(lastErr || '') }; };
   window.DPB_FS2.backupNow = bkBackupNow; window.DPB_FS2.saveExternal = bkSaveExternal;
 
   /* ---- Admin card (Admin > sync tab): on/off, live status, counts, import ---- */
@@ -902,7 +876,7 @@
       '<input type="url" id="dpbFs2Url" autocomplete="off" placeholder="رابط سكربت النسخ الاحتياطي (ينتهي بـ /exec)" style="width:100%;box-sizing:border-box;margin-top:6px;padding:9px 10px;border-radius:8px;border:1px solid #567;background:#0d1b2e;color:#fff;direction:ltr;text-align:left">' +
       '<input type="email" id="dpbFs2Email" inputmode="email" autocomplete="off" placeholder="إيميل Google Drive اللي تترفع عليه النسخة" style="width:100%;box-sizing:border-box;margin-top:6px;padding:9px 10px;border-radius:8px;border:1px solid #567;background:#0d1b2e;color:#fff;direction:ltr;text-align:left">' +
       '<details style="margin-top:10px"><summary class="hint" style="cursor:pointer">⚙️ أدوات متقدمة (نادرًا ما تحتاجها)</summary>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button type="button" class="dpbAdminBtn" id="dpbFs2Toggle"></button><button type="button" class="dpbAdminBtn" id="dpbFs2Import">📥 مطابقة الخرائط على الشيت</button><button type="button" class="dpbAdminBtn" id="dpbFs2ImportXl">📥 استيراد قيم الإكسل المرفوع (إضافة بس)</button><button type="button" class="dpbAdminBtn" id="dpbFs2CheckXl">🔎 فحص قيم الإكسل</button></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button type="button" class="dpbAdminBtn" id="dpbFs2ImportXl">📥 استيراد قيم الإكسل المرفوع (إضافة بس)</button><button type="button" class="dpbAdminBtn" id="dpbFs2CheckXl">🔎 فحص قيم الإكسل</button></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center"><select id="dpbFs2RestoreSrc" class="dpbAdminBtn"><option value="current">استعادة من: الحالية</option><option value="previous">استعادة من: السابقة</option><option value="file">استعادة من: ملف</option></select><button type="button" class="dpbAdminBtn" id="dpbFs2Restore">♻️ استعادة</button><input type="file" id="dpbFs2RestoreFile" accept=".json,application/json" style="display:none"></div>' +
       '</details>' +
       '<div class="hint" id="dpbFs2DriveInfo" style="margin-top:8px;line-height:1.9"></div>' +
@@ -911,11 +885,7 @@
       '<div class="hint" id="dpbFs2Msg" style="margin-top:6px"></div>';
     var old = document.getElementById('dpbFsCard');
     if (old && old.parentNode === host) host.insertBefore(c, old.nextSibling); else host.appendChild(c);
-    function paint() { document.getElementById('dpbFs2Toggle').textContent = on() ? '⏹ إيقاف الطبقة الجديدة' : '▶ تشغيل الطبقة الجديدة'; paintState(); if (on() && !store) getStore().catch(function () {}); }
-    document.getElementById('dpbFs2Toggle').addEventListener('click', function () {
-      window.DPB_FS2.setMode(!on()); paint();
-      if (typeof alert === 'function') alert(on() ? 'اتشغّلت. اقفل التطبيق وافتحه تاني.' : 'اتقفلت. اقفل التطبيق وافتحه تاني.');
-    });
+    function paint() { paintState(); if (on() && !store) getStore().catch(function () {}); }
     document.getElementById('dpbFs2CheckXl').addEventListener('click', function () {
       var msg = document.getElementById('dpbFs2Msg');
       var src = typeof window.__dpbExcelUnitCells === 'function' ? window.__dpbExcelUnitCells() : [];
@@ -937,17 +907,6 @@
         if (!confirm('استيراد قيم الإكسل المرفوع (بيضيف بس، مبيغيّرش ولا بيشيل أي حاجة موجودة):\n\n' + line + '\n\nنكمّل؟')) { msg.textContent = 'اتلغت.'; return; }
         msg.textContent = 'بكتب…';
         return importExcel(true).then(function () { msg.textContent = 'تم استيراد قيم الإكسل ✅'; paintState(); try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} });
-      }).catch(function (e) { msg.textContent = 'فشل: ' + permHint(e); });
-    });
-    document.getElementById('dpbFs2Import').addEventListener('click', function () {
-      var msg = document.getElementById('dpbFs2Msg');
-      if (!on()) { msg.textContent = 'شغّل الطبقة الجديدة الأول.'; return; }
-      msg.textContent = 'بقرا الشيت…';
-      importAll(false).then(function (r) {
-        var line = r.map(function (x) { return x.name + ': الشيت ' + x.sheet + ' — هيتضاف ' + x.add + '، هيتعدّل ' + x.change + '، هيتشال ' + x.remove; }).join('\n');
-        if (!confirm('مطابقة الطبقة الجديدة على الشيت بالظبط (اللي مش في الشيت بيتشال):\n\n' + line + '\n\nنكمّل؟')) { msg.textContent = 'اتلغت.'; return; }
-        msg.textContent = 'بكتب…';
-        return importAll(true).then(function () { msg.textContent = 'تمت المطابقة ✅'; paintState(); try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} });
       }).catch(function (e) { msg.textContent = 'فشل: ' + permHint(e); });
     });
     var $ = function (i) { return document.getElementById(i); }, say = function (t) { $('dpbFs2Msg').textContent = t; };
