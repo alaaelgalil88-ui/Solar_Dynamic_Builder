@@ -5496,13 +5496,44 @@ function ensureActionsRow(){
   }
   return row;
 }
-function dpbAllProductionRecords(){
+// v94: قبل كده كل نداء كان بيعمل JSON.parse لـ DPB_SHARED_PRODUCTION_V2 (3-4 ميجا) — وكارت كل تراكر في شاشة الإنتاج كان بينادي عليها، فالفتح/الـBuild كانوا بياخدوا دقايق على الموبايل.
+// دلوقتي بتتقري مرة واحدة وتتحفظ، وبتتجدد أول ما أي كود يكتب في المفتاح ده (setItem/removeItem/clear أو تغيير من تاب تاني) أو كل 5 ثواني احتياطي.
+const __dpbAPR={ver:0,okVer:-1,pid:null,at:0,arr:null,hook:false,idxFor:null,idxFS:null,idx:null};
+function __dpbAPRHook(){
+  if(__dpbAPR.hook)return; __dpbAPR.hook=true;
+  try{
+    const K='DPB_SHARED_PRODUCTION_V2', P=Storage.prototype, si=P.setItem, ri=P.removeItem, cl=P.clear;
+    P.setItem=function(k,v){ if(k===K)__dpbAPR.ver++; return si.apply(this,arguments); };
+    P.removeItem=function(k){ if(k===K)__dpbAPR.ver++; return ri.apply(this,arguments); };
+    P.clear=function(){ __dpbAPR.ver++; return cl.apply(this,arguments); };
+    window.addEventListener('storage',e=>{ if(!e||e.key===null||e.key===K)__dpbAPR.ver++; });
+  }catch(_){}
+}
+function __dpbAPRShared(){
+  __dpbAPRHook();
+  const pid=window.__dpbActiveProjectId||'', now=Date.now(), C=__dpbAPR;
+  if(C.arr&&C.okVer===C.ver&&C.pid===pid&&now-C.at<5000)return C.arr;
+  let out=[];
   try{
     const raw=JSON.parse(localStorage.getItem('DPB_SHARED_PRODUCTION_V2')||'{}');
     const arr=Array.isArray(raw.records)?raw.records:[];
-    const pid=window.__dpbActiveProjectId||'';
-    return pid?arr.filter(r=>String(r.projectId||'')===String(pid)):arr;
-  }catch(_){return []}
+    out=pid?arr.filter(r=>String(r.projectId||'')===String(pid)):arr;
+  }catch(_){out=[];}
+  C.arr=out; C.okVer=C.ver; C.pid=pid; C.at=now; C.idxFor=null;
+  return out;
+}
+function dpbAllProductionRecords(){ return __dpbAPRShared().slice(); }
+// فهرس "سجلات المرحلة الأولى" حسب اسم التراكر — بيتبني مرة لكل نسخة من السجلات (نفس شرط الفلتر القديم بالظبط)
+function __dpbFirstStageByTracker(){
+  const recs=__dpbAPRShared(); let fs=''; try{fs=String(window.__dpbFirstStageName&&window.__dpbFirstStageName()||'');}catch(_){}
+  const C=__dpbAPR;
+  if(C.idx&&C.idxFor===recs&&C.idxFS===fs)return C.idx;
+  const m=new Map();
+  for(const rec of recs){
+    if(!(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(rec.process)))continue;
+    const k=String(rec.tracker||''); let a=m.get(k); if(!a){a=[];m.set(k,a);} a.push(rec);
+  }
+  C.idx=m; C.idxFor=recs; C.idxFS=fs; return m;
 }
 function isRammingSpec(spec){return !!(spec&&spec.op&&isFirstStageName(spec.op.name));}
 function markMasterData(){
@@ -5919,7 +5950,7 @@ function printData(){
   let i=0;rows.forEach(r=>r.trackers.forEach(t=>{t.index=i++;}));
   return{rows,top:s.model.top,bot:s.model.bot,name:s.spec.name,sig:s.spec.id+'|'+rows.map(r=>r.label+':'+r.trackers.length).join(',')};
 }
-window.dpbAllProductionRecords=dpbAllProductionRecords; // the Activity Report (outer script) reads the operator/company from the same records
+window.dpbAllProductionRecords=dpbAllProductionRecords; window.__dpbFirstStageByTracker=__dpbFirstStageByTracker; // the Activity Report (outer script) reads the operator/company from the same records
 /* Display-only status maps (reports screen): one small canvas per process map. Cells that match the chosen status stay at full
    brightness, everything else is dimmed (same idea as the Not Started map). Nothing here can edit the working map or any data. */
 function drawStatusMaps(box,f,maxW,pid){
@@ -9779,7 +9810,7 @@ function linkDynamicExecutionToPlan(){
 function dpbOperatorBadge(procName,label,row){
   if(!(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(procName))||typeof dpbAllProductionRecords!=='function')return '';
   try{
-    const recs=dpbAllProductionRecords().filter(rec=>window.__dpbIsFirstStage(rec.process)&&String(rec.tracker||'')===String(label||'')&&(!rec.row||!row||String(rec.row)===String(row)));
+    const recs=(window.__dpbFirstStageByTracker().get(String(label||''))||[]).filter(rec=>(!rec.row||!row||String(rec.row)===String(row)));
     const ops=[...new Set(recs.map(rec=>rec.operator||'By Admin'))];
     const cos=[...new Set(recs.map(rec=>rec.company).filter(Boolean))];
     if(!ops.length)return '';
@@ -11609,7 +11640,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // FIX (الأمان): هوية الأدمن بتتبعت بس مع getUsers/saveUser/deleteUser (عشان يشوف الباسوردات ويعدّل الحسابات)
   // ومش بتتبعت أبدًا مع أي طلب إنتاج أو خريطة.
   const DPB_ADMIN_ACTIONS={getUsers:1,saveUser:1,deleteUser:1};
-  const DPB_USER_ACTIONS={login:1,getUsers:1,saveUser:1,deleteUser:1,renewToken:1,saveBuildResult:1,getBuildResult:1,saveUnitMap:1,logHistory:1,logProductivity:1};
+  const DPB_USER_ACTIONS={login:1,getUsers:1,saveUser:1,deleteUser:1,renewToken:1};
+  // v94: أوامر الـBuild والخرايط بتتنفّذ برضه في طبقة Firestore (dpb-fs2.js → sheetlessAction). قبل كده كانت بتتقفل هنا بـ"apps-script-disabled" فنشر الخرايط للمشرفين كان بيفشل دايمًا.
+  const DPB_FS_ACTIONS={saveBuildResult:1,getBuildResult:1,saveUnitMap:1};
   function dpbAdminAuth(){
     try{
       // لو السيرفر رفض الهوية المخزّنة قبل كده، نبطّل نبعتها (كل محاولة غلط بتتحسب ضد حساب الأدمن) لحد ما يدخل الـ PIN تاني.
@@ -11690,7 +11723,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     let ctrl=null,timer=null;
     try{ if(typeof AbortController!=="undefined"){ ctrl=new AbortController(); timer=setTimeout(()=>ctrl.abort(),timeoutMs); } }catch(_){}
     // Apps Script اتلغى: الدخول والمستخدمين بيروحوا لطبقة Firestore (dpb-fs2.js) عن طريق العنوان الداخلي، وباقي الأوامر مقفولة.
-    const TARGET=GS_URL||(DPB_USER_ACTIONS[action]?"https://dpb-firebase.local/users":"");
+    const TARGET=GS_URL||((DPB_USER_ACTIONS[action]||DPB_FS_ACTIONS[action])?"https://dpb-firebase.local/users":"");
     if(!TARGET){ if(timer)clearTimeout(timer); return Promise.resolve({ok:false,__reachable:false,error:"apps-script-disabled"}); }
     if(!GS_URL&&timer){ clearTimeout(timer); timer=setTimeout(()=>ctrl&&ctrl.abort(),Math.max(timeoutMs,12000)); }
     const body=JSON.stringify(Object.assign({action:action},data||{}));
