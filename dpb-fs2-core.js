@@ -10,7 +10,15 @@
     var ns = o.ns || 'test', cache = {}, subs = [];
     // project scope: every row doc belongs to ONE project (id prefix + projectId field), the listener only sees that project's docs,
     // so two projects that use the same process names can never read or overwrite each other's cells
-    var byDoc = {};   // row-doc id -> cache keys that doc contributed (so a changed doc replaces only its own cells)
+    var base = {}, byDoc = {};   // base = executed cells of the published Excel, held in memory only (never written to Firestore cell by cell)
+    function get(k) { var d = cache[k]; return d !== undefined ? d : base[k]; }   // a stored cell/tombstone always wins over the Excel baseline
+    function keys() { var ks = Object.keys(cache); for (var k in base) if (!(k in cache)) ks.push(k); return ks; }
+    var BASE_T = '1970-01-01T00:00:00.000Z';
+    function setBase(list) {
+      var b = {}; (list || []).forEach(function (x) { if (!x || x.process == null || x.r1 == null || x.c1 == null || !(Number(x.code) > 0)) return; var k = id(x.process, x.r1, x.c1); b[k] = { id: 'sheet_' + k, process: x.process, sheet: x.process, r1: x.r1, c1: x.c1, r2: x.r2 == null ? x.r1 : x.r2, c2: x.c2 == null ? x.c1 : x.c2, code: Number(x.code), time: BASE_T, source: 'SheetImport' }; });
+      base = b; emit();
+    }
+   // row-doc id -> cache keys that doc contributed (so a changed doc replaces only its own cells)
     var P = o.pid ? String(o.pid).replace(/[^A-Za-z0-9_\-]/g, '_') : '', unsub = null, dead = false;
     // offset (ms) between this device's clock and the Firestore server clock; every stored time is device time + offset, so all devices agree
     function off() { try { var v = o.offset ? Number(o.offset()) : 0; return isFinite(v) ? v : 0; } catch (e) { return 0; } }
@@ -65,7 +73,7 @@
       }, P ? { where: ['projectId', '==', P] } : null);
     });
     function live(d) { return d && !d.del && d.process != null && d.r1 != null; }
-    function value(p, r, c) { var d = cache[id(p, r, c)]; return live(d) ? Number(d.code) || 0 : 0; }
+    function value(p, r, c) { var d = get(id(p, r, c)); return live(d) ? Number(d.code) || 0 : 0; }
     function epochMs() { var e = cache['__epoch__']; return e && e.time ? Date.parse(e.time) || 0 : 0; }
     // first device that opens the layer stamps the start time; older leftovers from the old system are ignored afterwards
     function ensureEpoch() {
@@ -77,8 +85,8 @@
       var st = norm(stages), me = stageOf(st, p); if (!me) return null;
       for (var i = st.length - 1; i >= 0; i--) {
         var l = st[i]; if (l.code <= me.code) continue;
-        var d = cache[id(l.name, r, c)];
-        if (live(d) && Number(d.code) >= l.code && !(skipIds && skipIds[d.id])) return { process: p, r1: r, c1: c, lockedBy: l.name, value: Number(d.code), id: (cache[id(p, r, c)] || {}).id, message: 'الخلية (صف ' + r + '، عمود ' + c + ') اتنفذت في ' + l.name + ' (قيمة ' + Number(d.code) + ') — احذفها من هناك الأول' };
+        var d = get(id(l.name, r, c));
+        if (live(d) && Number(d.code) >= l.code && !(skipIds && skipIds[d.id])) return { process: p, r1: r, c1: c, lockedBy: l.name, value: Number(d.code), id: (get(id(p, r, c)) || {}).id, message: 'الخلية (صف ' + r + '، عمود ' + c + ') اتنفذت في ' + l.name + ' (قيمة ' + Number(d.code) + ') — احذفها من هناك الأول' };
       }
       return null;
     }
@@ -94,7 +102,7 @@
       records.forEach(function (rec) {
         if (!rec || !rec.process || rec.r1 == null || rec.c1 == null) return;
         var code = Number(rec.code) || 0, me = stageOf(st, rec.process), key = id(rec.process, rec.r1, rec.c1);
-        var rawT = rec.time || rec.updatedAt, t = rawT ? String(rawT) : now, cur = pending[key] || cache[key];
+        var rawT = rec.time || rec.updatedAt, t = rawT ? String(rawT) : now, cur = pending[key] || get(key);
         var fresh = !rawT || Math.abs((Date.parse(t) || 0) - Date.now()) < 2 * 60 * 1000;   // judged on the device's own clock, as the app stamped it
         if (rawT && off() && Date.parse(t)) t = new Date(Date.parse(t) + off()).toISOString();   // then moved onto the server clock
         if (ep && rec.source !== 'SheetImport' && (Date.parse(t) || 0) < ep - EPOCH_MARGIN_MS) { ignored++; return; } // old-system leftover
@@ -116,7 +124,7 @@
         ops.push(cw(rec.process, rec.r1, rec.c1, d));
         if (me && code >= me.code && rec.source !== 'Cascade') st.forEach(function (e) {
           if (e.code >= me.code) return;
-          var k = id(e.name, rec.r1, rec.c1), c2 = pending[k] || cache[k];
+          var k = id(e.name, rec.r1, rec.c1), c2 = pending[k] || get(k);
           if (live(c2) && Number(c2.code) >= e.code) return;
           if (c2 && c2.del && String(c2.time) >= t) return;
           var c = Object.assign({}, rec, { id: k, process: e.name, code: e.code, source: 'Cascade', time: t });
@@ -132,8 +140,8 @@
     function removeIds(ids, stages) {
       var want = {}; ids.forEach(function (x) { want[String(x)] = true; });
       var st = norm(stages), ops = [], blocked = [], deleted = 0, gone = [], before = {};
-      Object.keys(cache).forEach(function (k) {
-        var d = cache[k]; if (isMeta(k) || !live(d) || !want[d.id] && !want[k]) return;
+      keys().forEach(function (k) {
+        var d = get(k); if (isMeta(k) || !live(d) || !want[d.id] && !want[k]) return;
         var lk = lockOf(st, d.process, d.r1, d.c1, want);
         if (lk) { lk.id = d.id; blocked.push(lk); return; }
         var tomb = { del: true, id: d.id, process: d.process, r1: d.r1, c1: d.c1, code: 0, time: nowIso() };
@@ -145,14 +153,14 @@
       return commit(ops, before).then(function () { return { ok: true, deleted: deleted, blocked: blocked }; });
     }
     function removeCells(p, cells, stages) {
-      var ids = []; cells.forEach(function (x) { var d = cache[id(p, x.r, x.c)]; if (live(d)) ids.push(d.id); });
+      var ids = []; cells.forEach(function (x) { var d = get(id(p, x.r, x.c)); if (live(d)) ids.push(d.id); });
       return removeIds(ids, stages);
     }
     // import: make process p match "cells" exactly ([{r,c,code,r2,c2}]); bypasses cascade and lock on purpose (the sheet is the truth)
     function importProcess(p, cells, dry) {
       var want = {}, ops = [], before = {}, add = 0, change = 0, remove = 0, now = nowIso();
       cells.forEach(function (x) {
-        var k = id(p, x.r, x.c); want[k] = true; var cur = cache[k];
+        var k = id(p, x.r, x.c); want[k] = true; var cur = get(k);
         if (live(cur) && Number(cur.code) === Number(x.code)) return;
         if (live(cur)) change++; else add++;
         if (dry) return;
@@ -160,8 +168,8 @@
         var d = { id: 'sheet_' + k, process: p, sheet: p, r1: x.r, c1: x.c, r2: x.r2 == null ? x.r : x.r2, c2: x.c2 == null ? x.c : x.c2, code: Number(x.code), time: now, source: 'SheetImport' };
         cache[k] = d; ops.push(cw(p, x.r, x.c, d));
       });
-      Object.keys(cache).forEach(function (k) {
-        var d = cache[k]; if (isMeta(k) || !live(d) || slug(d.process) !== slug(p) || want[k]) return;
+      keys().forEach(function (k) {
+        var d = get(k); if (isMeta(k) || !live(d) || slug(d.process) !== slug(p) || want[k]) return;
         remove++; if (dry) return;
         before[k] = d; var tomb = { del: true, id: d.id, process: d.process, r1: d.r1, c1: d.c1, code: 0, time: now };
         cache[k] = tomb; ops.push(cw(d.process, d.r1, d.c1, tomb));
@@ -171,10 +179,10 @@
       emit();
       return commit(ops, before).then(function () { return res; });
     }
-    function all() { return Object.keys(cache).filter(function (k) { return !isMeta(k); }).map(function (k) { return cache[k]; }).filter(live); }
+    function all() { return keys().filter(function (k) { return !isMeta(k); }).map(get).filter(live); }
     function counts() { var c = {}; all().forEach(function (d) { var k = d.process; c[k] = (c[k] || 0) + (Number(d.code) > 0 ? 1 : 0); }); return c; }
     function destroy() { dead = true; subs = []; try { if (typeof unsub === 'function') unsub(); } catch (e) {} }
-    return { destroy: destroy, pid: P, adapter: adapter, ready: ready, put: put, removeIds: removeIds, removeCells: removeCells, importProcess: importProcess, ensureEpoch: ensureEpoch, epoch: epochMs, counts: counts, value: value, lockOf: lockOf, all: all, onChange: function (f) { subs.push(f); }, id: id };
+    return { destroy: destroy, pid: P, adapter: adapter, ready: ready, put: put, removeIds: removeIds, removeCells: removeCells, importProcess: importProcess, ensureEpoch: ensureEpoch, epoch: epochMs, counts: counts, value: value, lockOf: lockOf, all: all, setBase: setBase, baseSize: function () { return Object.keys(base).length; }, onChange: function (f) { subs.push(f); }, id: id };
   }
   var api = { create: create, slug: slug, projectScoped: true };
   root.DPB_FS2_CORE = api; if (typeof module !== 'undefined') module.exports = api;

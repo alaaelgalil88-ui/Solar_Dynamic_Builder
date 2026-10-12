@@ -138,7 +138,7 @@
   function permHint(e) { var m = String(e && e.message || e || ''); return /permission|insufficient/i.test(m) ? m + ' — قواعد Firebase لازم تسمح بالمسار dpb2/**' : m; }
   // a full records pull (every cell of every process) is expensive on a phone: while changes keep arriving (an Excel upload = dozens of snapshots)
   // run at most ONE pull per 15 s, always with the latest state (the trailing pull still happens)
-  var lastPullAt = 0, PULL_GAP = 15000;
+  var lastPullAt = 0, PULL_GAP = 15000, lastPullSig = '';
   function schedPull(ms) {
     clearTimeout(pullT);
     var wait = Math.max(ms, lastPullAt + PULL_GAP - Date.now());
@@ -151,7 +151,7 @@
     creating = getAdapter().then(function (a) {
       var s = CORE.create(a, { ns: nsName(), pid: forPid, offset: clockOff });
       s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); schedPull(1500); });
-      return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); syncClock(a); return s; });
+      return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); syncClock(a); try { loadBase(s); } catch (e) {} return s; });
     }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); throw e; });
     return creating;
   }
@@ -550,6 +550,9 @@
           // (recordId duplicates id; source 'SheetImport' is only a note), so a full Excel baseline (~19,000 cells) still fits
           var mineRecs = function () { return s.all().map(function (d) { var o = stamp(Object.assign({}, d)); if (o.source === 'SheetImport') delete o.source; return o; }); };
           return restAll(s.adapter).then(function (rest) {
+            var sig = version + '|' + baseVer + '|' + pidS() + '|' + djb(rest.map(function (x) { return String(x.id) + String(x.time || ''); }).join(','));
+            if (sig === lastPullSig && ls('dpb_fs2_rest_adopted_' + nsName() + '_' + pidS(), '') === '1' && !window.__dpbStoreFull) return jsonRes({ ok: true, unchanged: true });
+            lastPullSig = sig;
             var have = {}; rest.forEach(function (x) { have[String(x.id)] = true; });
             var adopting = ls('dpb_fs2_rest_adopted_' + nsName() + '_' + pidS(), '') !== '1';
             var extra = adopting ? localInSync().filter(function (x) { return !have[String(x.id)]; }) : [];
@@ -622,6 +625,38 @@
     });
   }
   window.DPB_FS2.importExcel = importExcel;
+  /* Excel baseline WITHOUT writing every cell: the executed cells of the uploaded Excel are published as ONE compact document (kv 'basecells'),
+     every device reads it into memory (core.setBase) and only real changes made after that are stored as cell documents. Compact format per process:
+     c = [r, c, code, r2, c2, r, c, code, r2, c2, ...]. */
+  var baseVer = 0, baseLoadAt = 0;
+  function baseList(o) {
+    var list = []; ((o && o.procs) || []).forEach(function (p) { var a = p.c || []; for (var i = 0; i + 4 < a.length; i += 5) list.push({ process: p.name, r1: a[i], c1: a[i + 1], code: a[i + 2], r2: a[i + 3], c2: a[i + 4] }); });
+    return list;
+  }
+  function loadBase(s) {
+    baseLoadAt = Date.now();
+    return kvReadStr(s.adapter, 'basecells').then(function (str) {
+      var o = jparse(str, null); if (!o || !Array.isArray(o.procs)) return 0;
+      if (o.time && o.time === baseTime) return 0;           // already in memory
+      baseTime = o.time || ''; s.setBase(baseList(o)); baseVer++; return 1;
+    }).catch(function () { return 0; });
+  }
+  var baseTime = '';
+  function publishBaseline() {
+    var src = typeof window.__dpbExcelUnitCells === 'function' ? window.__dpbExcelUnitCells() : [];
+    if (!src.length) return Promise.reject(new Error('مفيش إكسل تنفيذ متطبّق على الجهاز ده'));
+    return getStore().then(function (s) {
+      var procs = src.map(function (x) { var a = []; x.cells.forEach(function (c) { a.push(c.r, c.c, c.code, c.r2 == null ? c.r : c.r2, c.c2 == null ? c.c : c.c2); }); return { name: x.name, c: a }; });
+      var o = { v: 1, time: new Date().toISOString(), procs: procs };
+      return kvWriteStr(s.adapter, 'basecells', JSON.stringify(o)).then(function () {
+        baseTime = o.time; s.setBase(baseList(o)); baseVer++;
+        return src.map(function (x) { return { name: x.name, units: x.units, excel: x.cells.length, existing: 0, add: x.cells.length, bad: x.bad.length }; });
+      });
+    });
+  }
+  window.DPB_FS2.publishBaseline = publishBaseline;
+  window.DPB_FS2.reloadBase = function () { if (Date.now() - baseLoadAt < 60000) return Promise.resolve(0); return getStore().then(loadBase); };
+  try { document.addEventListener('visibilitychange', function () { if (!document.hidden && curStore()) window.DPB_FS2.reloadBase(); }); } catch (e) {}
   window.DPB_FS2.backup = bkExport; window.DPB_FS2.restore = bkRestore;
 
   /* ---- Backup / restore: one JSON file with everything the layer keeps in Firestore (dpb2/{ns}/rows = map cells, dpb2/{ns}/kv = map catalog, map shapes, original Excel files).

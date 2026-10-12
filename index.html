@@ -4266,14 +4266,14 @@ async function autoBaseline(sig){
   try{
     const F=window.DPB_FS2;if(!F||typeof F.importExcel!=='function'||typeof F.status!=='function')return;
     const st=F.status();if(!(st&&st.on&&st.connected))return;
-    const k='DPB_BASELINE_SIG_'+(st.ns||'');
+    const k='DPB_BASEPUB_SIG_'+(st.ns||'');   // مفتاح جديد: النشر بقى مستند واحد مش كتابة كل خلية
     let last=null;try{last=localStorage.getItem(k);}catch(_){}
     if(last===sig)return;
-    const r=await F.importExcel(true);
+    const r=await (typeof F.publishBaseline==='function'?F.publishBaseline():F.importExcel(true));
     if(!Array.isArray(r)||!r.length)throw new Error('Excel baseline import returned no valid result; retry later');
     try{localStorage.setItem(k,sig);}catch(_){}
     const n=(r||[]).reduce((a,x)=>a+(Number(x.add)||0),0);
-    if(n&&typeof window.showToast==='function')window.showToast('✅ اتحمّلت '+n+' خلية منفّذة من الإكسل تلقائي');
+    if(n&&typeof window.showToast==='function')window.showToast('✅ اتنشرت '+n+' خلية منفّذة من الإكسل للمشرفين');
     try{if(typeof window.__dpbFetchLiveGrid==='function')window.__dpbFetchLiveGrid();}catch(_){}
   }catch(_){}
 }
@@ -5437,7 +5437,7 @@ function groupedProcessNames(){
     const sep=new Set();
     const addSep=rec=>{try{((rec&&rec.definition&&rec.definition.processes)||[]).forEach(p=>{if(p&&p.name)sep.add(String(p.name).trim().toLowerCase());});}catch(_){}};
     Object.keys(f.separate||{}).forEach(k=>addSep(f.separate[k]));addSep(f.manualTorque);
-    return (f.grouped.definition.processes||[]).map(p=>p&&p.name).filter(n=>n&&!/torque\s*tube/i.test(String(n))&&!sep.has(String(n).trim().toLowerCase()));
+    return (f.grouped.definition.processes||[]).map((p,k)=>[p,k]).sort((a,b)=>((Number(a[0]&&a[0].code)||0)-(Number(b[0]&&b[0].code)||0))||(a[1]-b[1])).map(a=>a[0]&&a[0].name).filter(n=>n&&!/torque\s*tube/i.test(String(n))&&!sep.has(String(n).trim().toLowerCase()));
   }catch(_){return[];}
 }
 window.DPB_groupedProcessNames=groupedProcessNames;
@@ -7620,12 +7620,17 @@ function getAppliedProcessEntries(){
     if(sourceId==='grouped'&&procs.length>1&&tabs.length===procs.length&&byTab.every(x=>!x)){
       procs.map((p,i)=>i).sort((x,y)=>(Number(procs[x].code)||0)-(Number(procs[y].code)||0)).forEach((pi,k)=>{byTab[pi]=tabs[k];});
     }
+    // Excel stores same-named sheet-level ranges sorted by SHEET NAME (BeArInG, RaMmInG, SaDdLe), so the file's own order is not the process order.
+    // The list is shown by process code (1,2,3...). id / processIndex keep the file's index on purpose: accounts already assigned to grouped:N do not move.
+    const part=[];
     procs.forEach((p,i)=>{
       const rawName=String(p.name||'').trim();
       const rawCode=String(p.code??'').trim();
       const name=byTab[i]||rawName||sheetOperationName('',rawCode)||('Process '+(i+1));
-      out.push({id:sourceId+':'+i,name:name,code:rawCode,rec,processIndex:i});
+      part.push({id:sourceId+':'+i,name:name,code:rawCode,rec,processIndex:i});
     });
+    const cn=x=>{const n=Number(x.code);return Number.isFinite(n)&&String(x.code).trim()!==''?n:Infinity;};
+    part.map((x,k)=>[x,k]).sort((a,b)=>(cn(a[0])-cn(b[0]))||(a[1]-b[1])).forEach(a=>out.push(a[0]));
   };
   add(pc.files?.grouped,'grouped');
   Object.keys(pc.files?.separate||{}).sort((a,b)=>Number(a)-Number(b)).forEach(k=>add(pc.files.separate[k],'separate'+k));
