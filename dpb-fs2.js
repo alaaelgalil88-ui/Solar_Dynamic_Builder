@@ -642,13 +642,34 @@
     var list = []; ((o && o.procs) || []).forEach(function (p) { var a = p.c || []; for (var i = 0; i + 4 < a.length; i += 5) list.push({ process: p.name, r1: a[i], c1: a[i + 1], code: a[i + 2], r2: a[i + 3], c2: a[i + 4] }); });
     return list;
   }
+  // v99: (1) "already in memory" بقت بتتحقق على نفس الـ store (قبل كده كانت على مستوى الملف، فلما الطبقة تتبني من جديد وقت فتح التطبيق وتحديد المشروع
+  // الـ store الجديد كان بيفضل من غير بيانات الإكسل الأساسية). (2) نسخة محلية على الموبايل (localStorage) بتتحمّل فورًا، فالطبقة الملونة
+  // بتفضل بعد قفل التطبيق وبدون نت. (3) الحالة ظاهرة بدل الفشل الصامت، وإعادة محاولة لو القراءة فشلت.
+  var baseStat = { cells: 0, err: '', at: 0, tries: 0 }, baseRetryT = null, baseStoreRef = null;
+  function baseLsKey() { return 'dpb_fs2_basecells_' + nsName() + '_' + pidS(); }
+  function baseLsGet() { try { return jparse(localStorage.getItem(baseLsKey()), null); } catch (e) { return null; } }
+  function baseLsPut(o) { try { localStorage.setItem(baseLsKey(), JSON.stringify(o)); } catch (e) {} }
+  function applyBase(s, o, fromLocal) {
+    var bl = baseList(o); baseTime = o.time || ''; baseStoreRef = s; baseStat.cells = bl.length; if (!fromLocal) baseStat.err = '';
+    s.setBase(bl); baseVer++; return 1;
+  }
   function loadBase(s) {
-    baseLoadAt = Date.now();
-    return kvReadStr(s.adapter, 'basecells').then(function (str) {
-      var o = jparse(str, null); if (!o || !Array.isArray(o.procs)) return 0;
-      if (o.time && o.time === baseTime) return 0;           // already in memory
-      baseTime = o.time || ''; s.setBase(baseList(o)); baseVer++; return 1;
-    }).catch(function () { return 0; });
+    baseLoadAt = Date.now(); baseStat.at = baseLoadAt;
+    // 1) النسخة المحلية أولًا (فورية، بتشتغل أوفلاين)
+    try { var lo = baseLsGet(); if (lo && Array.isArray(lo.procs) && baseStoreRef !== s) applyBase(s, lo, true); } catch (e) {}
+    // 2) بعدين السيرفر. kvReadStr ممكن ترمي خطأ متزامن (مفيش مشروع) فبنلفها في Promise
+    return new Promise(function (res) { res(kvReadStr(s.adapter, 'basecells')); }).then(function (str) {
+      var o = jparse(str, null);
+      if (!o || !Array.isArray(o.procs)) { if (!baseStat.cells) baseStat.err = 'no-doc'; scheduleBaseRetry(s); return 0; }
+      baseStat.err = ''; baseLsPut(o);
+      if (o.time && o.time === baseTime && baseStoreRef === s) return 0;   // already in THIS store
+      return applyBase(s, o, false);
+    }).catch(function (e) { if (!baseStat.cells) baseStat.err = String((e && (e.code || e.message)) || e || 'read-failed'); scheduleBaseRetry(s); return 0; });
+  }
+  function scheduleBaseRetry(s) {
+    if (baseStat.cells > 0 || baseStat.tries >= 3) return;
+    var wait = [5000, 15000, 40000][baseStat.tries++];
+    clearTimeout(baseRetryT); baseRetryT = setTimeout(function () { try { var cs = curStore(); if (cs) loadBase(cs); } catch (e) {} }, wait);
   }
   var baseTime = '';
   function publishBaseline() {
@@ -658,13 +679,14 @@
       var procs = src.map(function (x) { var a = []; x.cells.forEach(function (c) { a.push(c.r, c.c, c.code, c.r2 == null ? c.r : c.r2, c.c2 == null ? c.c : c.c2); }); return { name: x.name, c: a }; });
       var o = { v: 1, time: new Date().toISOString(), procs: procs };
       return kvWriteStr(s.adapter, 'basecells', JSON.stringify(o)).then(function () {
-        baseTime = o.time; s.setBase(baseList(o)); baseVer++;
+        baseLsPut(o); applyBase(s, o, false);
         return src.map(function (x) { return { name: x.name, units: x.units, excel: x.cells.length, existing: 0, add: x.cells.length, bad: x.bad.length }; });
       });
     });
   }
   window.DPB_FS2.publishBaseline = publishBaseline;
-  window.DPB_FS2.reloadBase = function () { if (Date.now() - baseLoadAt < 60000) return Promise.resolve(0); return getStore().then(loadBase); };
+  window.DPB_FS2.reloadBase = function () { if (baseStat.cells > 0 && Date.now() - baseLoadAt < 60000) return Promise.resolve(0); return getStore().then(loadBase); };
+  window.DPB_FS2.baseStatus = function () { return { cells: baseStat.cells, err: baseStat.err, at: baseStat.at, time: baseTime }; };
   try { document.addEventListener('visibilitychange', function () { if (!document.hidden && curStore()) window.DPB_FS2.reloadBase(); }); } catch (e) {}
   window.DPB_FS2.backup = bkExport; window.DPB_FS2.restore = bkRestore;
 

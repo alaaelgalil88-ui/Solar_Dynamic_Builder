@@ -4282,14 +4282,16 @@ async function autoBaseline(sig){
     const st=F.status();if(!(st&&st.on&&st.connected))return;
     const k='DPB_BASEPUB_SIG_'+(st.ns||'');   // مفتاح جديد: النشر بقى مستند واحد مش كتابة كل خلية
     let last=null;try{last=localStorage.getItem(k);}catch(_){}
-    if(last===sig)return;
+    let bs=null;try{bs=(typeof F.baseStatus==='function')?F.baseStatus():null;}catch(_){}
+    const remoteMissing=!!(bs&&bs.err==='no-doc');   // v98: الوثيقة مش موجودة على السيرفر => انشر تاني حتى لو التوقيع متسجل
+    if(last===sig&&!remoteMissing)return;
     const r=await (typeof F.publishBaseline==='function'?F.publishBaseline():F.importExcel(true));
     if(!Array.isArray(r)||!r.length)throw new Error('Excel baseline import returned no valid result; retry later');
     try{localStorage.setItem(k,sig);}catch(_){}
     const n=(r||[]).reduce((a,x)=>a+(Number(x.add)||0),0);
     if(n&&typeof window.showToast==='function')window.showToast('✅ اتنشرت '+n+' خلية منفّذة من الإكسل للمشرفين');
     try{if(typeof window.__dpbFetchLiveGrid==='function')window.__dpbFetchLiveGrid();}catch(_){}
-  }catch(_){}
+  }catch(e){ try{if(typeof window.showToast==='function')window.showToast('⚠️ نشر بيانات الإكسل الأساسية فشل: '+((e&&e.message)||e));}catch(_){} }
 }
 // the original Excel file behind a map: this device first, otherwise the stored copy (any device)
 async function sourceFile(key){
@@ -17292,6 +17294,21 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const ji=q("dpbSupMapTrackerJump");if(ji)ji.onkeydown=ev=>{if(ev.key==="Enter"){ev.preventDefault();jumpToMapTracker();}};
     const rb=q("dpbSupMapReset");if(rb)rb.onclick=()=>{try{resetMapFilters();supervisorRefreshMapButtons();}catch(e){console.warn(e);}};
     const pb=q("dpbSupMapPdfBtn");if(pb)pb.onclick=exportSupervisorMapPdf;
+    // v98: لو بيانات الإكسل الأساسية (الطبقة الملونة للعمليات اللي خلصت) لسه ما وصلتش، حمّلها تاني وبلّغ بالسبب بدل ما الخريطة تفضل فاضية في الصمت
+    try{
+      const F=window.DPB_FS2;
+      if(F&&typeof F.reloadBase==="function"){
+        F.reloadBase().then(()=>{
+          setTimeout(()=>{try{
+            const b=F.baseStatus&&F.baseStatus();
+            if(b&&b.cells===0&&state.screen==="maps"){
+              const why=b.err==="no-doc"?"الأدمن لسه ما نشرش بيانات الإكسل الأساسية (انشر الخرايط من الأدمن وهو متصل)":(b.err?("تعذّر التحميل: "+b.err):"لسه بتتحمل، حاول بعد لحظات");
+              showToast("⚠️ الطبقة الملونة فاضية: "+why);
+            }else if(b&&b.cells>0&&typeof window.__dpbFetchLiveGrid==="function"){window.__dpbFetchLiveGrid();}
+          }catch(_){}},2500);
+        }).catch(()=>{});
+      }
+    }catch(_){}
   }
   /* Project Maps (supervisor): no drawn map. Tracker Production Status table for the supervisor's own processes + filters + print. */
   function openSupervisorMaps(){
