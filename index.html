@@ -133,6 +133,20 @@
       var blob=await (await fetch(href)).blob();
       var data=await blobToB64(blob);
       var safe=String(name||'file').replace(/[\\\/:*?"<>|]+/g,'_');
+      // v97: ملفات الإكسل تتحفظ مباشرة في Documents أو Download على الموبايل (من غير قايمة المشاركة).
+      // لو أندرويد منع الكتابة هناك، نرجع للطريقة القديمة (مشاركة) وبنقولك.
+      if(/\.(xlsx|xls|csv)$/i.test(safe)){
+        try{ if(FS.requestPermissions) await FS.requestPermissions(); }catch(_){}
+        var tries=[{directory:'DOCUMENTS',path:'DPB/'+safe,where:'Documents/DPB'},{directory:'EXTERNAL_STORAGE',path:'Download/'+safe,where:'Download'}];
+        for(var ti=0;ti<tries.length;ti++){
+          try{
+            await FS.writeFile({path:tries[ti].path,data:data,directory:tries[ti].directory,recursive:true});
+            toast('✅ تم حفظ الملف في '+tries[ti].where+' : '+safe);
+            return;
+          }catch(e2){ console.warn('direct save failed in '+tries[ti].where,e2); }
+        }
+        toast('⚠️ أندرويد منع الحفظ المباشر، هفتح المشاركة بدلها.');
+      }
       var r=await FS.writeFile({path:safe,data:data,directory:'CACHE',recursive:true});
       await SH.share({title:safe,url:r.uri,dialogTitle:'احفظ الملف أو شاركه'});
     }catch(e){
@@ -12052,7 +12066,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     try{ return JSON.parse(localStorage.getItem(STORE)||"{}"); }catch(_){ return {}; }
   }
   function writeStoreDirect(store){
-    try{ localStorage.setItem(STORE,JSON.stringify(store)); }
+    try{ localStorage.setItem(STORE,JSON.stringify(store)); try{window.__dpbStoreInvalidate&&window.__dpbStoreInvalidate();}catch(_){} }
     catch(e){ window.__dpbStoreFull=true; console.warn("[CloudSync] local save failed (storage full?)",e&&e.message);
       if(!window.__dpbStoreWarned){ window.__dpbStoreWarned=true; try{ if(typeof window.showToast==="function") window.showToast("⚠️ مساحة التخزين على الجهاز ممتلئة، البيانات مش بتتحفظ محليًا"); }catch(_){} } }
   }
@@ -15746,7 +15760,19 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     t.textContent=msg;t.style.display="block";
     clearTimeout(showToast.t);showToast.t=setTimeout(()=>t.style.display="none",2200);
   }
+  // v96: السجلات كانت بتتفك من localStorage بالكامل (JSON.parse + filter) في كل نداء records()،
+  // وexistingDone بتناديها لكل وحدة => هنج. دلوقتي نسخة واحدة في الذاكرة بتتجدد عند أي كتابة.
+  let __storeCache=null,__storeCachePid=null,__storeCacheAt=0;
+  function __invalidateStoreCache(){__storeCache=null;}
+  window.__dpbStoreInvalidate=__invalidateStoreCache;
   function getStore(){
+    const pid0=window.__dpbActiveProjectId||'';
+    if(__storeCache&&__storeCachePid===pid0&&(Date.now()-__storeCacheAt)<4000)return __storeCache;
+    const v=getStoreUncached_();
+    __storeCache=v;__storeCachePid=pid0;__storeCacheAt=Date.now();
+    return v;
+  }
+  function getStoreUncached_(){
     try{
       const current=JSON.parse(localStorage.getItem(STORE)||"{}");
       const pid=window.__dpbActiveProjectId||'';
@@ -15772,7 +15798,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       try{ if(window.DPB_CLOUD_PRODUCTION&&window.DPB_CLOUD_PRODUCTION.pruneSynced){ window.DPB_CLOUD_PRODUCTION.pruneSynced(x&&x.records); localStorage.setItem(STORE,js); ok=true; } }catch(_){}
       if(!ok){ const err=new Error("التخزين المحلي على الجهاز ممتلي، التعديل ما اتحفظش. امسح الكاش المؤقت أو بلّغ الأدمن. ("+(e&&e.message||e)+")"); err.name="QuotaExceededError"; throw err; }
     }
-    PROCESS_STAGE_INDEXES=new Map()
+    PROCESS_STAGE_INDEXES=new Map();__invalidateStoreCache()
   }
   function records(){return getStore().records||[]}
   function saveRecords(a){
@@ -16111,6 +16137,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const isAdmin=state.account?.isAdmin===true || String(state.user||'').trim()==='Admin';
     let ownerEditable=false;
     try{
+      if(isAdmin||!isCurrentStage) throw 0;
       const sh=String(unit?.sheet||'');
       ownerEditable=records().some(r=>String(r.code??'').trim()===String(processCode??'').trim()&&String(r.sheet||'')===sh&&Number(r.r1)===Number(window.__dpbProcUnit(tracker,unit,processNameForLookup).r1)&&Number(r.c1)===Number(window.__dpbProcUnit(tracker,unit,processNameForLookup).c1)&&String(r.editedBy||r.user||'').trim().toLowerCase()===String(state.user||'').trim().toLowerCase());
     }catch(_){}
@@ -16342,9 +16369,9 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     arr.slice(0,120).forEach(t=>{
       const key=trackerKey(t), selected=state.selectedTrackers.has(key);
       const btn=document.createElement("button");btn.type="button";btn.className="dpbSupTracker"+(selected?" bulk-selected":"");
-      let done=0;(t.units||[]).forEach((u,i)=>{if(existingDone(state.process.code,t,u,i).done)done++});
-      let total=(t.units||[]).length,pct=total?Math.round(done*100/total):0;
-      const pst=progState(t);if(pst){done=pst.done;total=pst.total;pct=pst.pct;}
+      const pst=progState(t);let done=0,total=(t.units||[]).length,pct=0;
+      if(pst){done=pst.done;total=pst.total;pct=pst.pct;}
+      else{(t.units||[]).forEach((u,i)=>{if(existingDone(state.process.code,t,u,i).done)done++});pct=total?Math.round(done*100/total):0;}
       btn.innerHTML=`<div class="dpbSupTrackerTop"><div><div class="dpbSupTrackerName">${escapeHtml(t.label)}</div><div class="dpbSupTrackerRow">${escapeHtml(t.row||"ROW —")}</div></div><div>${done}/${total}${pst?' · '+pct+'%':''}</div></div><div class="dpbSupProgress"><i style="width:${pct}%"></i></div><div class="dpbSupMeta">${selected?"✓ Selected — اضغط لإلغاء الاختيار":"اضغط لتحديد Tracker"}</div>`;
       btn.onclick=()=>{
         hideSupKeyboard(); if(state.selectedTrackers.has(key))state.selectedTrackers.delete(key);else state.selectedTrackers.add(key);renderTrackers();
@@ -17141,7 +17168,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   function editMyProductionRecord(ids){
     const idList=(Array.isArray(ids)?ids:[ids]).map(String).filter(Boolean);
     if(!idList.length)return;
-    const list=records();
+    const list=records().slice();
     const matches=idList.map(id=>list.findIndex(x=>String(x.id||x.key||"")===id&&String(x.editedBy||"")===String(state.user||""))).filter(i=>i>=0);
     if(!matches.length)return;
     const first=list[matches[0]];
@@ -17240,6 +17267,31 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const doPrint=()=>{try{w.focus();w.print();}catch(_){}};
     w.onload=doPrint;
     setTimeout(doPrint,400);
+  }
+  /* v97: Project Maps (supervisor) رجعت للخرايط الرسومية: Fixed Maps كاملة + Operations الديناميك للعمليات المسموحة للمشرف بس (supervisorFilterOps).
+     جدول حالة التراكرات (openSupervisorMaps) لسه موجود في الكود بس مش بيتفتح من الزر. */
+  function openSupervisorMapsGraphic(){
+    const st=q("dpbSupMapStatus");
+    const ctl=document.querySelector("#dpbSupMaps .dpbSupMapControls"), cv=q("dpbSupMapCanvas");
+    if(typeof DPBMap==="undefined"||!project||!project.buildResult){
+      if(st){st.style.display="";st.innerHTML='<div class="dpbRpCard dpbSupReportBlock"><div class="dpbRpMuted">الخرايط لسه ما اتحملتش من المشروع. استنى لحظة وارجع افتحها تاني.</div></div>';}
+      if(ctl)ctl.style.setProperty("display","none","important");
+      if(cv)cv.style.setProperty("display","none","important");
+      return;
+    }
+    if(st){st.style.display="none";st.innerHTML="";}
+    if(ctl)ctl.style.setProperty("display","block","important");
+    if(cv)cv.style.setProperty("display","block","important");
+    try{moveSupervisorMapNodes();}catch(e){console.warn("map nodes move failed",e);}
+    try{
+      if(typeof populateMapViews==="function")populateMapViews();
+      supervisorRefreshMapButtons();
+      if(DPBMap.refresh)DPBMap.refresh();
+    }catch(e){console.warn("supervisor map open failed",e);}
+    const jb=q("dpbSupMapJumpBtn");if(jb)jb.onclick=jumpToMapTracker;
+    const ji=q("dpbSupMapTrackerJump");if(ji)ji.onkeydown=ev=>{if(ev.key==="Enter"){ev.preventDefault();jumpToMapTracker();}};
+    const rb=q("dpbSupMapReset");if(rb)rb.onclick=()=>{try{resetMapFilters();supervisorRefreshMapButtons();}catch(e){console.warn(e);}};
+    const pb=q("dpbSupMapPdfBtn");if(pb)pb.onclick=exportSupervisorMapPdf;
   }
   /* Project Maps (supervisor): no drawn map. Tracker Production Status table for the supervisor's own processes + filters + print. */
   function openSupervisorMaps(){
@@ -17385,7 +17437,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       }
     }
     if(name==="units"){hideSupKeyboard();renderUnits()}
-    if(name==="maps"){hideSupKeyboard();openSupervisorMaps();}
+    if(name==="maps"){hideSupKeyboard();openSupervisorMapsGraphic();}
     if(name==="history")renderHistory();
     if(name==="myedits")renderMyEdits();
   }
