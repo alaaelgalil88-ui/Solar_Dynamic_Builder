@@ -11609,7 +11609,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // FIX (الأمان): هوية الأدمن بتتبعت بس مع getUsers/saveUser/deleteUser (عشان يشوف الباسوردات ويعدّل الحسابات)
   // ومش بتتبعت أبدًا مع أي طلب إنتاج أو خريطة.
   const DPB_ADMIN_ACTIONS={getUsers:1,saveUser:1,deleteUser:1};
-  const DPB_USER_ACTIONS={login:1,getUsers:1,saveUser:1,deleteUser:1,renewToken:1};
+  const DPB_USER_ACTIONS={login:1,getUsers:1,saveUser:1,deleteUser:1,renewToken:1,saveBuildResult:1,getBuildResult:1,saveUnitMap:1,logHistory:1,logProductivity:1};
   function dpbAdminAuth(){
     try{
       // لو السيرفر رفض الهوية المخزّنة قبل كده، نبطّل نبعتها (كل محاولة غلط بتتحسب ضد حساب الأدمن) لحد ما يدخل الـ PIN تاني.
