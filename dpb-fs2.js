@@ -81,7 +81,7 @@
             return fs.setDoc(r, { t: fs.serverTimestamp() }).then(function () { return fs.getDocFromServer(r); }).then(function (x) { var v = x.data() && x.data().t; return v && v.toMillis ? v.toMillis() : Promise.reject(new Error('no server time')); });
           },
           get: function (path) { return fs.getDoc(dref(path)).then(function (x) { return x.exists() ? x.data() : null; }); },
-          listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { cb(q.docs.map(function (d) { return { id: d.id, data: d.data() }; })); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
+          listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { cb(q.docChanges().map(function (c) { return c.type === 'removed' ? { id: c.doc.id, removed: true } : { id: c.doc.id, data: c.doc.data() }; }), null, true); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
           // every document of a collection, read from the SERVER (never the local cache), so a backup is exactly what Firestore holds
           list: function (path) { var col = fs.collection.apply(null, [db].concat(path.split('/'))); return (fs.getDocsFromServer ? fs.getDocsFromServer(col) : fs.getDocs(col)).then(function (q) { return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }); },
           // t:'s' = write a whole small doc (meta). t:'f' = write only the listed cells inside a row doc (mergeFields replaces exactly those cells, never the rest of the row)
@@ -136,13 +136,21 @@
   function dropStore() { try { if (store && store.destroy) store.destroy(); } catch (e) {} store = null; creating = null; storePid = ''; try { restCache = null; } catch (e) {} }
   function curStore() { if (store && storePid !== pidS()) dropStore(); return store; }
   function permHint(e) { var m = String(e && e.message || e || ''); return /permission|insufficient/i.test(m) ? m + ' — قواعد Firebase لازم تسمح بالمسار dpb2/**' : m; }
+  // a full records pull (every cell of every process) is expensive on a phone: while changes keep arriving (an Excel upload = dozens of snapshots)
+  // run at most ONE pull per 15 s, always with the latest state (the trailing pull still happens)
+  var lastPullAt = 0, PULL_GAP = 15000;
+  function schedPull(ms) {
+    clearTimeout(pullT);
+    var wait = Math.max(ms, lastPullAt + PULL_GAP - Date.now());
+    pullT = setTimeout(function () { lastPullAt = Date.now(); try { if (window.DPB_CLOUD_PRODUCTION && window.DPB_CLOUD_PRODUCTION.cloudPull) window.DPB_CLOUD_PRODUCTION.cloudPull(); } catch (e) {} }, wait);
+  }
   function startCreate() {
     if (creating) return creating;
     var forPid = pidS();
     if (!forPid) return Promise.reject(new Error('لسه مفيش مشروع مفتوح — الخرائط بتتربط بعد ما تفتح مشروع'));
     creating = getAdapter().then(function (a) {
       var s = CORE.create(a, { ns: nsName(), pid: forPid, offset: clockOff });
-      s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); clearTimeout(pullT); pullT = setTimeout(function () { try { if (window.DPB_CLOUD_PRODUCTION && window.DPB_CLOUD_PRODUCTION.cloudPull) window.DPB_CLOUD_PRODUCTION.cloudPull(); } catch (e) {} }, 1500); });
+      s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); schedPull(1500); });
       return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); syncClock(a); return s; });
     }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); throw e; });
     return creating;

@@ -11976,7 +11976,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     try{ return JSON.parse(localStorage.getItem(STORE)||"{}"); }catch(_){ return {}; }
   }
   function writeStoreDirect(store){
-    try{ localStorage.setItem(STORE,JSON.stringify(store)); }catch(_){}
+    try{ localStorage.setItem(STORE,JSON.stringify(store)); }
+    catch(e){ window.__dpbStoreFull=true; console.warn("[CloudSync] local save failed (storage full?)",e&&e.message);
+      if(!window.__dpbStoreWarned){ window.__dpbStoreWarned=true; try{ if(typeof window.showToast==="function") window.showToast("⚠️ مساحة التخزين على الجهاز ممتلئة، البيانات مش بتتحفظ محليًا"); }catch(_){} } }
   }
   function getSyncedMap(){
     try{ return JSON.parse(localStorage.getItem(SYNCED_KEY)||"{}"); }catch(_){ return {}; }
@@ -12596,12 +12598,22 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // Whenever a cloud merge changes local data, refresh whatever is on
   // screen (units grid / map / production list) so the change shows up
   // without the user having to manually reload.
+  // one refresh per 2 s however many merges arrive; the map is patched cell by cell when it is on screen and not rebuilt at all when it is hidden
+  let mergedT=null;
   window.addEventListener("dpbCloudDataMerged",()=>{
-    try{ if(typeof renderUnits==="function") renderUnits(); }catch(_){}
-    try{ if(typeof renderHomeSummary==="function") renderHomeSummary(); }catch(_){}
-    try{ if(typeof renderProductionEdits==="function") renderProductionEdits(); }catch(_){}
-    try{ if(typeof DPBMap!=='undefined') DPBMap.refresh(); }catch(_){}
-    try{ if(typeof installSharedStageBridge==="function") installSharedStageBridge(); }catch(_){}
+    clearTimeout(mergedT);
+    mergedT=setTimeout(()=>{
+      try{ if(typeof renderUnits==="function") renderUnits(); }catch(_){}
+      try{ if(typeof renderHomeSummary==="function") renderHomeSummary(); }catch(_){}
+      try{ if(typeof renderProductionEdits==="function") renderProductionEdits(); }catch(_){}
+      try{
+        if(typeof DPBMap!=='undefined'){
+          const sh=document.getElementById('excelMapShell');
+          if(sh&&sh.offsetParent){ if(!(DPBMap.applyLiveDiff&&DPBMap.applyLiveDiff())) DPBMap.refresh(); }
+        }
+      }catch(_){}
+      try{ if(typeof installSharedStageBridge==="function") installSharedStageBridge(); }catch(_){}
+    },2000);
   });
 
   window.addEventListener("load",()=>{ setTimeout(scheduleSync,1500); });

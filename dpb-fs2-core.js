@@ -10,6 +10,7 @@
     var ns = o.ns || 'test', cache = {}, subs = [];
     // project scope: every row doc belongs to ONE project (id prefix + projectId field), the listener only sees that project's docs,
     // so two projects that use the same process names can never read or overwrite each other's cells
+    var byDoc = {};   // row-doc id -> cache keys that doc contributed (so a changed doc replaces only its own cells)
     var P = o.pid ? String(o.pid).replace(/[^A-Za-z0-9_\-]/g, '_') : '', unsub = null, dead = false;
     // offset (ms) between this device's clock and the Firestore server clock; every stored time is device time + offset, so all devices agree
     function off() { try { var v = o.offset ? Number(o.offset()) : 0; return isFinite(v) ? v : 0; } catch (e) { return 0; } }
@@ -37,20 +38,30 @@
     function emit() { subs.forEach(function (f) { try { f(); } catch (e) {} }); }
     var ready = new Promise(function (res, rej) {
       var done = false;
-      unsub = adapter.listen(COL, function (docs, err) {
+      unsub = adapter.listen(COL, function (docs, err, delta) {
         if (dead) return;
         if (err) { if (!done) { done = true; rej(err); } return; }   // listener failed (rules / network): report it, never hang
-        var m = {};
+        // delta=true: docs holds ONLY the documents that changed (first snapshot = all of them once); each one replaces just its own cells.
+        // delta falsy (old adapters / tests): docs is the whole collection and the cache is rebuilt from it, exactly as before.
+        var m = delta ? cache : {};
+        if (!delta) byDoc = {};
         docs.forEach(function (d) {
-          if (isMeta(d.id)) { m[d.id === EPOCH_ID ? '__epoch__' : d.id] = d.data; return; }
-          var cells = (d.data && d.data.cells) || {};
-          Object.keys(cells).forEach(function (col) {
-            var cell = cells[col]; if (!cell) return;
-            m[id(cell.process != null ? cell.process : d.data.process, cell.r1 != null ? cell.r1 : d.data.r, cell.c1 != null ? cell.c1 : col)] = cell;
-          });
+          var old = byDoc[d.id]; if (old) { for (var i = 0; i < old.length; i++) delete m[old[i]]; delete byDoc[d.id]; }
+          if (d.removed || !d.data) return;
+          var ks = [];
+          if (isMeta(d.id)) { var mk = d.id === EPOCH_ID ? '__epoch__' : d.id; m[mk] = d.data; ks.push(mk); }
+          else {
+            var cells = (d.data && d.data.cells) || {};
+            Object.keys(cells).forEach(function (col) {
+              var cell = cells[col]; if (!cell) return;
+              var k = id(cell.process != null ? cell.process : d.data.process, cell.r1 != null ? cell.r1 : d.data.r, cell.c1 != null ? cell.c1 : col);
+              m[k] = cell; ks.push(k);
+            });
+          }
+          byDoc[d.id] = ks;
         });
         cache = m;
-        if (!done) { done = true; res(); } emit();
+        if (!done) { done = true; res(); } if (!delta || docs.length) emit();
       }, P ? { where: ['projectId', '==', P] } : null);
     });
     function live(d) { return d && !d.del && d.process != null && d.r1 != null; }
