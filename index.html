@@ -11214,16 +11214,30 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     q("dpbAdminPinInput").value="";
     q("dpbAdminPinDots").querySelectorAll("i").forEach(d=>d.classList.remove("filled"));
   }
-  // Admin PIN check: the Users sheet is now the single source of truth,
+  // Admin PIN check: Firebase (users list in Firestore) is now the single source of truth,
   // exactly like the Supervisor accounts. The locally-cached PIN
   // (DPB_ADMIN_PIN_V1) is kept only as an offline fallback so the Admin
   // gate still works with no internet — it is refreshed automatically
   // every time a Sheet-verified login succeeds.
+  let adminSetupPin=null;
   function checkAdminPin(v){
     q("dpbAdminPinErr").textContent="";
     const gs=window.DPB_GS;
     if(gs && typeof gs.verifyAdminPin==="function"){
       gs.verifyAdminPin(v).then(function(res){
+        if(res && res.reachable && res.setup){
+          // أول مرة: مفيش كود أدمن على Firebase. بنكتبه مرتين للتأكيد وبعدين بيتحفظ على Firebase.
+          const clearIn=function(){q("dpbAdminPinInput").value="";q("dpbAdminPinDots").querySelectorAll("i").forEach(d=>d.classList.remove("filled"));};
+          if(adminSetupPin===null){adminSetupPin=v;clearIn();q("dpbAdminPinErr").textContent="أول مرة: مفيش كود أدمن متسجّل لسه. اكتب نفس الكود تاني للتأكيد.";return;}
+          if(adminSetupPin!==v){adminSetupPin=null;clearIn();q("dpbAdminPinErr").textContent="الكودين مش متطابقين. اكتب الكود من الأول.";return;}
+          adminSetupPin=null;
+          gs.pushUser({userID:"admin",username:"Admin",password:v,role:"Admin",active:true}).then(function(r){
+            if(r&&r.ok&&r.__reachable!==false){try{localStorage.setItem("DPB_ADMIN_PIN_V1",v);}catch(_){} showAdminAfterPin();}
+            else{clearIn();q("dpbAdminPinErr").textContent="مقدرتش أحفظ الكود على Firebase. اتأكد من النت وجرّب تاني.";}
+          });
+          return;
+        }
+        adminSetupPin=null;
         if(res && res.reachable){
           // Sheet reached: it decides, full stop (right or wrong).
           if(res.ok){
@@ -11322,11 +11336,13 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
           role:"Admin",
           active:true
         });
-      }).then(function(){
+      }).then(function(r){
+        const saved=!!(r&&r.ok&&r.__reachable!==false);
+        if(!saved&&res.reachable){q("dpbAdminChangePinErr").textContent="مقدرتش أحفظ الكود الجديد على Firebase. اتأكد من النت وجرّب تاني.";return;}
         finishLocal();
-        alert(res.reachable
-          ? "تم تغيير الرقم السري للأدمن بنجاح، وتم حفظه في شيت Users — هيشتغل على كل الأجهزة."
-          : "تم تغيير الرقم السري محليًا (لا يوجد اتصال بالإنترنت الآن). هيتزامن مع الشيت أول ما يرجع النت ويتفتح Admin تاني وهو متصل.");
+        alert(saved
+          ? "تم تغيير الرقم السري للأدمن بنجاح، وتم حفظه على Firebase — هيشتغل على كل الأجهزة."
+          : "تم تغيير الرقم السري على الجهاز ده بس (مفيش اتصال بالإنترنت). غيّره تاني وإنت متصل عشان يتحفظ على Firebase ويشتغل على باقي الأجهزة.");
       });
     });
   }
@@ -11550,6 +11566,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // FIX (الأمان): هوية الأدمن بتتبعت بس مع getUsers/saveUser/deleteUser (عشان يشوف الباسوردات ويعدّل الحسابات)
   // ومش بتتبعت أبدًا مع أي طلب إنتاج أو خريطة.
   const DPB_ADMIN_ACTIONS={getUsers:1,saveUser:1,deleteUser:1};
+  const DPB_USER_ACTIONS={login:1,getUsers:1,saveUser:1,deleteUser:1,renewToken:1};
   function dpbAdminAuth(){
     try{
       // لو السيرفر رفض الهوية المخزّنة قبل كده، نبطّل نبعتها (كل محاولة غلط بتتحسب ضد حساب الأدمن) لحد ما يدخل الـ PIN تاني.
@@ -11629,9 +11646,12 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     if(DPB_ADMIN_ACTIONS[action]){const a=dpbAdminAuth(); if(a) data=Object.assign({auth:a},data||{});}
     let ctrl=null,timer=null;
     try{ if(typeof AbortController!=="undefined"){ ctrl=new AbortController(); timer=setTimeout(()=>ctrl.abort(),timeoutMs); } }catch(_){}
-    if(!GS_URL) return Promise.resolve({ok:false,__reachable:false,error:"apps-script-disabled"});
+    // Apps Script اتلغى: الدخول والمستخدمين بيروحوا لطبقة Firestore (dpb-fs2.js) عن طريق العنوان الداخلي، وباقي الأوامر مقفولة.
+    const TARGET=GS_URL||(DPB_USER_ACTIONS[action]?"https://dpb-firebase.local/users":"");
+    if(!TARGET){ if(timer)clearTimeout(timer); return Promise.resolve({ok:false,__reachable:false,error:"apps-script-disabled"}); }
+    if(!GS_URL&&timer){ clearTimeout(timer); timer=setTimeout(()=>ctrl&&ctrl.abort(),Math.max(timeoutMs,12000)); }
     const body=JSON.stringify(Object.assign({action:action},data||{}));
-    return fetch(GS_URL,{method:"POST",body:body,signal:ctrl?ctrl.signal:undefined})
+    return fetch(TARGET,{method:"POST",body:body,signal:ctrl?ctrl.signal:undefined})
       .then(r=>r.json())
       .then(res=>{
         if(timer)clearTimeout(timer); res=res||{}; res.__reachable=true;
@@ -11739,7 +11759,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         try{ if(localStorage.getItem("DPB_ADMIN_PIN_V1")===String(pin)){ localStorage.removeItem("DPB_ADMIN_PIN_V1"); } }catch(_){}
         if(dpbOfflineAuthOk("Admin",pin)) dpbOfflineAuthForget("Admin");
       }
-      return {reachable,ok,locked:!!(res&&res.locked),retryAfterSec:Number(res&&res.retryAfterSec)||0,account:ok?rowToAccount(res.user):null};
+      return {reachable,ok,setup:!!(reachable&&res&&res.setup),locked:!!(res&&res.locked),retryAfterSec:Number(res&&res.retryAfterSec)||0,account:ok?rowToAccount(res.user):null};
     });
   }
 

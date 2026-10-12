@@ -280,14 +280,21 @@
   // resolves null when the accounts were not moved to Firestore yet (the caller then sends the request to Apps Script)
   function usersOp(a, body) {
     return usersLoad(a).then(function (list) {
-      if (!list) return null;
+      if (!list) {
+        // no users list on Firebase yet (Apps Script is gone, so there is nothing to fall back to): the first Admin code is created from the app
+        if (body.action === 'saveUser') list = [];
+        else if (body.action === 'login') return { ok: false, setup: true };
+        else if (body.action === 'getUsers') return { ok: true, users: [], pinsHidden: true };
+        else return { ok: true };
+      }
       var find = function (n) { n = String(n || '').trim().toLowerCase(); for (var i = 0; i < list.length; i++) if (uName(list[i]).toLowerCase() === n) return i; return -1; };
       switch (body.action) {
         case 'login':
-          var i = find(body.username); if (i < 0) return { ok: false, error: 'wrong' };
+          var i = find(body.username);
+          if (i < 0) return String(body.username || '').trim().toLowerCase() === 'admin' ? { ok: false, setup: true } : { ok: false };   // no Admin yet -> the app offers to create it
           var u = list[i];
           return pinHash(uName(u), body.password).then(function (h) {
-            if (!u.passHash || u.passHash !== h || !isActive(u)) return { ok: false, error: 'wrong' };
+            if (!u.passHash || u.passHash !== h || !isActive(u)) return { ok: false };   // no "error" field: the app reads that as "wrong code", not as "server unreachable"
             return { ok: true, user: pubUser(u) };
           });
         case 'getUsers': return { ok: true, users: list.map(pubUser), pinsHidden: true };
