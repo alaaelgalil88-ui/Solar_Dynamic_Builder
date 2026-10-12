@@ -324,8 +324,17 @@
       return null;
     });
   }
+  // v94: الدخول مبقاش بيستنى Firebase للأبد. لو الاتصال اتأخر أكتر من 10 ثواني أو فشل، الرد بيرجع فورًا بخطأ واضح
+  // (error => التطبيق يعتبره "مفيش اتصال" ويجرّب الرقم/البصمة المحفوظة على الجهاز) بدل ما يعلّق، ومبقاش بيروح لعنوان dpb-firebase.local اللي مش موجود.
   function usersHandle(body, input, init) {
-    return getAdapter().then(function (a) { return usersOp(a, body); }).then(function (r) { return r ? jsonRes(r) : prevFetch(input, init); }, function () { return prevFetch(input, init); });
+    var url = String(typeof input === 'string' ? input : (input && input.url) || '');
+    var internal = url.indexOf('https://dpb-firebase.local/') === 0;
+    var work = getAdapter().then(function (a) { return usersOp(a, body); });
+    var timeout = new Promise(function (res) { setTimeout(function () { res({ __timeout: true }); }, 10000); });
+    return Promise.race([work, timeout]).then(function (r) {
+      if (r && r.__timeout) { work.catch(function () {}); return internal ? jsonRes({ ok: false, error: 'firebase-timeout' }) : prevFetch(input, init); }
+      return r ? jsonRes(r) : prevFetch(input, init);
+    }, function () { return internal ? jsonRes({ ok: false, error: 'firebase-unreachable' }) : prevFetch(input, init); });
   }
   var USER_ACTIONS = { login: 1, getUsers: 1, saveUser: 1, deleteUser: 1, renewToken: 1 };
   // one-time: copy the accounts from the Sheet's Users tab into Firestore (hashes only). Asks the script through the layer UNDER this one on purpose.

@@ -6536,13 +6536,21 @@ function renderProcessSources(){
   rows.innerHTML=h; card.style.display='block';
   syncDynamicProcessButtons();
 }
+// v94: الفهرس بيتبني مرة واحدة لكل صفحة (WeakMap) بدل ما يتبني من الصفر مع كل نداء. قبل كده أول ملف عمليات كان بيناديه ~2100 مرة
+// (5 مليون عنصر) وده كان سبب تهنيج الـApply على الموبايل. محدّش بيعدّل الـMap اللي بيرجع، فمشاركته آمنة.
+const __dpbMergeIdxCache=new WeakMap();
 function buildMergeIndex(ws){
+  const merges=ws&&ws['!merges'];
+  if(!merges||!merges.length) return new Map();
+  const hit=__dpbMergeIdxCache.get(ws);
+  if(hit&&hit.arr===merges&&hit.len===merges.length) return hit.map;
   const map=new Map();
-  for(const m of (ws?.['!merges']||[])){
+  for(const m of merges){
     for(let r=m.s.r;r<=m.e.r;r++) for(let c=m.s.c;c<=m.e.c;c++){
       map.set(r+','+c,{r1:m.s.r,r2:m.e.r,c1:m.s.c,c2:m.e.c});
     }
   }
+  __dpbMergeIdxCache.set(ws,{arr:merges,len:merges.length,map});
   return map;
 }
 
@@ -7990,7 +7998,23 @@ window.dpbPrintSupTable=function(tbl,procName){
 // by each Named Range area's own top-left corner only if nothing lines up
 // directly (e.g. the execution file uses a differently-positioned copy of
 // the layout).
+// v94: النتيجة بتتحفظ لكل ملف عمليات (نفس الملف + نفس الرينج + نفس الـPlan) بدل ما تتحسب 10 مرات في كل Apply. القراء بس بيقروا الـMap.
+const __dpbPsvCache=new WeakMap();
 function getProcessSourceValues(entry){
+  try{
+    const wb=entry&&entry.rec&&entry.rec.wb, def=entry&&entry.rec&&entry.rec.definition;
+    if(wb&&def&&typeof wb==='object'){
+      const sig=String(def.dataRangeName||'')+'|'+String(project.siteRangeName||'');
+      const hit=__dpbPsvCache.get(wb);
+      if(hit&&hit.sig===sig&&hit.plan===project.wb) return hit.res;
+      const res=getProcessSourceValuesRaw(entry);
+      __dpbPsvCache.set(wb,{sig,plan:project.wb,res});
+      return res;
+    }
+  }catch(_){}
+  return getProcessSourceValuesRaw(entry);
+}
+function getProcessSourceValuesRaw(entry){
   const def=entry.rec.definition;
   const srcAreas=getNamedRangeAreas(entry.rec.wb,def.dataRangeName)||[];
   const planAreas=getNamedRangeAreas(project.wb,project.siteRangeName)||[];
@@ -9412,6 +9436,24 @@ window.__dpbProcUnit=dpbProcUnit;
 // The Plan only says WHICH trackers exist (ROW + T). Every process has its own units (count, merges, positions) in its own tab,
 // so Production Entry lists a process's units from that process's tab, not from the Plan.
 window.__dpbProcTrackers=function(name){try{const lg=pickLiveGrid_(name);return lg&&Array.isArray(lg.trackers)&&lg.trackers.length?lg.trackers:null;}catch(_){return null;}};
+const __dpbTrkIdx=new WeakMap();
+function __dpbTrackerFind(arr,tRow,tLabel,tNumber){
+  let ix=__dpbTrkIdx.get(arr);
+  if(!ix||ix.len!==arr.length||ix.first!==arr[0]){
+    ix={len:arr.length,first:arr[0],rl:new Map(),rn:new Map(),l:new Map(),n:new Map()};
+    for(let i=0;i<arr.length;i++){
+      const x=arr[i]; const row=String(x.row||'').trim().toUpperCase(), lab=String(x.label||'').trim().toUpperCase(), num=Number(x.number);
+      const kl=row+'\u0001'+lab; if(!ix.rl.has(kl)) ix.rl.set(kl,i);
+      if(!ix.l.has(lab)) ix.l.set(lab,i);
+      if(!Number.isNaN(num)){ const kn=row+'\u0001'+num; if(!ix.rn.has(kn)) ix.rn.set(kn,i); if(!ix.n.has(num)) ix.n.set(num,i); }
+    }
+    __dpbTrkIdx.set(arr,ix);
+  }
+  const pick=(a,b)=>a===undefined?b:(b===undefined?a:Math.min(a,b));
+  let i=pick(ix.rl.get(tRow+'\u0001'+tLabel), Number.isNaN(tNumber)?undefined:ix.rn.get(tRow+'\u0001'+tNumber));
+  if(i===undefined) i=pick(ix.l.get(tLabel), Number.isNaN(tNumber)?undefined:ix.n.get(tNumber));
+  return i===undefined?undefined:arr[i];
+}
 function liveGridUnitValue(t,u,processName){
   // ONE live-source resolver. A process is identified by its process name,
   // then by Tracker label/number + ROW, then by unit position. The Plan
@@ -9427,13 +9469,9 @@ function liveGridUnitValue(t,u,processName){
 
     // Prefer exact ROW + Tracker identity. If the live sheet omits/renames
     // the ROW text, fall back to Tracker number/label only.
-    let lt=lg.trackers.find(x=>
-      String(x.row||'').trim().toUpperCase()===tRow &&
-      (String(x.label||'').trim().toUpperCase()===tLabel || Number(x.number)===tNumber)
-    );
-    if(!lt) lt=lg.trackers.find(x=>
-      String(x.label||'').trim().toUpperCase()===tLabel || Number(x.number)===tNumber
-    );
+    // v94: نفس شرط البحث بالظبط (أول تراكر مطابق)، بس عن طريق فهرس بيتبني مرة لكل قايمة تراكرز بدل مسح القايمة كلها لكل وحدة
+    // (كان ~15 ألف وحدة × 430 تراكر × عمليات = ثواني على الموبايل في كل ربط).
+    const lt=__dpbTrackerFind(lg.trackers,tRow,tLabel,tNumber);
     if(!lt || !Array.isArray(lt.units) || !lt.units.length) return undefined;
 
 
