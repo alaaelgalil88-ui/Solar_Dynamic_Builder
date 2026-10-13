@@ -144,6 +144,18 @@
     var wait = Math.max(ms, lastPullAt + PULL_GAP - Date.now());
     pullT = setTimeout(function () { lastPullAt = Date.now(); try { if (window.DPB_CLOUD_PRODUCTION && window.DPB_CLOUD_PRODUCTION.cloudPull) window.DPB_CLOUD_PRODUCTION.cloudPull(); } catch (e) {} }, wait);
   }
+  // v103: a short network failure (auth/network-request-failed, timeout) used to leave the layer "not connected" until the user did something;
+  // now it is retried by itself (after the 30 s cool-down, then 60 s, 2, 4, 8, 15 min) and at once when the phone comes back online.
+  // Permission/rules errors are never retried (they need a fix, not time).
+  var retryT = null, retryN = 0;
+  function scheduleRetry(e) {
+    var m = String(e && (e.code || '') || '') + ' ' + String(e && e.message || e || '');
+    if (!/network-request-failed|unavailable|timeout|انتهت مهلة|offline|network/i.test(m)) return;
+    if (retryT || retryN >= 6) return;
+    var wait = [35000, 60000, 120000, 240000, 480000, 900000][retryN++];
+    retryT = setTimeout(function () { retryT = null; if (curStore() || !pidS()) return; getStore().then(function () { retryN = 0; }, function () {}); }, wait);
+  }
+  try { window.addEventListener('online', function () { retryN = 0; clearTimeout(retryT); retryT = null; if (!curStore() && pidS()) { failedAt = 0; getStore().catch(function () {}); } }); } catch (e) {}
   function startCreate() {
     if (creating) return creating;
     var forPid = pidS();
@@ -151,8 +163,8 @@
     creating = getAdapter().then(function (a) {
       var s = CORE.create(a, { ns: nsName(), pid: forPid, offset: clockOff });
       s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); schedPull(1500); });
-      return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; s.ensureEpoch(); paintState(); syncClock(a); try { loadBase(s); } catch (e) {} return s; });
-    }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); throw e; });
+      return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; retryN = 0; s.ensureEpoch(); paintState(); syncClock(a); try { loadBase(s); } catch (e) {} return s; });
+    }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); scheduleRetry(e); throw e; });
     return creating;
   }
   // never waits forever: ready within 8s, or it fails fast (and is retried at most every 30s) so nothing else in the app hangs behind it
@@ -161,7 +173,7 @@
     if (failedAt && Date.now() - failedAt < 30000) return Promise.reject(new Error(lastErr || 'unavailable')); // cool-down: fail fast, a late success clears it
     var p = startCreate();
     return new Promise(function (res, rej) {
-      var t = setTimeout(function () { failedAt = Date.now(); lastErr = lastErr || 'انتهت مهلة الاتصال بـ Firestore (8 ثواني)'; rej(new Error(lastErr)); }, 8000);
+      var t = setTimeout(function () { failedAt = Date.now(); lastErr = lastErr || 'انتهت مهلة الاتصال بـ Firestore (8 ثواني)'; scheduleRetry(new Error(lastErr)); rej(new Error(lastErr)); }, 8000);
       p.then(function (s) { clearTimeout(t); res(s); }, function (e) { clearTimeout(t); rej(e); });
     });
   }

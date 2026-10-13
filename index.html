@@ -5746,12 +5746,30 @@ function dpbDiagSelected(){
   toast('جاري التشخيص…',20000);
   window.DPB_FS.diagCell({r1:u.r1,c1:u.c1,label:u.label,rowLabel:u.rowLabel,post:u.post,processes:g.map(o=>o.name),appLines:lines}).then(()=>{toast('تم',600);},e=>toast('فشل التشخيص: '+(e&&e.message||e),4000));
 }
+/* v102: records of the cell layer straight from the Firestore store (Excel baseline cells included, each with its id); null when the layer is off */
+async function dpbStoreRecords(){
+  try{if(window.DPB_FS2&&window.DPB_FS2.on&&window.DPB_FS2.on()){const s=await window.DPB_FS2.store();return s.all().map(d=>Object.assign({},d,{id:String(d.id)}));}}catch(_){}
+  return null;
+}
+/* v102: delete cells of one process by coordinates (used by the red X on a supervisor card). Works for Excel baseline cells and for any author. */
+window.__dpbFsDeleteCells=async function(processName,cells){
+  const all=await dpbStoreRecords();if(!all)return {ok:false,reason:'off'};
+  const want=String(processName||'').trim().toLowerCase();
+  const ids=all.filter(r=>String(r.process||'').trim().toLowerCase()===want&&cells.some(u=>Number(r.r1)===Number(u.r1)&&Number(r.c1)===Number(u.c1))).map(r=>String(r.id||'')).filter(Boolean);
+  if(!ids.length)return {ok:false,reason:'none'};
+  let grouped=false;try{grouped=groupedOps().some(o=>String(o.name).trim().toLowerCase()===want);}catch(_){}
+  const res=await kvCall({action:'deleteMany',ids,siblings:[],groupedProcessNames:grouped?groupedProcessNames():[],stageCodes:grouped?dpbStageCodes():undefined});
+  if(!res||res.ok===false)return {ok:false,reason:'fail',error:res&&res.error};
+  const blocked=(res.blocked||[]).length;
+  try{if(window.DPB_CLOUD_PRODUCTION&&window.DPB_CLOUD_PRODUCTION.forgetLocal)window.DPB_CLOUD_PRODUCTION.forgetLocal(ids);}catch(_){}
+  return {ok:true,deleted:ids.length-blocked,blocked};
+};
 async function deleteMark(){
   const spec=markableSpec();if(!spec||!mark.sel.size)return;
   const url=cloudUrl();if(!url){toast('مفيش رابط مشروع متسجل.');return;}
   toast('جاري البحث عن السجلات...',60000);
-  let all=[];
-  try{const r=await fetch(url+'?t='+Date.now());all=(await r.json())?.data||[];}catch(_){}
+  let all=await dpbStoreRecords();
+  if(!all){all=[];try{const r=await fetch(url+'?t='+Date.now());all=(await r.json())?.data||[];}catch(_){}}
   let units=[...mark.sel.values()];
   if(spec.op.grouped){
     const laterNames=groupedOps().filter(o=>Number(o.code)>Number(spec.op.code)).map(o=>o.name);
@@ -15495,7 +15513,6 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           <button class="dpbSupNavCard" id="dpbSupGoMyEdits">
             <strong>✎ تعديلاتي</strong><span>سجلاتي الخاصة + إمكانية التراجع عن أي عملية</span>
           </button>
-          <button class="dpbSupNavCard" id="dpbSupGoProjects"><strong>🗂️ تغيير المشروع</strong><span id="dpbSupCurProj">—</span></button>
           <button class="dpbSupNavCard dpbSupMapNavCard" id="dpbSupGoMaps"><strong>🗺️ Project Maps</strong><span>عرض وتحديد وتطبيق وحذف وتحديث الخلايا من نفس الخريطة</span></button>
         </div>
       </section>
@@ -16137,13 +16154,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     // editable for correction. All earlier operations are locked.
     const isCurrentStage=currentCode===stage;
     const isAdmin=state.account?.isAdmin===true || String(state.user||'').trim()==='Admin';
-    let ownerEditable=false;
-    try{
-      if(isAdmin||!isCurrentStage) throw 0;
-      const sh=String(unit?.sheet||'');
-      ownerEditable=records().some(r=>String(r.code??'').trim()===String(processCode??'').trim()&&String(r.sheet||'')===sh&&Number(r.r1)===Number(window.__dpbProcUnit(tracker,unit,processNameForLookup).r1)&&Number(r.c1)===Number(window.__dpbProcUnit(tracker,unit,processNameForLookup).c1)&&String(r.editedBy||r.user||'').trim().toLowerCase()===String(state.user||'').trim().toLowerCase());
-    }catch(_){}
-    return {done:true,source:"الشيت اللايف",editable:isCurrentStage && (isAdmin || ownerEditable),adminRecord:false};
+    return {done:true,source:"الشيت اللايف",editable:isCurrentStage,adminRecord:false};
   }
   window.existingDone=existingDone;
   window.records=records;
@@ -16744,7 +16755,23 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     }
     if(!matches.length&&rec&&rec.alt){matches=all.filter(x=>String(x.code??'').trim()===processCode&&Number(x.r1)===Number(rec.alt.r1)&&Number(x.c1)===Number(rec.alt.c1));}
     const ids=matches.map(x=>String(x.id||'')).filter(Boolean);
-    if(!ids.length){showToast("لم يتم العثور على سجل محفوظ لهذه الخلية.");return;}
+    if(!ids.length){
+      if(typeof window.__dpbFsDeleteCells==='function'){
+        const cellsToTry=[{r1,c1}];if(rec&&rec.alt)cellsToTry.push({r1:Number(rec.alt.r1),c1:Number(rec.alt.c1)});
+        showToast("جاري الإلغاء…",15000);
+        window.__dpbFsDeleteCells(state.process&&state.process.name,cellsToTry).then(res=>{
+          if(!res||!res.ok){showToast(res&&res.reason==='fail'?("فشل الإلغاء: "+(res.error||"تعذر الاتصال")):"لم يتم العثور على سجل محفوظ لهذه الخلية.");return;}
+          if(!res.deleted){showToast("🔒 الخلية دي اتنفذت عليها مرحلة لاحقة — لازم تتلغى من هناك الأول.");return;}
+          if(state.editingUnits)state.editingUnits.delete(unitK);
+          if(state.rammingUnitMeta)state.rammingUnitMeta.delete(unitK);
+          try{if(typeof window.__dpbFetchLiveGrid==='function')window.__dpbFetchLiveGrid();}catch(_){}
+          renderUnits();renderHomeSummary();try{if(typeof DPBMap!=='undefined')DPBMap.refresh()}catch(_){}
+          showToast("تم إلغاء الإدخال. الوحدة الآن متاحة.");
+        });
+        return;
+      }
+      showToast("لم يتم العثور على سجل محفوظ لهذه الخلية.");return;
+    }
     const filtered=all.filter(x=>!ids.includes(String(x.id||'')));
     saveRecords(filtered);
     try{
@@ -17232,6 +17259,36 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       if(td)td.scrollIntoView({behavior:"smooth",block:"center",inline:"center"});
     });
   }
+  /* v100: طباعة الخريطة بتتقسم على صفحات بحيث كل صفحة تبدأ بصف أرقام التراكرات (T1 T2 ...) ومفيش بلوك يتقطع بين صفحتين،
+     والبلوكات (ROW) بتتوزع بالتساوي بدل ما صفحة أخيرة فيها كام سطر بس. */
+  function dpbBandedMapHtml(table){
+    try{
+      const d=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null;
+      if(!d||!d.rows||!d.rows.length)return null;
+      const all=[...(table.tBodies[0]?table.tBodies[0].rows:[])];
+      if(!all.length)return null;
+      const bands=[];let prevEnd=d.top-1;
+      d.rows.forEach(row=>{
+        const start=prevEnd+1,end=row.r2;prevEnd=Math.max(prevEnd,end);
+        const a=Math.max(0,start-d.top),b=Math.min(all.length-1,end-d.top);
+        if(a>b)return;
+        const t=document.createElement("table");t.className=table.className;t.style.cssText=table.style.cssText;
+        const tb=document.createElement("tbody");
+        for(let i=a;i<=b;i++)tb.appendChild(all[i].cloneNode(true));
+        t.appendChild(tb);bands.push('<div class="dpbBnd">'+t.outerHTML+'</div>');
+      });
+      if(!bands.length)return null;
+      const CAP=4;                                   // أقصى عدد بلوكات في الصفحة (محافظ: الصفحة A4 استحملت 5)
+      const pages=Math.ceil(bands.length/CAP), base=Math.floor(bands.length/pages), extra=bands.length%pages;
+      let out="",i=0;
+      for(let p=0;p<pages;p++){                      // توزيع متساوي: الصفحات الأولى ياخدوا البلوك الزيادة
+        const n=base+(p<extra?1:0), last=(p===pages-1);
+        out+='<div class="dpbPg"'+(last?'':' style="break-after:page;page-break-after:always"')+'>'+bands.slice(i,i+n).join("")+'</div>';
+        i+=n;
+      }
+      return out;
+    }catch(e){console.warn("banded map print failed",e);return null;}
+  }
   function exportSupervisorMapPdf(){
     const s=DPBMap.state.last;
     if(!s){showToast("محدش عارض خريطة دلوقتي.");return;}
@@ -17259,12 +17316,13 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       '*{print-color-adjust:exact!important;-webkit-print-color-adjust:exact!important}'+
       liveCssText+
       '#excelMapShell{max-height:none!important;overflow:visible!important;padding:0!important}'+
+      '.dpbBnd{break-inside:avoid;page-break-inside:avoid;margin:0 0 6px 0}.dpbPg{break-inside:auto}'+
       '.me-map td.me-u{cursor:default}'+
       'html,body,body #excelMapShell,body #excelMapShell table.me-map{background:#fff!important}.me-map td.me-t{color:#222!important}'+
       '@page{size:landscape;margin:8mm}'+
       '</style></head><body>'+
       '<h2>'+title+'</h2><div class="sub">'+esc(legendHtml)+'</div>'+
-      '<div id="excelMapShell">'+table.outerHTML+'</div></body></html>');
+      '<div id="excelMapShell">'+(dpbBandedMapHtml(table)||table.outerHTML)+'</div></body></html>');
     w.document.close();
     const doPrint=()=>{try{w.focus();w.print();}catch(_){}};
     w.onload=doPrint;
@@ -17631,7 +17689,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(typeof window.__dpbTryLoadBuildResultFromCloud==="function") window.__dpbTryLoadBuildResultFromCloud();
   };
   q("dpbSupBack").onclick=back;
-  q("dpbSupGoProjects").onclick=()=>showScreen("projects");
+  {const _gp=q("dpbSupGoProjects");if(_gp)_gp.onclick=()=>showScreen("projects")}
   q("dpbSupHome").onclick=()=>showScreen("home");
   q("dpbSupSave").onclick=saveSelected;
   q("dpbSupContinueUnits").onclick=openSelectedTrackers;
