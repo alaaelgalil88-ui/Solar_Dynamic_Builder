@@ -190,13 +190,13 @@
   }
   var lastPrint=0;
   function finishPrintUi(){setTimeout(function(){try{window.dispatchEvent(new Event('afterprint'));}catch(e){}},300);}
-  function nativePrint(landscape,htmlDoc){
+  function nativePrint(landscape,htmlDoc,sizeArg){
     var now=Date.now();if(now-lastPrint<2500)return;lastPrint=now;
     var D=plug('DpbPrint');
     if(!D){toast('⚠️ إضافة الطباعة غير مركّبة في التطبيق');return;}
     var live=htmlDoc?null:buildLivePrintDoc();
     var html=htmlDoc||(live&&live.html)||'';
-    var size=(live&&live.cls==='print-plan')?'A3':'A4';
+    var size=sizeArg||((live&&live.cls==='print-plan')?'A3':'A4');
     var land=!!landscape;
     var legacy=function(){ // APK قديم من غير printHtml: الطريقة القديمة
       D.print({name:'DPB',landscape:land}).catch(function(e){toast('⚠️ تعذّر فتح الطباعة: '+(e&&e.message||e));});
@@ -220,7 +220,7 @@
   var origOpen=window.open;
   window.open=function(url,target){
     if(url!==''&&url!=null)return origOpen.apply(window,arguments);
-    var buf='',fake={onload:null,focus:function(){},print:function(){nativePrint(true,buf);},
+    var buf='',fake={onload:null,focus:function(){},print:function(){var o=window.__dpbPrintOpts;window.__dpbPrintOpts=null;nativePrint(o?o.landscape:true,buf,o&&o.size);},
       document:{write:function(h){buf+=h;},close:function(){showOverlay(buf);if(typeof fake.onload==='function')setTimeout(fake.onload,300);}}};
     return fake;
   };
@@ -625,6 +625,18 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   }
 }
 
+
+/* v104: cell-details cards size themselves to their content (auto width), STATUS sits at the end of the first row, one line per process */
+#mapDetail .map-detail-grid.mdAuto{display:flex!important;flex-wrap:wrap!important;gap:5px!important;grid-template-columns:none!important;align-items:stretch!important}
+#mapDetail .map-detail-grid.mdAuto .map-detail-item{flex:0 0 auto!important;width:max-content!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important}
+#mapDetail .map-detail-grid.mdAuto .map-detail-item.map-detail-status .v{white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;line-height:1.5!important}
+/* v105: every row of cards fills the full width (cards keep their own content width and share the spare space); the last row = STATUS + ENTRY */
+#mapDetail .map-detail-grid.mdAuto>.map-detail-item{flex:1 1 auto!important}
+#mapDetail .map-detail-grid.mdAuto>.mdLast{flex:0 0 100%;display:flex;gap:5px;width:100%;box-sizing:border-box}
+#mapDetail .map-detail-grid.mdAuto>.mdLast>.map-detail-item{flex:1 1 auto!important;width:auto!important;min-width:max-content!important;max-width:none!important;box-sizing:border-box}
+#mapDetail .map-detail-ent .v div{white-space:nowrap!important;line-height:1.5!important}
+#dpbSupMapCanvas #mapDetail .map-detail-grid.mdAuto>.mdLast>.map-detail-item{width:auto!important;max-width:none!important}
+#mapDetail .mdTick{color:#2ee27a!important;font-weight:900}
 </style>
 <script id="dpbBootDiag">
 /* On-screen error reporter: if anything throws (or nothing renders) the real message shows on the phone instead of a blank page. */
@@ -5241,17 +5253,19 @@ table.me-map{border-collapse:separate;border-spacing:2px;table-layout:fixed;marg
 .me-map td.me-u.me-sel{outline:3px solid #fff;outline-offset:1px;z-index:6;box-shadow:0 0 0 5px rgba(0,0,0,.7),0 0 12px 3px #fff}
 .me-map td.me-u.me-mark{outline:3px dashed #ffd23f;outline-offset:1px;z-index:5}
 .me-map td.me-u.me-mark:after{content:'';position:absolute;inset:0;background:rgba(255,210,63,.35);border-radius:4px;pointer-events:none}
-.me-map td.me-u.me-done{box-shadow:inset 0 0 0 2px rgba(255,255,255,.85);z-index:2}
+.me-map td.me-u.me-done{box-shadow:inset 0 0 0 1.5px #fff,inset 0 0 0 3px rgba(0,0,0,.38),inset 0 0 6px 2px rgba(255,255,255,.55);z-index:2}
 .me-map td.me-t{color:#d9e5f2;text-align:center;font-weight:800;font-size:10px}
 .me-map td.me-row{background:#1d3148;color:#fff;text-align:center;font-weight:800;font-size:11px;border-radius:4px}
 .me-map td.me-x{color:#7d93ab;text-align:center;font-size:9px;border:0!important;outline:0!important;background:transparent!important;box-shadow:none!important}
 #mapLegend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;height:auto!important;max-height:none!important;overflow:visible!important}
 #mapLegend .pill{height:auto!important;white-space:nowrap}
-.me-chip-list{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;width:100%;margin-top:6px;flex-basis:100%}
-.me-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:1px 0;white-space:nowrap;flex:0 0 auto}
+.me-chip-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px 8px;width:100%;margin-top:8px;flex-basis:100%}
+.me-chip{display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:8px;font-size:12px;line-height:1.2;padding:6px 9px;white-space:nowrap;border:1px solid rgba(255,255,255,.10);border-radius:9px;background:rgba(255,255,255,.04)}
+.me-chip .nm{overflow:hidden;text-overflow:ellipsis}.me-chip .ct{font-variant-numeric:tabular-nums;font-weight:800;opacity:.9}
+.me-chip>span[style]{grid-column:2/-1;overflow:hidden;text-overflow:ellipsis;font-weight:700}
 .me-chip i{width:12px;height:12px;border-radius:3px;display:inline-block;flex-shrink:0;border:1px solid #60738b}
-.me-chip i.ov{border-radius:50%;border:0;box-shadow:0 0 6px 1px currentColor}
-.me-zoom{display:inline-flex;gap:4px;margin-left:8px}.me-zoom button{border:1px solid rgba(255,255,255,.3);background:transparent;color:inherit;border-radius:6px;min-width:30px;height:26px;font-size:15px;cursor:pointer}
+.me-chip i.ov{border-radius:4px;border:0;box-shadow:inset 0 0 0 1.5px #fff,inset 0 0 0 3px rgba(0,0,0,.38),inset 0 0 5px 2px rgba(255,255,255,.55),0 0 7px 1px currentColor}
+.me-zoom{display:inline-flex;gap:4px;margin-left:auto}.me-zoom button{border:1px solid rgba(255,255,255,.3);background:transparent;color:inherit;border-radius:6px;min-width:30px;height:26px;font-size:15px;cursor:pointer}
 /* Row / Tracker filters + Reset are live in Phase 4 (unitPassesMapFilter dims non-matching cells) */
 `;
   document.head.appendChild(s);
@@ -5333,12 +5347,12 @@ function renderNow(){
     for(const [code,n] of [...per].sort((a,b)=>b[1]-a[1])){
       const row=model.siteCodes.get(code);
       const css=row&&row.css?row.css:'#fff';
-      listh+='<span class="me-chip"><i style="background:'+css+'"></i>'+esc(row?row.name:(colorNameOf(css)||'Unmapped'))+' · '+n+'</span>';
+      listh+='<span class="me-chip"><i style="background:'+css+'"></i><span class="nm">'+esc(row?row.name:(colorNameOf(css)||'Unmapped'))+'</span><span class="ct">'+n+'</span></span>';
     }
   }else{
-    [...counts].sort((a,b)=>b[1]-a[1]).slice(0,10).forEach(([css,n])=>{listh+='<span class="me-chip"><i style="background:'+css+'"></i>'+(css==='#ffffff'?'No fill':esc(colorNameOf(css)||css))+' · '+n+'</span>';});
+    [...counts].sort((a,b)=>b[1]-a[1]).slice(0,10).forEach(([css,n])=>{listh+='<span class="me-chip"><i style="background:'+css+'"></i><span class="nm">'+(css==='#ffffff'?'White':esc(colorNameOf(css)||css))+'</span><span class="ct">'+n+'</span></span>';});
   }
-  if(spec.legendOv)listh+='<span class="me-chip" style="color:'+spec.legendOv.css+'"><i class="ov" style="background:'+spec.legendOv.css+'"></i><span style="color:inherit">'+esc(spec.legendOv.label)+(prog?progLegend(progSumDone,progSumTotal):' · '+doneCount+' / '+model.units.length)+'</span></span>';
+  if(spec.legendOv)listh=(function(){let t='<span class="me-chip" style="color:'+spec.legendOv.css+'"><i class="ov" style="background:'+spec.legendOv.css+'"></i><span style="color:inherit">'+esc(spec.legendOv.label)+(prog?progLegend(progSumDone,progSumTotal):' · '+doneCount+' / '+model.units.length)+'</span></span>';return t;})()+listh;
   if(spec.color==='siteCode'){
     if(!model.siteCodes.size)lgh+='<span class="pill" style="background:#7a1f1f;color:#fff">⚠ جدول site_color_code مش مقروء من الـ Plan — الألوان من الإكسل</span>';
     else if(unmapped.size)lgh+='<span class="pill" style="background:#7a1f1f;color:#fff">⚠ أكواد/ألوان مش معروفة في site_color_code: '+esc([...unmapped].join(', '))+'</span>';
@@ -5847,7 +5861,7 @@ function details(id){
   // Only fields that actually carry useful data get a card — never a card
   // with a bare placeholder just to keep a fixed slot count.
   const item=(k,v,raw)=>'<div class="map-detail-item"><div class="k">'+k+'</div><div class="v">'+(raw?v:esc(v))+'</div></div>';
-  let cards='';
+  let cards='',statusCard='';
   if(u.rowLabel)cards+=item('ROW',u.rowLabel);
   if(u.label)cards+=item('TRACKER',u.label);
   if(u.total)cards+=item('POST',u.post+' / '+u.total);
@@ -5864,8 +5878,8 @@ function details(id){
     // ONE card: tracker type letter + its plan-colour swatch + colour name (e.g. A [swatch] purple)
     if(tType||pcss)cards+=item('ZONE',(tType?'<b style="font-size:15px">'+esc(String(tType).toUpperCase())+'</b> ':'')+(pcss?'<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+pcss+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(pname):''),true);
   }
-  const cname=colorNameOf(col.css)||(col.css==='#ffffff'?'No fill':col.css);
-  const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?' · no fill':col.src==='unmapped'?' · unmapped code':' · Excel fill';
+  const cname=colorNameOf(col.css)||(col.css==='#ffffff'?'White':col.css);
+  const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?'':col.src==='unmapped'?' · unmapped code':' · Excel fill';
   cards+=item('CELL COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true);
   const ops=(currentCatalog()||{maps:[]}).maps.filter(m=>m.op&&m.op.name&&m.op.kind!=='notstarted').map(m=>m.op);
   const progHere=(spec.op&&spec.op.kind!=='notstarted'&&progressInfoOfModel(model))?spec.op:null;
@@ -5877,8 +5891,8 @@ function details(id){
   if(done.length){
     // per process: "ramming · 7 / 14" = cells of this tracker done in that process
     const tu=(u.tracker&&u.tracker.units)||[];
-    const stLine=o=>{let t='';try{if(tu.length)t=' · '+tu.filter(x=>isDone(o,x)).length+' / '+tu.length;}catch(_){}return '✔️ '+esc(o.name)+t;};
-    cards+='<div class="map-detail-item map-detail-wide"><div class="k">STATUS</div><div class="v">'+done.map(stLine).join('<br>')+'</div></div>';
+    const stLine=o=>{let t='';try{if(tu.length)t=' · '+tu.filter(x=>isDone(o,x)).length+' / '+tu.length;}catch(_){}return '<div class="mdSt"><b class="mdTick">&#10004;&#xFE0E;</b> '+esc(o.name)+t+'</div>';};
+    statusCard='<div class="map-detail-item map-detail-status"><div class="k">STATUS</div><div class="v">'+done.map(stLine).join('')+'</div></div>';
   }
   const ramOp=ops.find(o=>isFirstStageName(o.name));
   if(ramOp&&isDone(ramOp,u)){
@@ -5900,18 +5914,50 @@ function details(id){
     // whichever field the record actually has is shown on its own.
     const opName=(rec&&rec.operator)?String(rec.operator).trim():'';
     const coName=(rec&&rec.company)?String(rec.company).trim():'';
-    let ramLine;
-    if(opName&&coName) ramLine='👤 '+esc(opName)+'<br>🏢 '+esc(coName);
-    else if(opName) ramLine='👤 '+esc(opName);
-    else if(coName) ramLine='🏢 '+esc(coName);
-    else ramLine='By Admin';
-    cards+='<div class="map-detail-item map-detail-wide"><div class="k">RAMMING OPERATOR</div><div class="v">'+ramLine+'</div></div>';
+    // v104: who entered it. Excel baseline cells = Admin; a cell entered by a supervisor shows that supervisor's own name.
+    const lines=[];
+    if(opName)lines.push('👤 '+esc(opName));
+    if(coName)lines.push('🏢 '+esc(coName));
+    // v105: "By <supervisor>" moved to the ENTRY card in the last row (all processes); this card keeps only operator/company
+    if(lines.length)cards+='<div class="map-detail-item map-detail-wide"><div class="k">RAMMING OPERATOR</div><div class="v">'+lines.join('<br>')+'</div></div>';
   }
   // SITE COLOR CODE: which zone this cell falls in on the Site Color Code
   // map (yellow/brown/blue/...), read live from the same Plan model every
   // other map (Ramming/Saddle/Bearing) already shares — never hardcoded, so
   // if the Plan's site_color_code table changes, this follows automatically.
-  box.innerHTML='<b>'+esc(spec.name)+'</b><div class="map-detail-grid">'+cards+'</div>';
+  // v105: LAST ROW = STATUS (first, left) + ENTRY (who entered this process, date, time). Both are auto-width and share the full row width.
+  cards+=dpbLastRow(statusCard,spec,u);
+  box.innerHTML='<b>'+esc(spec.name)+'</b><div class="map-detail-grid mdAuto">'+cards+'</div>';
+}
+/* v105: last row of Cell Details: STATUS + ENTRY card (supervisor / date / time of the process shown on this map). One line per item, no wrapping. */
+function dpbLastRow(statusCard,spec,u){
+  let ent='';
+  try{
+    const op=spec&&spec.op;
+    if(op&&op.name&&op.kind!=='notstarted'&&isDone(op,u)){
+      const nm=String(op.name).trim().toLowerCase();
+      const cands=dpbAllProductionRecords().filter(r=>String(r.process||'').trim().toLowerCase()===nm&&Number(r.r1)===u.r1&&Number(r.c1)===u.c1);
+      try{const f=window.DPB_FS2&&window.DPB_FS2.recordAt&&window.DPB_FS2.recordAt(op.name,u.r1,u.c1);if(f)cands.push(f);}catch(_){}
+      const rec=cands.sort((a,b)=>String(b.time||'').localeCompare(String(a.time||'')))[0];
+      const by=dpbEntryBy(rec);
+      const fromSheet=!rec||/^sheet_/i.test(String(rec.id||''))||String(rec.source||'')==='SheetImport';
+      let l='<div>By '+esc(by)+'</div>';
+      if(!fromSheet&&rec.time){
+        const d=new Date(rec.time);
+        if(!isNaN(d)){
+          l+='<div>📅 '+esc(d.toLocaleDateString('en-GB'))+'</div><div>🕒 '+esc(d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}))+'</div>';
+        }
+      }
+      ent='<div class="map-detail-item map-detail-ent"><div class="k">'+esc(op.name)+' · ENTRY</div><div class="v">'+l+'</div></div>';
+    }
+  }catch(_){}
+  return (statusCard||ent)?'<div class="mdLast">'+statusCard+ent+'</div>':'';
+}
+/* v104: who entered a cell. Excel baseline (id sheet_*, source SheetImport) or no record = Admin; otherwise the supervisor stored on the record. */
+function dpbEntryBy(rec){
+  if(!rec)return 'Admin';
+  if(/^sheet_/i.test(String(rec.id||''))||String(rec.source||'')==='SheetImport')return 'Admin';
+  return String(rec.user||rec.owner||rec.editedBy||'').trim()||'Admin';
 }
 function select(id){
   if(!state.last)return;const shell=document.getElementById('excelMapShell');
@@ -7844,7 +7890,7 @@ function applyMapRowFilter(value){
 }
 function applyMapNumberFilter(value){mapFilterState.number=(value==='all'?'':String(value||'').trim());DPBMap.refresh();}
 function applyMapStageFilter(value){mapFilterState.stage=value||'all';DPBMap.refresh();}
-function resetMapFilters(){mapFilterState={row:'all',number:'',stage:'all'};try{const j=document.getElementById('dpbSupMapTrackerJump');if(j)j.value='';}catch(_){}populateMapFilters();DPBMap.refresh();}
+function resetMapFilters(){mapFilterState={row:'all',number:'',stage:(mapViewState==='notstarted')?'0':(mapViewState==='site'?'plan':'all')};try{const j=document.getElementById('dpbSupMapTrackerJump');if(j)j.value='';}catch(_){}populateMapFilters();DPBMap.refresh();}
 
 function trackerPassesMapFilter(t){
   const rowHit=mapFilterState.row==='all'||String(t.row||'')===String(mapFilterState.row);
@@ -10277,6 +10323,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
               </div>
             </div>
             <div class="full"><label>العمليات المسموح بها لهذا المشرف</label><div id="dpbAdminSupProcesses" class="dpbAdminProcessPicker"></div><span class="dpbAllProcessHint">يمكن اختيار عملية واحدة أو أكثر، أو اختيار <b>كل العمليات</b> لمنحه صلاحية كاملة.</span></div>
+            <div class="full"><label>المشاريع المسموح بها لهذا المشرف</label><div id="dpbAdminSupProjects" class="dpbAdminProcessPicker"></div><span class="dpbAllProcessHint">لو اخترت مشروع واحد بس، المشرف بيدخله مباشرة بعد الرقم السري. لو أكتر من مشروع بتظهر له شاشة اختيار المشروع.</span></div>
             <div class="full dpbAdminActions">
               <button class="dpbAdminBtn primary" id="dpbAdminSaveSup">حفظ الحساب</button>
               <button class="dpbAdminBtn" id="dpbAdminCancelEdit">إلغاء التعديل</button>
@@ -10305,13 +10352,15 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     </div>
 
     <div class="dpbAdminTabPanel" data-tab="sync">
-      <section class="dpbAdminCard" id="dpbLastSyncCard">
-        <h3>حالة المزامنة والاتصال</h3>
-        <div class="hint" id="dpbLastSyncStatus">لسه مفيش أي محاولة مزامنة مسجّلة.</div>
-        <button type="button" class="dpbAdminBtn" id="dpbCloudSyncTestBtn" style="margin-top:8px;width:100%">🔄 اختبار الاتصال بمزامنة السحابة الآن</button>
-        <div class="hint" id="dpbCloudSyncTestStatus" style="margin-top:6px">لم يتم الاختبار بعد.</div>
-        <h3 style="margin-top:14px">أخطاء برمجية مسجّلة</h3>
-        <div class="hint" id="dpbJsErrorsStatus" style="white-space:pre-line">لا يوجد أخطاء مسجّلة.</div>
+      <section class="dpbAdminCard dpbSyncCard" id="dpbLastSyncCard">
+        <div class="dpbSyncHead"><span class="dpbSyncIc">☁️</span><div><h3>حالة المزامنة والاتصال</h3><div class="dpbSyncSub">آخر عملية مزامنة، واختبار الاتصال بالسحابة</div></div></div>
+        <div class="dpbSyncRow"><div class="dpbSyncLbl">آخر مزامنة</div><div class="hint" id="dpbLastSyncStatus">لسه مفيش أي محاولة مزامنة مسجّلة.</div></div>
+        <button type="button" class="dpbAdminBtn dpbSyncBtn" id="dpbCloudSyncTestBtn">🔄 اختبار الاتصال بالسحابة الآن</button>
+        <div class="dpbSyncRow"><div class="dpbSyncLbl">نتيجة الاختبار</div><div class="hint" id="dpbCloudSyncTestStatus">لم يتم الاختبار بعد.</div></div>
+      </section>
+      <section class="dpbAdminCard dpbSyncCard">
+        <div class="dpbSyncHead"><span class="dpbSyncIc">🧾</span><div><h3>أخطاء برمجية مسجّلة</h3><div class="dpbSyncSub">آخر 5 أخطاء على الجهاز ده</div></div></div>
+        <div class="dpbSyncRow"><div class="hint" id="dpbJsErrorsStatus" style="white-space:pre-line">لا يوجد أخطاء مسجّلة.</div></div>
       </section>
     </div>
 
@@ -10343,6 +10392,16 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       .dpbAdminTabBtn.active{background:linear-gradient(135deg,#146a52,#1a8f6e);color:#fff;border-color:transparent}
       .dpbAdminTabPanel{display:none}
       .dpbAdminTabPanel.active{display:block}
+      /* v106: Sync & Diagnostics layout (style only) */
+      .dpbAdminTabPanel[data-tab="sync"]{direction:rtl;text-align:right}
+      .dpbAdminTabPanel[data-tab="sync"] .dpbSyncHead{display:flex;align-items:center;gap:11px;margin-bottom:12px;padding-bottom:11px;border-bottom:1px solid rgba(255,255,255,.08)}
+      .dpbAdminTabPanel[data-tab="sync"] .dpbSyncIc{flex:0 0 38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:19px;background:rgba(77,141,255,.14);border:1px solid rgba(77,141,255,.3)}
+      .dpbAdminTabPanel[data-tab="sync"] .dpbSyncHead h3{margin:0;font-size:15px;line-height:1.3}
+      .dpbAdminTabPanel[data-tab="sync"] .dpbSyncSub{font-size:11px;color:#8fa7c2;margin-top:2px}
+      .dpbAdminTabPanel[data-tab="sync"] .dpbSyncRow{margin:0 0 10px}
+      .dpbAdminTabPanel[data-tab="sync"] .dpbSyncLbl{font-size:10.5px;font-weight:800;letter-spacing:.04em;color:#8fa7c2;margin:0 2px 5px}
+      .dpbAdminTabPanel[data-tab="sync"] .dpbSyncRow .hint{background:#091827;border:1px solid #243b57;border-radius:11px;padding:10px 12px;font-size:12.5px;line-height:1.75;color:#d6e3f0;overflow-wrap:anywhere}
+      .dpbAdminTabPanel[data-tab="sync"] .dpbSyncBtn{width:100%;margin:2px 0 12px;padding:12px;font-size:13.5px;font-weight:800;border-radius:12px}
     </style>
     <script>
     document.addEventListener('click',function(ev){
@@ -10389,6 +10448,31 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     if(all) all.checked=set.has("*");
     q("dpbAdminSupProcesses").querySelectorAll('input[data-process-id]').forEach(x=>x.disabled=set.has("*"));
   }
+  /* v108: المشاريع المسموحة لكل مشرف. projectIds غايب أو ["*"] = كل المشاريع (الحسابات القديمة بتفضل شغالة زي ما هي). الأدمن دايمًا بيشوف كل المشاريع. */
+  function accountProjectIds(a){
+    const r=a&&a.projectIds;
+    const ids=Array.isArray(r)?r.map(String):String(r||"").split(",").map(x=>x.trim()).filter(Boolean);
+    return ids.length?ids:["*"];
+  }
+  function adminProjectList(){const all=window.__dpbProjectRecords||[];return all.filter(x=>!x.auto||all.length===1);}
+  function selectedAdminProjectIds(){
+    const root=q("dpbAdminSupProjects");if(!root)return ["*"];
+    if(root.querySelector('input[data-all]:checked'))return ["*"];
+    return [...root.querySelectorAll('input[data-project-id]:checked')].map(x=>String(x.dataset.projectId));
+  }
+  function refreshProjectSelect(selectedIds){
+    const root=q("dpbAdminSupProjects");if(!root)return;
+    const list=adminProjectList(),ids=(selectedIds&&selectedIds.length?selectedIds:["*"]).map(String),set=new Set(ids);
+    root.innerHTML=`<label class="dpbAdminProcessOption all"><input type="checkbox" data-all> <span><b>كل المشاريع</b> · بما فيها أي مشروع جديد</span></label>`+
+      (list.length?list.map(p=>`<label class="dpbAdminProcessOption"><input type="checkbox" data-project-id="${esc(p.id)}"> <span>${esc(p.name||"Project")}</span></label>`).join(""):'<div class="hint">لا توجد مشاريع مرفوعة بعد.</div>');
+    const all=root.querySelector('input[data-all]');
+    const sync=()=>{const on=!!all?.checked;root.querySelectorAll('input[data-project-id]').forEach(x=>{x.disabled=on;if(on)x.checked=false;});};
+    if(all)all.onchange=sync;
+    root.querySelectorAll('input[data-project-id]').forEach(x=>x.onchange=()=>{if(x.checked&&all)all.checked=false;sync();});
+    root.querySelectorAll('input[data-project-id]').forEach(x=>x.checked=set.has(String(x.dataset.projectId)));
+    if(all)all.checked=set.has("*");
+    sync();
+  }
   function refreshProcessSelect(selectedIds=[]){
     const root=q("dpbAdminSupProcesses"), list=processes();
     if(!root)return;
@@ -10414,7 +10498,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     root.innerHTML=list.map(a=>{
       const ids=accountProcessIds(a);
       const all=isAllProcesses(a);
-      const names=all?"كل العمليات":ids.map(id=>processes().find(x=>String(x.id)===id)?.name||"العملية غير متاحة").filter(Boolean).join(" · ")||"لا توجد صلاحية";
+      let names=all?"كل العمليات":ids.map(id=>processes().find(x=>String(x.id)===id)?.name||"العملية غير متاحة").filter(Boolean).join(" · ")||"لا توجد صلاحية";
+      {const pj=accountProjectIds(a);names+=" · مشاريع: "+(pj.includes("*")?"كل المشاريع":pj.map(id=>((window.__dpbProjectRecords||[]).find(x=>String(x.id)===id)||{}).name||"مشروع غير متاح").join(" + "));}
       return `<div class="dpbAdminRow"><div><b>${esc(a.name)}</b><small>${esc(names)} · PIN ${esc(a.pin)} · ${a.active===false?"غير مفعل":"مفعل"}</small></div><div class="dpbAdminActions"><button class="dpbAdminBtn" data-edit="${esc(a.id)}">تعديل</button><button class="dpbAdminBtn ${a.active===false?"green":"danger"}" data-toggle="${esc(a.id)}">${a.active===false?"تفعيل":"تعطيل"}</button><button class="dpbAdminBtn danger" data-del="${esc(a.id)}">حذف</button></div></div>`;
     }).join("");
     root.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>editAccount(b.dataset.edit));
@@ -10624,11 +10709,11 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     };
     if(clr)clr.onclick=()=>setAdminPhoto("");
   })();
-  function resetForm(){editingId=null;q("dpbAdminSupName").value="";q("dpbAdminSupPin").value="";setAdminPhoto("");refreshProcessSelect([]);q("dpbAdminSaveSup").textContent="حفظ الحساب";}
+  function resetForm(){editingId=null;q("dpbAdminSupName").value="";q("dpbAdminSupPin").value="";setAdminPhoto("");refreshProcessSelect([]);refreshProjectSelect(["*"]);q("dpbAdminSaveSup").textContent="حفظ الحساب";}
   function editAccount(id){
     const a=accounts().find(x=>x.id===id);if(!a)return;
     editingId=id;q("dpbAdminSupName").value=a.name;q("dpbAdminSupPin").value=a.pin;setAdminPhoto(a.photo||"");
-    refreshProcessSelect(accountProcessIds(a));
+    refreshProcessSelect(accountProcessIds(a));refreshProjectSelect(accountProjectIds(a));
     q("dpbAdminSaveSup").textContent="حفظ التعديل";q("dpbAdminSupName").focus()
   }
   function pushAccountToSheet(a){
@@ -10637,7 +10722,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     // is also visible to anyone editing the Sheet directly. Never blocks
     // the local save — if the Sheet is unreachable this simply no-ops.
     if(!window.DPB_GS||typeof window.DPB_GS.pushUser!=="function"||!a||!a.name)return;
-    window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,active:a.active!==false,photo:a.photo||""});
+    window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,projectIds:accountProjectIds(a),active:a.active!==false,photo:a.photo||""});
   }
   function toggleAccount(id){const a=accounts();const i=a.findIndex(x=>x.id===id);if(i<0)return;a[i].active=a[i].active===false;saveAccounts(a);pushAccountToSheet(a[i])}
   function deleteAccount(id){const a=accounts().find(x=>x.id===id);if(!a)return;if(!confirm(`حذف حساب المشرف ${a.name}؟`))return;saveAccounts(accounts().filter(x=>x.id!==id));if(editingId===id)resetForm();const rm=window.DPB_GS&&window.DPB_GS.removeUserSafe;if(typeof rm==="function"){rm(a.name).then(r=>{if(!(r&&r.ok))alert("اتحذف المشرف "+a.name+" من الجهاز ده. مقدرتش أحذفه من السيرفر دلوقتي (مفيش اتصال أو الاتصال فشل)، وهيتحذف لوحده أول ما النت يرجع.")})}}
@@ -10654,7 +10739,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     if(!processIds.length){alert("اختار عملية واحدة على الأقل، أو اختر كل العمليات.");return}
     const a=accounts(),duplicate=a.find(x=>x.name.toLowerCase()===name.toLowerCase()&&x.id!==editingId);if(duplicate){alert("اسم المستخدم موجود بالفعل.");return}
     const all=processIds.includes("*");
-    const payload={name,pin,processIds,processId:all?"*":processIds[0],allProcesses:all,active:true,photo:adminPhoto||"",updatedAt:new Date().toISOString()};
+    const projectIds=selectedAdminProjectIds();
+    if(!projectIds.length){alert("اختار مشروع واحد على الأقل، أو اختر كل المشاريع.");return}
+    const payload={name,pin,processIds,processId:all?"*":processIds[0],allProcesses:all,projectIds,active:true,photo:adminPhoto||"",updatedAt:new Date().toISOString()};
     if(editingId){const i=a.findIndex(x=>x.id===editingId);if(i>=0)a[i]={...a[i],...payload}}
     else a.push({id:uid(),...payload,createdAt:new Date().toISOString()});
     saveAccounts(a);pushAccountToSheet(payload);resetForm();alert("تم حفظ حساب المشرف وتحديد صلاحيات العمليات.");
@@ -11228,7 +11315,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   function showAdminAfterPin(){
     q("dpbAdminPinModal").style.display="none";q("dpbAdminPinModal").setAttribute("aria-hidden","true");
     q("dpbStartGate").classList.add('dpbForceHidden');q("dpbStartGate").style.display="none";q("dpbProjectHome").style.display="none";q("dpbAdminOverlay").style.display="block";q("dpbAdminOverlay").setAttribute("aria-hidden","false");
-    refreshProcessSelect();renderAccounts();renderProductionEdits();
+    refreshProcessSelect();refreshProjectSelect(['*']);renderAccounts();renderProductionEdits();
     try{ if(window.DPB_GS&&window.DPB_GS.syncUsersFromSheet) window.DPB_GS.syncUsersFromSheet().then(ch=>{ if(ch){ try{renderAccounts();}catch(_){} } }).catch(()=>{}); }catch(_){}
     dpbSyncAdminTopOffset();
     // FIX (فحص اتصال تلقائي): بدل ما نكتشف إن الرابط غلط بعد ما نحفظ
@@ -11793,6 +11880,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       name,
       pin:String(u.password||u.Password||"").trim(),
       processIds:allProcesses?["*"]:processIds,
+      projectIds:(function(r){const a=Array.isArray(r)?r.map(String):String(r||"").split(",").map(x=>x.trim()).filter(Boolean);return a.length?a:["*"];})(u.projectIds||u.ProjectIDs),
       processId:allProcesses?"*":(processIds[0]||""),
       allProcesses,
       isAdmin,
@@ -12235,7 +12323,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
           }
         }
       }else{
-        showCloudStatus("⚠️ السيرفر رفض حفظ البيانات: "+(json&&json.error?json.error:"سبب غير معروف"));
+        {const em=String(json&&json.error?json.error:"");
+          if(/network-request-failed|network|timeout|timed out|unavailable|offline|failed to fetch/i.test(em))
+            showCloudStatus("📡 الاتصال بالسحابة ضعيف أو مقطوع لحظيًا، فالرفع اتأجّل. بياناتك محفوظة على الجهاز وهتترفع تلقائيًا أول ما الاتصال يرجع.");
+          else showCloudStatus("⚠️ السيرفر رفض حفظ البيانات: "+(em||"سبب غير معروف"));}
       }
     }catch(e){
       if(e&&e.__dpbCooldown){ showCloudStatus("⏸️ الاتصال بسيرفر المزامنة بيفشل باستمرار - بنجرب تلقائيًا بعد شوية بدل ما نضغط عليه كل ثانيتين."); return; }
@@ -17228,14 +17319,33 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(allowed.includes("*"))return list;
     if(!allowed.length)return [];
     const ok=new Set(allowed.map(String));
-    return list.filter(x=>ok.has(String(x.procId||x.id)));
+    // v104: "Not Started" is a whole-site view (no process of its own), so it stays in the list for every supervisor, like in the Builder
+    return list.filter(x=>x.kind==="notstarted"||ok.has(String(x.procId||x.id)));
+  }
+  /* v104: pure helper for the supervisor ROW / TRACKER selects. The selected row decides which trackers are offered; a tracker that does not
+     belong to the chosen row falls back to "All Trackers"; the wanted values come from mapFilterState (so Reset really resets the dropdowns). */
+  function dpbSupSyncFilters(rowsSrc,wantRow,wantNum,nOf){
+    const rowVals=rowsSrc.map(r=>String(r.label||""));
+    const rowVal=rowVals.includes(String(wantRow))?String(wantRow):"all";
+    const seen=new Map();
+    rowsSrc.filter(r=>rowVal==="all"||String(r.label)===rowVal).forEach(r=>(r.trackers||[]).forEach(t=>{const n=nOf(t);if(n&&!seen.has(n))seen.set(n,t)}));
+    const list=[...seen.values()].sort((a,b)=>Number(nOf(a))-Number(nOf(b)));
+    const numVal=list.some(t=>nOf(t)===String(wantNum))?String(wantNum):"all";
+    return {rowVals,rowVal,list,numVal};
   }
   function supervisorRefreshMapButtons(){const groups=DPBMap.options(),f=q("dpbSupMapFixed"),o=q("dpbSupMapOps");if(!f||!o)return;supervisorFillMapSelect(f,groups.fixed,'Select Fixed Map');supervisorFillMapSelect(o,supervisorFilterOps(groups.operations),'Select Operation');f.onchange=()=>{if(f.value){applyMapView(f.value);o.value='';supervisorRefreshMapButtons()}};o.onchange=()=>{if(o.value){applyMapView(o.value);f.value='';supervisorRefreshMapButtons()}};const row=q("dpbSupMapRow"),tr=q("dpbSupMapTracker");
     let pd=null;try{pd=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null}catch(_){}
     const rowsSrc=(pd&&pd.rows&&pd.rows.length)?pd.rows:(project.buildResult?.rows||[]).map(r=>({label:String(r.label||r.name||r.row||""),trackers:r.trackers||[]}));
     const nOf=t=>String(t&&t.number!=null?t.number:String((t&&t.label)||"").replace(/\D/g,""));
-    if(row){const old=row.value;row.innerHTML='<option value="all">All Rows</option>'+rowsSrc.map(r=>{const v=String(r.label||"");return `<option value="${esc(v)}">${esc(v)}</option>`}).join("");row.value=[...row.options].some(x=>x.value===old)?old:"all"}
-    if(tr){const old=tr.value;const rowVal=row?row.value:"all";const seen=new Map();rowsSrc.filter(r=>rowVal==="all"||String(r.label)===String(rowVal)).forEach(r=>(r.trackers||[]).forEach(t=>{const n=nOf(t);if(n&&!seen.has(n))seen.set(n,t)}));const list=[...seen.values()].sort((a,b)=>Number(nOf(a))-Number(nOf(b)));tr.innerHTML='<option value="all">All Trackers</option>'+list.map(t=>`<option value="${esc(nOf(t))}">${esc(t.label||("T"+nOf(t)))}</option>`).join("");tr.value=[...tr.options].some(x=>x.value===old)?old:"all"}}
+    const wantRow=(typeof mapFilterState!=="undefined"&&mapFilterState.row)?String(mapFilterState.row):"all";
+    const wantNum=(typeof mapFilterState!=="undefined"&&mapFilterState.number)?String(mapFilterState.number):"";
+    const syn=dpbSupSyncFilters(rowsSrc,wantRow,wantNum,nOf);
+    if(typeof mapFilterState!=="undefined"){if(syn.rowVal!==wantRow)mapFilterState.row=syn.rowVal;if(syn.numVal==="all"&&wantNum)mapFilterState.number="";}
+    if(row){row.innerHTML='<option value="all">All Rows</option>'+syn.rowVals.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");row.value=syn.rowVal;
+      row.onchange=()=>{try{applyMapRowFilter(row.value);}catch(e){console.warn(e)}supervisorRefreshMapButtons();};}
+    if(tr){tr.innerHTML='<option value="all">All Trackers</option>'+syn.list.map(t=>`<option value="${esc(nOf(t))}">${esc(t.label||("T"+nOf(t)))}</option>`).join("");tr.value=syn.numVal;
+      tr.onchange=()=>{try{applyMapNumberFilter(tr.value);}catch(e){console.warn(e)}};}
+  }
   window.supervisorRefreshMapButtons=supervisorRefreshMapButtons;
   function jumpToMapTracker(){
     const el=q("dpbSupMapTrackerJump");if(!el)return;
@@ -17289,6 +17399,114 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       return out;
     }catch(e){console.warn("banded map print failed",e);return null;}
   }
+
+  /* v105: طباعة ديناميكية. بتقيس البلوكات الفعلية (عرض/ارتفاع كل ROW)، وتجرّب الورق والاتجاه، وتختار توزيع بحيث:
+     - كل صفحة تبدأ ببلوك كامل (صف أرقام التراكرات T1.. بيبقى أول الصفحة) ومفيش بلوك بيتقطع،
+     - البلوكات متوزعة بالتساوي (مفيش صفحة فيها 4 وصفحة فيها 1)،
+     - الخلايا مش أصغر من حد مقروء. */
+  const DPB_MM=3.7795;                       // px لكل mm
+  const DPB_PG={A4:[210,297],A3:[297,420]};   // mm (طولي)
+  const DPB_MARGIN=8, DPB_HEAD=13, DPB_FOOT=6, DPB_GAP=3;   // mm
+  const DPB_MIN_PREF=3.0, DPB_MIN_ABS=2.2;    // أقل مقاس خلية بالمليمتر (مفضّل / مطلق)
+  function dpbMeasureBands(table){
+    const d=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null;
+    if(!d||!d.rows||!d.rows.length)return null;
+    const all=[...(table.tBodies[0]?table.tBodies[0].rows:[])];if(!all.length)return null;
+    const bands=[];let prevEnd=d.top-1;
+    d.rows.forEach(row=>{
+      const start=prevEnd+1,end=row.r2;prevEnd=Math.max(prevEnd,end);
+      const a=Math.max(0,start-d.top),b=Math.min(all.length-1,end-d.top);if(a>b)return;
+      const r0=all[a].getBoundingClientRect(),r1=all[b].getBoundingClientRect();
+      bands.push({a,b,label:row.label,h:Math.max(1,r1.bottom-r0.top)+3});
+    });
+    const tw=table.getBoundingClientRect().width;
+    const td=table.querySelector('td.me-u');
+    const cell=td?td.getBoundingClientRect().width:27;
+    if(!bands.length||!(tw>0))return null;
+    return {bands,all,w:tw,cell:cell>0?cell:27};
+  }
+  function dpbPlanPrint(m,size,orient){
+    const N=m.bands.length,hMax=Math.max.apply(null,m.bands.map(b=>b.h));
+    const cands=[];
+    ['portrait','landscape'].forEach(o=>{
+      if(orient!=='auto'&&orient!==o)return;
+      const pw=DPB_PG[size][o==='portrait'?0:1],ph=DPB_PG[size][o==='portrait'?1:0];
+      const aw=(pw-2*DPB_MARGIN)*DPB_MM, ah=(ph-2*DPB_MARGIN-DPB_HEAD-DPB_FOOT)*DPB_MM, gap=DPB_GAP*DPB_MM;
+      const sw=aw/m.w;                                   // أكبر مقياس يسمح بيه العرض (بيملا عرض الصفحة)
+      for(let k=1;k<=N;k++){
+        const sh=(ah-(k-1)*gap)/(k*hMax);               // أكبر مقياس يسمح بيه الارتفاع لـ k بلوك
+        const sc=Math.min(sw,sh);
+        const mm=m.cell*sc/DPB_MM;
+        const pages=Math.ceil(N/k);
+        cands.push({o,k,sc,mm,pages,pw,ph});
+      }
+    });
+    const pick=(minMm)=>{
+      let best=null;
+      cands.filter(c=>c.mm>=minMm).forEach(c=>{
+        // أقل عدد صفحات، وبعدين مقاس خلية أكبر، وبعدين توزيع متساوي
+        const bal=(N%c.pages===0)?0:1;
+        const key=[c.pages,-Math.round(c.mm*10),bal];
+        if(!best||key[0]<best.key[0]||(key[0]===best.key[0]&&(key[1]<best.key[1]||(key[1]===best.key[1]&&key[2]<best.key[2])))){c.key=key;best=c;}
+      });
+      return best;
+    };
+    let c=pick(DPB_MIN_PREF),small=false;
+    if(!c){c=pick(DPB_MIN_ABS);small=!!c;}
+    if(!c){c=cands.slice().sort((a,b)=>b.mm-a.mm)[0];small=true;}
+    // اتوزع بالتساوي: pages صفحات، كل صفحة ≤ k بلوك، الفرق بين أي صفحتين بلوك واحد على الأكثر
+    const base=Math.floor(N/c.pages),extra=N%c.pages,counts=[];
+    for(let p=0;p<c.pages;p++)counts.push(base+(p<extra?1:0));
+    return {N,size,orient:c.o,pages:c.pages,counts,sc:c.sc,mm:c.mm,small,pw:c.pw,ph:c.ph};
+  }
+  function dpbPlanPrintHtml(table,m,pl,title,legendHtml){
+    const aw=(pl.pw-2*DPB_MARGIN),ah=(pl.ph-2*DPB_MARGIN-1);
+    const bands=m.bands.map(b=>{
+      const t=document.createElement("table");t.className=table.className;t.style.cssText=table.style.cssText;
+      const tb=document.createElement("tbody");
+      for(let i=b.a;i<=b.b;i++)tb.appendChild(m.all[i].cloneNode(true));
+      t.appendChild(tb);
+      return '<div class="dpbBnd" style="zoom:'+pl.sc.toFixed(4)+';width:'+Math.ceil(m.w)+'px">'+t.outerHTML+'</div>';
+    });
+    let out='',i=0;
+    for(let p=0;p<pl.pages;p++){
+      const last=p===pl.pages-1,n=pl.counts[p];
+      out+='<div class="dpbPg" style="width:'+aw+'mm;height:'+ah+'mm;'+(last?'':'break-after:page;page-break-after:always;')+'">'+
+        '<div class="dpbPgH"><b>'+title+'</b><span>'+esc(legendHtml)+'</span></div>'+
+        '<div class="dpbPgB">'+bands.slice(i,i+n).join('')+'</div>'+
+        '<div class="dpbPgF">'+(p+1)+' / '+pl.pages+'</div></div>';
+      i+=n;
+    }
+    return out;
+  }
+  function dpbPrintDialog(table,onGo){
+    const m=dpbMeasureBands(table);
+    if(!m){onGo(null);return;}
+    let size='A4',orient='auto';
+    const old=document.getElementById('dpbPrintDlg');if(old)old.remove();
+    const o=document.createElement('div');o.id='dpbPrintDlg';
+    o.style.cssText='position:fixed;inset:0;z-index:2147482000;background:rgba(3,10,20,.72);display:flex;align-items:center;justify-content:center;padding:14px';
+    o.innerHTML='<div dir="rtl" style="background:#0e1b2c;border:1px solid #29405e;border-radius:14px;padding:14px;max-width:420px;width:100%;color:#eef5ff;font-family:system-ui;text-align:right">'+
+      '<div style="font-weight:900;font-size:15px;margin-bottom:10px">معاينة الطباعة</div>'+
+      '<div style="display:flex;gap:8px;margin-bottom:8px"><label style="flex:1;font-size:11px;color:#8fa7c2">الورق<select id="dpbPdSize" style="width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e"><option>A4</option><option>A3</option></select></label>'+
+      '<label style="flex:1;font-size:11px;color:#8fa7c2">الاتجاه<select id="dpbPdOri" style="width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e"><option value="auto">تلقائي</option><option value="portrait">طولي</option><option value="landscape">عرضي</option></select></label></div>'+
+      '<div id="dpbPdSum" style="font-size:12.5px;line-height:1.7;background:#0b1828;border:1px solid #29405e;border-radius:10px;padding:9px 11px;margin-bottom:6px"></div>'+
+      '<div id="dpbPdPrev" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px"></div>'+
+      '<div style="display:flex;gap:8px"><button id="dpbPdGo" style="flex:1;padding:11px;border:0;border-radius:10px;background:#1f8f5f;color:#fff;font-weight:900">طباعة</button><button id="dpbPdNo" style="flex:1;padding:11px;border:1px solid #29405e;border-radius:10px;background:transparent;color:#eef5ff;font-weight:800">إلغاء</button></div></div>';
+    document.body.appendChild(o);
+    const refresh=()=>{
+      const pl=dpbPlanPrint(m,size,orient);o._pl=pl;
+      const ori=pl.orient==='portrait'?'طولي':'عرضي';
+      o.querySelector('#dpbPdSum').innerHTML=pl.N+' ROW · <b>'+pl.pages+' صفحة</b> '+size+' '+ori+'<br>البلوكات في الصفحة: '+pl.counts.join(' + ')+'<br>مقاس الخلية على الورق ≈ '+pl.mm.toFixed(1)+' مم'+
+        (pl.small?'<br><span style="color:#f6c86b">الخلايا صغيرة؛ جرّب A3 أو الاتجاه التاني.</span>':'');
+      o.querySelector('#dpbPdPrev').innerHTML=pl.counts.map((n,i)=>'<div style="flex:0 0 auto;width:'+(pl.orient==='portrait'?44:62)+'px;height:'+(pl.orient==='portrait'?62:44)+'px;border:1px solid #4d8dff;border-radius:4px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:3px;box-sizing:border-box">'+Array(n).fill('<i style="display:block;flex:1;background:#2b4a70;border-radius:2px"></i>').join('')+'</div>').join('');
+    };
+    o.querySelector('#dpbPdSize').onchange=e=>{size=e.target.value;refresh();};
+    o.querySelector('#dpbPdOri').onchange=e=>{orient=e.target.value;refresh();};
+    o.querySelector('#dpbPdNo').onclick=()=>o.remove();
+    o.querySelector('#dpbPdGo').onclick=()=>{const pl=o._pl;o.remove();onGo({m,pl});};
+    refresh();
+  }
   function exportSupervisorMapPdf(){
     const s=DPBMap.state.last;
     if(!s){showToast("محدش عارض خريطة دلوقتي.");return;}
@@ -17297,13 +17515,15 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(!table){showToast("مفيش خريطة لتصديرها دلوقتي.");return;}
     const title=esc(s.spec.name||"Map");
     const legend=document.getElementById("mapLegend");
-    const legendHtml=legend?legend.innerText.trim():"";
+    const legendHtml=legend?[...legend.querySelectorAll('.pill,.me-chip')].map(e=>e.innerText.replace(/\s+/g,' ').trim()).filter(Boolean).join('  ·  '):"";
     // Reuse the EXACT live map stylesheet (same classes/CSS vars the screen
     // uses) so the printed grid matches what's on screen pixel-for-pixel,
     // instead of a hand-rolled stylesheet that drifts from it (empty <td>
     // cells with no width/height rule collapse and visually merge together).
     const liveCss=document.getElementById("dpbMapEngineCss");
     const liveCssText=liveCss?liveCss.textContent:"";
+    dpbPrintDialog(table,function(plan){
+    window.__dpbPrintOpts=plan?{landscape:plan.pl.orient==='landscape',size:plan.pl.size}:null;
     const w=window.open("","_blank");
     if(!w){showToast("المتصفح منع فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة وحاول تاني.");return;}
     w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+title+'</title><style>'+
@@ -17319,14 +17539,20 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       '.dpbBnd{break-inside:avoid;page-break-inside:avoid;margin:0 0 6px 0}.dpbPg{break-inside:auto}'+
       '.me-map td.me-u{cursor:default}'+
       'html,body,body #excelMapShell,body #excelMapShell table.me-map{background:#fff!important}.me-map td.me-t{color:#222!important}'+
-      '@page{size:landscape;margin:8mm}'+
+      '@page{size:'+(plan?plan.pl.size+' '+plan.pl.orient:'landscape')+';margin:'+DPB_MARGIN+'mm}'+
+      (plan?'.dpbPg{display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;margin:0 auto}'+
+        '.dpbPgH{display:flex;flex-direction:column;gap:1px;height:'+DPB_HEAD+'mm;overflow:hidden;font-size:11pt}.dpbPgH span{font-size:6.5pt;color:#555;line-height:1.25;max-height:7mm;overflow:hidden}'+
+        '.dpbPgB{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;align-items:center;min-height:0}'+
+        '.dpbPgF{height:'+DPB_FOOT+'mm;text-align:center;font-size:8pt;color:#555}'+
+        '.dpbBnd{margin:0!important}':'')+
       '</style></head><body>'+
-      '<h2>'+title+'</h2><div class="sub">'+esc(legendHtml)+'</div>'+
-      '<div id="excelMapShell">'+(dpbBandedMapHtml(table)||table.outerHTML)+'</div></body></html>');
+      (plan?'':'<h2>'+title+'</h2><div class="sub">'+esc(legendHtml)+'</div>')+
+      '<div id="excelMapShell">'+(plan?dpbPlanPrintHtml(table,plan.m,plan.pl,title,legendHtml):(dpbBandedMapHtml(table)||table.outerHTML))+'</div></body></html>');
     w.document.close();
     const doPrint=()=>{try{w.focus();w.print();}catch(_){}};
     w.onload=doPrint;
     setTimeout(doPrint,400);
+    });
   }
   /* v97: Project Maps (supervisor) رجعت للخرايط الرسومية: Fixed Maps كاملة + Operations الديناميك للعمليات المسموحة للمشرف بس (supervisorFilterOps).
      جدول حالة التراكرات (openSupervisorMaps) لسه موجود في الكود بس مش بيتفتح من الزر. */
@@ -17518,7 +17744,18 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   }
   /* ---- Project cards (after the PIN): tapping a card opens that project and pulls its data from the cloud by itself ---- */
   let projLoadSeq=0, projOpening=false;
-  function projList(){const all=window.__dpbProjectRecords||[];return all.filter(x=>!x.auto||all.length===1)}
+  function projList(){
+    const all=window.__dpbProjectRecords||[];
+    let ps=all.filter(x=>!x.auto||all.length===1);
+    // v108: المشرف (مش الأدمن) بيشوف بس المشاريع اللي الأدمن حددها له. projectIds غايب أو "*" = الكل.
+    try{
+      const a=state.account;
+      if(a&&!a.isAdmin&&Array.isArray(a.projectIds)&&a.projectIds.length&&!a.projectIds.map(String).includes("*")){
+        const ok=new Set(a.projectIds.map(String));ps=ps.filter(x=>ok.has(String(x.id)));
+      }
+    }catch(_){}
+    return ps;
+  }
   function renderProjectCards(){
     const root=q("dpbSupProjCards"),msg=q("dpbSupProjectsMsg"); if(!root||!msg)return;
     const seq=++projLoadSeq, t0=Date.now();
@@ -17527,6 +17764,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       const ps=projList();
       root.innerHTML=ps.length?ps.map(p=>`<button type="button" class="dpbSupNavCard" data-proj="${escapeHtml(p.id)}"><strong>🗂️ ${escapeHtml(p.name||"Project")}</strong><span>${escapeHtml(p.id)}${p.trackerCount?" · "+Number(p.trackerCount).toLocaleString()+" Tracker":""}${p.built?" · جاهز ✅":""}</span></button>`).join(""):'<div class="hint">مفيش مشاريع لسه. الأدمن لازم ينشئ مشروع ويرفع الإكسل الأول.</div>';
       root.querySelectorAll("[data-proj]").forEach(b=>b.onclick=()=>openProjectCard(b.dataset.proj,b));
+      // v108: مشرف مسموح له بمشروع واحد بس: يدخله مباشرة بعد الرقم السري من غير شاشة اختيار
+      if(state.autoOpenProject&&ps.length===1){state.autoOpenProject=false;openProjectCard(ps[0].id,null);}
     };
     const done=()=>{if(seq!==projLoadSeq)return;msg.textContent="دوس على كارت المشروع. بيفتح فورًا من الجهاز، والتحديث بيتم في الخلفية.";paint()};
     // الكروت بتظهر فورًا من القايمة المحفوظة على الجهاز، ومزامنة قايمة المشاريع من السحابة بتحصل في الخلفية وبتحدّث الكروت لما تخلص
@@ -17640,7 +17879,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(!account){q("dpbSupLoginErr").textContent="اختار الحساب أولاً.";return}
     const finishLogin=(acc)=>{
       state.account=acc;state.assignedProcessIds=supervisorAllowedProcessIds(acc);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=acc.name;
-      q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";showScreen("projects");
+      q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";state.autoOpenProject=!acc.isAdmin;showScreen("projects");
       if(window.DPB_GS&&typeof window.DPB_GS.logHistory==="function")window.DPB_GS.logHistory({user:state.user,action:"login",details:acc.isAdmin?"Admin":"Supervisor"});
     };
     const rejectLogin=()=>{q("dpbSupLoginErr").textContent="الرقم السري غير صحيح لهذا الحساب.";q("dpbSupPass").value="";updateSupPinDots()};
@@ -18062,6 +18301,10 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
 }
 /* STATUS can list several completed operations — never truncate it. */
 #dpbSupMapCanvas #mapDetail .map-detail-item.map-detail-wide .v{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;line-height:1.5!important}
+  #dpbSupMapCanvas #mapDetail .map-detail-grid.mdAuto{display:flex!important;flex-wrap:wrap!important;gap:5px!important;grid-template-columns:none!important}
+  #dpbSupMapCanvas #mapDetail .map-detail-grid.mdAuto .map-detail-item{flex:0 0 auto!important;width:max-content!important;max-width:100%!important}
+  #dpbSupMapCanvas #mapDetail .map-detail-item.map-detail-status .v{white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;line-height:1.5!important}
+  #dpbSupMapCanvas #mapDetail .mdTick{color:#2ee27a!important;font-weight:900}
 
 /* PIN LOGIN: larger keys, but the complete 4x3 keypad always fits the viewport. */
 #dpbSupLogin{
@@ -20574,3 +20817,124 @@ button:not(:disabled):active,.btn:not(:disabled):active,
 .dpbPhotoBtns{display:flex;flex-wrap:wrap;gap:8px}
 .dpbPhotoBtns label.dpbAdminBtn{cursor:pointer;display:inline-flex;align-items:center}
 </style>
+
+<!-- v109: النقطة 11 — محاذاة العربي يمين، خطوط، وميض الأزرار، إخفاء الكيبورد -->
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@600;700;800&family=Tajawal:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
+<style id="dpbV109Polish">
+:root{
+  --dpb-font-head:"Cairo","Tajawal","Noto Kufi Arabic","Noto Sans Arabic","Segoe UI",system-ui,-apple-system,sans-serif;
+  --dpb-font-body:"Tajawal","Noto Sans Arabic","Segoe UI",system-ui,-apple-system,sans-serif;
+}
+/* العناوين: خط وتنسيق مختلف عن الشرح */
+h1,h2,h3,h4,.card>h3,.dpbAdminTabs button,.master-role b,.master-role strong,.master-title,.dpbAdminTitle{
+  font-family:var(--dpb-font-head);font-weight:800;letter-spacing:.1px}
+/* الشرح والملاحظات */
+.small,.hint,.notice,label,small,.fileName,.dpbProjectScopeNote,.master-role small,.master-role span small,p{
+  font-family:var(--dpb-font-body);font-weight:500;line-height:1.55}
+/* الخرائط والجداول والأكواد تفضل زي ما هي */
+.excel-plan,.excel-plan *{font-family:Arial,sans-serif}
+/* وميض الضغط على الأزرار: شفاف وسريع، من غير ظل خارجي وبدون ما يغيّر المقاس */
+@keyframes dpbBtnFlash{
+  30%{box-shadow:inset 0 0 0 100vmax rgba(255,255,255,.17),0 0 14px rgba(120,190,255,.38);filter:brightness(1.18)}
+}
+.dpbFlash{animation:dpbBtnFlash .36s ease-out}
+button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
+@media (prefers-reduced-motion:reduce){.dpbFlash{animation:none}}
+</style>
+<script id="dpbV109Script">
+(function(){
+  "use strict";
+  /* ---------- 1) وميض الضغط ---------- */
+  var FLASH_SEL='button,.btn,[role="button"],input[type="button"],input[type="submit"],summary,.master-role,.float-nav-btn,.dpbAdminTabs button,nav button';
+  document.addEventListener('pointerdown',function(e){
+    try{
+      var t=e.target&&e.target.closest?e.target.closest(FLASH_SEL):null;
+      if(!t||t.disabled||t.getAttribute('aria-disabled')==='true')return;
+      if(t.closest('.excel-plan'))return;
+      t.classList.remove('dpbFlash');void t.offsetWidth;t.classList.add('dpbFlash');
+    }catch(_){}
+  },{passive:true,capture:true});
+  document.addEventListener('animationend',function(e){
+    if(e.animationName==='dpbBtnFlash'&&e.target&&e.target.classList)e.target.classList.remove('dpbFlash');
+  },true);
+
+  /* ---------- 2) الكيبورد بعد «Processes from One File» ---------- */
+  function hideKeyboard(el){try{el.blur()}catch(_){}}
+  document.addEventListener('input',function(e){
+    var el=e.target;if(!el||el.id!=='processGrouped'||el.readOnly)return;
+    var tot=Number((document.getElementById('processTotal')||{}).value||0);
+    var s=String(el.value||'').trim();if(s==='')return;
+    var v=Number(s);if(!Number.isInteger(v)||v<0)return;
+    /* لو الرقم مينفعش يتضاف له خانة تانية من غير ما يعدّي الإجمالي، يبقى خلصنا إدخال */
+    if(tot>0&&v<=tot&&(v===0||v*10>tot)){hideKeyboard(el);}
+  },true);
+  document.addEventListener('keydown',function(e){
+    var el=e.target;if(el&&el.id==='processGrouped'&&(e.key==='Enter'||e.key==='Go'||e.key==='Done')){e.preventDefault();hideKeyboard(el);}
+  },true);
+  (function(){var el=document.getElementById('processGrouped');if(el){el.setAttribute('enterkeyhint','done');}})();
+
+  /* ---------- 3) محاذاة العربي من اليمين ---------- */
+  var AR=/[\u0600-\u06FF]/;
+  var SKIP='.excel-plan,script,style,textarea,input,select,svg,[contenteditable="true"],[data-dpb-ltr],#dpbSupUser,#dpbAdminSupName,.dpbBackupRow';
+  var done=new WeakSet();
+  function blockOf(el){
+    var n=el,cs;
+    while(n&&n!==document.body){cs=getComputedStyle(n);if(cs.display!=='inline'&&cs.display!=='contents')return n;n=n.parentElement;}
+    return null;
+  }
+  function fixText(node){
+    var p=node.parentElement;if(!p||p.closest(SKIP))return;
+    var b=blockOf(p);if(!b||done.has(b)||b.closest(SKIP))return;
+    done.add(b);
+    var cs=getComputedStyle(b);
+    var ta=cs.textAlign;
+    if(ta==='center'||ta==='right'||ta==='end'||ta==='justify')return;      /* تصميم متعمّد */
+    if(cs.display==='table-cell'&&b.closest('table')&&b.closest('table').classList.contains('excel-plan'))return;
+    b.style.setProperty('direction','rtl','important');
+    b.style.setProperty('text-align','right','important');
+    var par=b.parentElement;
+    if(par){
+      var pc=getComputedStyle(par);
+      if((pc.display==='flex'||pc.display==='inline-flex')&&pc.flexDirection.indexOf('column')===0&&cs.alignSelf==='auto'){
+        b.style.setProperty('align-self','stretch','important');
+      }
+    }
+  }
+  var queue=new Set(),timer=0;
+  function scan(root){
+    if(!root||root.nodeType!==1||root.closest&&root.closest(SKIP))return;
+    var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{acceptNode:function(n){
+      return AR.test(n.nodeValue)?NodeFilter.FILTER_ACCEPT:NodeFilter.FILTER_REJECT;}});
+    var n,count=0;
+    while((n=w.nextNode())){fixText(n);if(++count>4000)break;}
+  }
+  function flush(){
+    timer=0;var t0=performance.now();
+    var it=queue.values(),r;
+    while(!(r=it.next()).done){
+      queue.delete(r.value);
+      if(r.value.isConnected)scan(r.value);
+      if(performance.now()-t0>10){break;}
+    }
+    if(queue.size)timer=setTimeout(flush,60);
+  }
+  function enqueue(el){queue.add(el);if(!timer)timer=setTimeout(flush,80);}
+  if(!window.__dpbRtlOff){
+    try{
+      var mo=new MutationObserver(function(ms){
+        for(var i=0;i<ms.length;i++){
+          var a=ms[i].addedNodes;
+          for(var j=0;j<a.length;j++){
+            var n=a[j];
+            if(n.nodeType===1){if(n.tagName==='TABLE'&&n.classList.contains('excel-plan'))continue;enqueue(n);}
+            else if(n.nodeType===3&&n.parentElement&&AR.test(n.nodeValue))enqueue(n.parentElement);
+          }
+        }
+      });
+      mo.observe(document.body,{childList:true,subtree:true});
+      enqueue(document.body);
+    }catch(_){}
+  }
+})();
+</script>
