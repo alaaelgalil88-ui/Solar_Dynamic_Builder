@@ -5927,7 +5927,7 @@ function details(id){
   // if the Plan's site_color_code table changes, this follows automatically.
   // v105: LAST ROW = STATUS (first, left) + ENTRY (who entered this process, date, time). Both are auto-width and share the full row width.
   cards+=dpbLastRow(statusCard,spec,u);
-  box.innerHTML='<b>'+esc(spec.name)+'</b><div class="map-detail-grid mdAuto">'+cards+'</div>';
+  box.innerHTML='<b>'+esc(spec.name)+'</b><div class="map-detail-grid">'+cards+'</div>';
 }
 /* v105: last row of Cell Details: STATUS + ENTRY card (supervisor / date / time of the process shown on this map). One line per item, no wrapping. */
 function dpbLastRow(statusCard,spec,u){
@@ -17405,7 +17405,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
      - البلوكات متوزعة بالتساوي (مفيش صفحة فيها 4 وصفحة فيها 1)،
      - الخلايا مش أصغر من حد مقروء. */
   const DPB_MM=3.7795;                       // px لكل mm
-  const DPB_PG={A4:[210,297],A3:[297,420]};   // mm (طولي)
+  const DPB_PG={A0:[841,1189],A1:[594,841],A2:[420,594],A3:[297,420],A4:[210,297]};   // mm (طولي)
   const DPB_MARGIN=8, DPB_HEAD=13, DPB_FOOT=6, DPB_GAP=3;   // mm
   const DPB_MIN_PREF=3.0, DPB_MIN_ABS=2.2;    // أقل مقاس خلية بالمليمتر (مفضّل / مطلق)
   function dpbMeasureBands(table){
@@ -17425,7 +17425,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(!bands.length||!(tw>0))return null;
     return {bands,all,w:tw,cell:cell>0?cell:27};
   }
-  function dpbPlanPrint(m,size,orient){
+  function dpbPlanPrint(m,size,orient,rowsFixed){
     const N=m.bands.length,hMax=Math.max.apply(null,m.bands.map(b=>b.h));
     const cands=[];
     ['portrait','landscape'].forEach(o=>{
@@ -17434,6 +17434,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       const aw=(pw-2*DPB_MARGIN)*DPB_MM, ah=(ph-2*DPB_MARGIN-DPB_HEAD-DPB_FOOT)*DPB_MM, gap=DPB_GAP*DPB_MM;
       const sw=aw/m.w;                                   // أكبر مقياس يسمح بيه العرض (بيملا عرض الصفحة)
       for(let k=1;k<=N;k++){
+        if(rowsFixed&&k!==Math.min(rowsFixed,N))continue;
         const sh=(ah-(k-1)*gap)/(k*hMax);               // أكبر مقياس يسمح بيه الارتفاع لـ k بلوك
         const sc=Math.min(sw,sh);
         const mm=m.cell*sc/DPB_MM;
@@ -17460,7 +17461,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     return {N,size,orient:c.o,pages:c.pages,counts,sc:c.sc,mm:c.mm,small,pw:c.pw,ph:c.ph};
   }
   function dpbPlanPrintHtml(table,m,pl,title,legendHtml){
-    const aw=(pl.pw-2*DPB_MARGIN),ah=(pl.ph-2*DPB_MARGIN-1);
+    const aw=(pl.pw-2*DPB_MARGIN),ah=(pl.ph-2*DPB_MARGIN-2);
     const bands=m.bands.map(b=>{
       const t=document.createElement("table");t.className=table.className;t.style.cssText=table.style.cssText;
       const tb=document.createElement("tbody");
@@ -17482,27 +17483,35 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   function dpbPrintDialog(table,onGo){
     const m=dpbMeasureBands(table);
     if(!m){onGo(null);return;}
-    let size='A4',orient='auto';
+    let size='A4',orient='auto',rows=0;
+    try{const pf=JSON.parse(localStorage.getItem('DPB_PRINT_PREF')||'{}');if(DPB_PG[pf.size])size=pf.size;if(['auto','portrait','landscape'].indexOf(pf.orient)>=0)orient=pf.orient;if(pf.rows>0)rows=pf.rows;}catch(_){}
+    const native=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()&&Capacitor.Plugins&&Capacitor.Plugins.DpbPrint);
     const old=document.getElementById('dpbPrintDlg');if(old)old.remove();
     const o=document.createElement('div');o.id='dpbPrintDlg';
     o.style.cssText='position:fixed;inset:0;z-index:2147482000;background:rgba(3,10,20,.72);display:flex;align-items:center;justify-content:center;padding:14px';
     o.innerHTML='<div dir="rtl" style="background:#0e1b2c;border:1px solid #29405e;border-radius:14px;padding:14px;max-width:420px;width:100%;color:#eef5ff;font-family:system-ui;text-align:right">'+
       '<div style="font-weight:900;font-size:15px;margin-bottom:10px">معاينة الطباعة</div>'+
-      '<div style="display:flex;gap:8px;margin-bottom:8px"><label style="flex:1;font-size:11px;color:#8fa7c2">الورق<select id="dpbPdSize" style="width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e"><option>A4</option><option>A3</option></select></label>'+
+      '<div style="display:flex;gap:8px;margin-bottom:8px"><label style="flex:1;font-size:11px;color:#8fa7c2">الورق<select id="dpbPdSize" style="width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e"><option>A0</option><option>A1</option><option>A2</option><option>A3</option><option>A4</option></select></label>'+
       '<label style="flex:1;font-size:11px;color:#8fa7c2">الاتجاه<select id="dpbPdOri" style="width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e"><option value="auto">تلقائي</option><option value="portrait">طولي</option><option value="landscape">عرضي</option></select></label></div>'+
+      '<label style="display:block;font-size:11px;color:#8fa7c2;margin-bottom:8px">عدد الـ ROW في الصفحة<select id="dpbPdRows" style="width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e"><option value="0">تلقائي (أفضل توزيع)</option>'+Array.from({length:Math.min(m.bands.length,30)},(_,i)=>'<option value="'+(i+1)+'">'+(i+1)+'</option>').join('')+'</select></label>'+
       '<div id="dpbPdSum" style="font-size:12.5px;line-height:1.7;background:#0b1828;border:1px solid #29405e;border-radius:10px;padding:9px 11px;margin-bottom:6px"></div>'+
       '<div id="dpbPdPrev" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px"></div>'+
       '<div style="display:flex;gap:8px"><button id="dpbPdGo" style="flex:1;padding:11px;border:0;border-radius:10px;background:#1f8f5f;color:#fff;font-weight:900">طباعة</button><button id="dpbPdNo" style="flex:1;padding:11px;border:1px solid #29405e;border-radius:10px;background:transparent;color:#eef5ff;font-weight:800">إلغاء</button></div></div>';
     document.body.appendChild(o);
     const refresh=()=>{
-      const pl=dpbPlanPrint(m,size,orient);o._pl=pl;
+      const pl=dpbPlanPrint(m,size,orient,rows);o._pl=pl;
       const ori=pl.orient==='portrait'?'طولي':'عرضي';
       o.querySelector('#dpbPdSum').innerHTML=pl.N+' ROW · <b>'+pl.pages+' صفحة</b> '+size+' '+ori+'<br>البلوكات في الصفحة: '+pl.counts.join(' + ')+'<br>مقاس الخلية على الورق ≈ '+pl.mm.toFixed(1)+' مم'+
-        (pl.small?'<br><span style="color:#f6c86b">الخلايا صغيرة؛ جرّب A3 أو الاتجاه التاني.</span>':'');
+        (pl.small?'<br><span style="color:#f6c86b">الخلايا صغيرة؛ جرّب ورق أكبر أو الاتجاه التاني أو عدد ROW أقل في الصفحة.</span>':'');
+      {const big=native&&['A0','A1','A2'].indexOf(size)>=0;const go=o.querySelector('#dpbPdGo');go.disabled=big;go.style.opacity=big?'.45':'1';
+       if(big)o.querySelector('#dpbPdSum').innerHTML+='<br><span style="color:#f6c86b">⚠ إضافة الطباعة في الـ APK الحالي بتدعم A3 وA4 بس. A0 وA1 وA2 شغالين من المتصفح، وفي الـ APK محتاجين تحديث الإضافة.</span>';}
       o.querySelector('#dpbPdPrev').innerHTML=pl.counts.map((n,i)=>'<div style="flex:0 0 auto;width:'+(pl.orient==='portrait'?44:62)+'px;height:'+(pl.orient==='portrait'?62:44)+'px;border:1px solid #4d8dff;border-radius:4px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:3px;box-sizing:border-box">'+Array(n).fill('<i style="display:block;flex:1;background:#2b4a70;border-radius:2px"></i>').join('')+'</div>').join('');
     };
-    o.querySelector('#dpbPdSize').onchange=e=>{size=e.target.value;refresh();};
-    o.querySelector('#dpbPdOri').onchange=e=>{orient=e.target.value;refresh();};
+    const savePref=()=>{try{localStorage.setItem('DPB_PRINT_PREF',JSON.stringify({size,orient,rows}));}catch(_){}};
+    o.querySelector('#dpbPdSize').value=size;o.querySelector('#dpbPdOri').value=orient;o.querySelector('#dpbPdRows').value=String(rows);
+    o.querySelector('#dpbPdRows').onchange=e=>{rows=Number(e.target.value)||0;savePref();refresh();};
+    o.querySelector('#dpbPdSize').onchange=e=>{size=e.target.value;savePref();refresh();};
+    o.querySelector('#dpbPdOri').onchange=e=>{orient=e.target.value;savePref();refresh();};
     o.querySelector('#dpbPdNo').onclick=()=>o.remove();
     o.querySelector('#dpbPdGo').onclick=()=>{const pl=o._pl;o.remove();onGo({m,pl});};
     refresh();
@@ -17539,8 +17548,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       '.dpbBnd{break-inside:avoid;page-break-inside:avoid;margin:0 0 6px 0}.dpbPg{break-inside:auto}'+
       '.me-map td.me-u{cursor:default}'+
       'html,body,body #excelMapShell,body #excelMapShell table.me-map{background:#fff!important}.me-map td.me-t{color:#222!important}'+
-      '@page{size:'+(plan?plan.pl.size+' '+plan.pl.orient:'landscape')+';margin:'+DPB_MARGIN+'mm}'+
-      (plan?'.dpbPg{display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;margin:0 auto}'+
+      '@page{size:'+(plan?plan.pl.pw+'mm '+plan.pl.ph+'mm':'landscape')+';margin:'+DPB_MARGIN+'mm}'+
+      (plan?'html,body{margin:0!important;padding:0!important}.dpbPg{display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;margin:0 auto}'+
         '.dpbPgH{display:flex;flex-direction:column;gap:1px;height:'+DPB_HEAD+'mm;overflow:hidden;font-size:11pt}.dpbPgH span{font-size:6.5pt;color:#555;line-height:1.25;max-height:7mm;overflow:hidden}'+
         '.dpbPgB{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;align-items:center;min-height:0}'+
         '.dpbPgF{height:'+DPB_FOOT+'mm;text-align:center;font-size:8pt;color:#555}'+
@@ -20936,5 +20945,116 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
       enqueue(document.body);
     }catch(_){}
   }
+})();
+</script>
+
+<!-- v110: overlay مضيء، legend، كروت التفاصيل، تنسيق تاب المزامنة -->
+<style id="dpbV110">
+/* ===== 1) الـ overlay: تلوين الخلية كلها + لمعة داخلية، من غير إطار أبيض ===== */
+.me-map td.me-u.me-done:not(.me-prog){
+  background-image:radial-gradient(130% 130% at 26% 20%,rgba(255,255,255,.66) 0%,rgba(255,255,255,.20) 36%,rgba(255,255,255,0) 64%)!important;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.26),inset 0 0 0 2px rgba(255,255,255,.16),inset 0 0 7px 1px rgba(255,255,255,.42)!important;
+  filter:none!important}
+.me-chip i.ov{border:0!important;border-radius:4px;
+  background-image:radial-gradient(130% 130% at 26% 20%,rgba(255,255,255,.66) 0%,rgba(255,255,255,.20) 36%,rgba(255,255,255,0) 64%)!important;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.26),inset 0 0 0 2px rgba(255,255,255,.16),inset 0 0 6px 1px rgba(255,255,255,.42),0 0 7px 1px currentColor!important}
+/* ===== 2) الـ legend: كل الألوان ظاهرة في شبكة بتلف صفوف ===== */
+#mapLegend .me-chip-list{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(148px,1fr))!important;gap:6px!important;width:100%!important;flex:0 0 100%!important;overflow:visible!important;margin-top:8px}
+#mapLegend .me-chip{display:grid!important;grid-template-columns:16px minmax(0,1fr) auto!important;align-items:center!important;gap:7px!important;min-width:0!important;padding:6px 9px!important;white-space:nowrap}
+#mapLegend .me-chip[style]{grid-column:1/-1}
+#mapLegend .me-chip .nm{display:block!important;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mapLegend .me-chip .ct{display:block!important}
+/* ===== 3) كروت تفاصيل الخلية: الشكل القديم، وآخر صف بس (STATUS + ENTRY) بعرض أوتو ===== */
+#mapDetail .map-detail-grid>.mdLast,#dpbSupMapCanvas #mapDetail .map-detail-grid>.mdLast{
+  grid-column:1/-1!important;display:flex!important;flex-wrap:wrap!important;gap:5px!important;direction:ltr!important;width:100%!important;box-sizing:border-box!important}
+#mapDetail .map-detail-grid>.mdLast>.map-detail-item,#dpbSupMapCanvas #mapDetail .map-detail-grid>.mdLast>.map-detail-item{
+  flex:1 1 auto!important;width:auto!important;min-width:max-content!important;max-width:100%!important;text-align:left!important;box-sizing:border-box!important}
+#mapDetail .mdLast .map-detail-item .v,#dpbSupMapCanvas #mapDetail .mdLast>.map-detail-item .v,#dpbSupMapCanvas #mapDetail .mdLast>.map-detail-item .v div{
+  white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;line-height:1.55!important}
+/* ===== 4) تاب المزامنة: كارت الطبقة الجديدة ===== */
+#dpbFs2Card{direction:rtl;text-align:right}
+#dpbFs2Card>h3{margin:0 0 6px;font-size:16px}
+#dpbFs2Card .fs2Sec{font-size:10.5px;font-weight:900;letter-spacing:.06em;color:#8fa7c2;margin:14px 2px 7px}
+#dpbFs2Card .fs2Btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#dpbFs2Card .fs2Btns>button,#dpbFs2Card details button{width:100%!important;min-height:46px;margin:0!important;padding:8px 6px!important;font-size:13px!important;font-weight:800;line-height:1.3;white-space:normal;text-align:center}
+#dpbFs2Card .fs2Opt{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;margin-bottom:8px;border:1px solid #243b57;border-radius:12px;background:#091827}
+#dpbFs2Card .fs2OptTxt{min-width:0;flex:1}
+#dpbFs2Card .fs2OptT{font-size:13.5px;font-weight:800;color:#eef5ff;line-height:1.4}
+#dpbFs2Card .fs2OptS{font-size:11.5px;color:#9db2c7;line-height:1.7;margin-top:3px}
+#dpbFs2Card .fs2OptS select{display:inline-block!important;width:auto!important;min-width:64px;margin:0 4px;padding:3px 6px;border-radius:8px;border:1px solid #3a5878;background:#0d1b2e;color:#fff;font-size:13px}
+#dpbFs2Card .fs2Sw{position:relative;flex:0 0 46px;width:46px;height:26px;display:block;margin:0}
+#dpbFs2Card .fs2Sw input{position:absolute;inset:0;width:100%!important;height:100%!important;margin:0;opacity:0;cursor:pointer;z-index:2}
+#dpbFs2Card .fs2SwTrack{position:absolute;inset:0;border-radius:999px;background:#2a3b4f;border:1px solid #3a5878;transition:background .15s}
+#dpbFs2Card .fs2SwTrack:after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#cfd9e4;transition:transform .15s}
+#dpbFs2Card .fs2Sw input:checked+.fs2SwTrack{background:#1a8f6e;border-color:#35d39a}
+#dpbFs2Card .fs2Sw input:checked+.fs2SwTrack:after{transform:translateX(20px);background:#fff}
+#dpbFs2Card .fs2Fld{margin-bottom:9px}
+#dpbFs2Card .fs2Lbl{font-size:11px;font-weight:800;color:#8fa7c2;margin:0 2px 5px}
+#dpbFs2Card .fs2Fld input{width:100%!important;margin:0!important;padding:11px 12px!important;border-radius:10px!important;font-size:14px!important;direction:ltr!important;text-align:left!important}
+#dpbFs2Card details{margin-top:12px!important;border:1px solid #243b57;border-radius:12px;background:#091827;padding:4px 12px}
+#dpbFs2Card details summary{padding:10px 0;font-size:12.5px!important;font-weight:800;list-style:none}
+#dpbFs2Card details summary::-webkit-details-marker{display:none}
+#dpbFs2Card details>div{display:grid!important;grid-template-columns:1fr 1fr;gap:8px!important;margin:0 0 10px!important}
+#dpbFs2Card details>div select{width:100%!important;min-height:46px}
+#dpbFs2Card .fs2Box{margin-top:8px;border:1px solid #243b57;border-radius:12px;background:#091827;overflow:hidden}
+#dpbFs2Card .fs2BoxT{font-size:10.5px;font-weight:900;letter-spacing:.05em;color:#8fa7c2;padding:8px 12px 0}
+#dpbFs2Card .fs2Box>.hint{margin:0!important;padding:5px 12px 10px!important;background:transparent!important;border:0!important;font-size:12.5px;line-height:1.85;white-space:pre-line;overflow-wrap:anywhere;unicode-bidi:plaintext}
+#dpbFs2Card .fs2Box>.hint:empty{display:none}
+#dpbFs2Card .fs2Box:has(>.hint:empty){display:none}
+#dpbFs2Card .fs2StHead{font-weight:700}
+#dpbFs2Card .fs2Chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#dpbFs2Card .fs2Chip{display:inline-flex;align-items:center;gap:8px;padding:4px 10px;border-radius:999px;border:1px solid #2c4663;background:#0d1e30;font-size:12px;direction:ltr}
+#dpbFs2Card .fs2Chip i{font-style:normal;font-weight:900;color:#7fe4b4}
+</style>
+<script id="dpbV110Script">
+(function(){
+  "use strict";
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+  var mk=function(tag,cls,html){var e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e;};
+  function build(c){
+    if(!c||c.getAttribute('data-v110'))return;
+    var ids=['dpbFs2Backup','dpbFs2Ext','dpbFs2Dir','dpbFs2Auto','dpbFs2AutoMin','dpbFs2Drive','dpbFs2Url','dpbFs2Email','dpbFs2DriveInfo','dpbFs2BkInfo','dpbFs2State','dpbFs2Msg'];
+    var el={};for(var i=0;i<ids.length;i++){el[ids[i]]=c.querySelector('#'+ids[i]);if(!el[ids[i]])return;}
+    var h3=c.querySelector('h3'),hint=c.querySelector(':scope>.hint'),det=c.querySelector('details');
+    c.setAttribute('data-v110','1');
+    var sw=function(input){var l=mk('label','fs2Sw');l.appendChild(input);l.appendChild(mk('span','fs2SwTrack'));return l;};
+    var opt=function(title,sub,input){var r=mk('div','fs2Opt'),t=mk('div','fs2OptTxt');t.appendChild(mk('div','fs2OptT',title));var s=mk('div','fs2OptS');
+      if(typeof sub==='string')s.textContent=sub;else s.appendChild(sub);t.appendChild(s);r.appendChild(t);r.appendChild(sw(input));return r;};
+    var fld=function(label,input){var f=mk('div','fs2Fld');f.appendChild(mk('div','fs2Lbl',label));input.removeAttribute('style');f.appendChild(input);return f;};
+    var box=function(title,node){var b=mk('div','fs2Box');b.appendChild(mk('div','fs2BoxT',title));b.appendChild(node);node.removeAttribute('style');return b;};
+    var btns=mk('div','fs2Btns');['dpbFs2Backup','dpbFs2Ext','dpbFs2Dir'].forEach(function(id){el[id].removeAttribute('style');if(id==='dpbFs2Dir')el[id].style.display='none';btns.appendChild(el[id]);});
+    var intSub=mk('div');intSub.appendChild(document.createTextNode('كل '));intSub.appendChild(el.dpbFs2AutoMin);intSub.appendChild(document.createTextNode(' دقيقة'));var nt=mk('div',null,'لو في تغيير فقط، وعلى جهاز الأدمن بس');nt.style.cssText='font-size:11px;opacity:.85';intSub.appendChild(nt);
+    var kids=[];
+    kids.push(h3);if(hint)kids.push(hint);
+    kids.push(mk('div','fs2Sec','نسخ احتياطي'));kids.push(btns);
+    kids.push(mk('div','fs2Sec','الإعدادات'));
+    kids.push(opt('نسخة تلقائية',intSub,el.dpbFs2Auto));
+    kids.push(opt('رفع نسخة على Google Drive','يحتاج رابط السكربت وإيميل Drive أدناه',el.dpbFs2Drive));
+    kids.push(fld('رابط سكربت النسخ الاحتياطي (ينتهي بـ /exec)',el.dpbFs2Url));
+    kids.push(fld('إيميل Google Drive اللي تترفع عليه النسخة',el.dpbFs2Email));
+    if(det)kids.push(det);
+    kids.push(mk('div','fs2Sec','الحالة'));
+    kids.push(box('Google Drive',el.dpbFs2DriveInfo));
+    kids.push(box('النسخ الاحتياطية',el.dpbFs2BkInfo));
+    kids.push(box('حالة الطبقة',el.dpbFs2State));
+    kids.push(box('رسائل',el.dpbFs2Msg));
+    while(c.firstChild)c.removeChild(c.firstChild);
+    kids.forEach(function(k){c.appendChild(k);});
+    /* سطر العدّادات: «الحالة … — منفّذ دلوقتي: A: 1 | B: 2» يتحول لكروت صغيرة، كل عملية لوحدها */
+    var st=el.dpbFs2State,busy=false;
+    function fmt(){
+      if(busy||st.childNodes.length!==1||st.firstChild.nodeType!==3)return;
+      var t=st.textContent,k=t.indexOf('منفّذ دلوقتي:');if(k<0)return;
+      var head=t.slice(0,k).replace(/[\s—\-]+$/,''),list=t.slice(k+'منفّذ دلوقتي:'.length).split('|');
+      var chips=list.map(function(x){x=x.trim();var j=x.lastIndexOf(':');return j<0?'':'<span class="fs2Chip">'+esc(x.slice(0,j).trim())+' <i>'+esc(x.slice(j+1).trim())+'</i></span>';}).join('');
+      busy=true;st.innerHTML='<div class="fs2StHead">'+esc(head)+'</div><div class="fs2Sec" style="margin:8px 0 0">منفّذ دلوقتي</div><div class="fs2Chips" style="margin-top:6px">'+chips+'</div>';busy=false;
+    }
+    try{new MutationObserver(fmt).observe(st,{childList:true,characterData:true,subtree:false});}catch(_){}
+    fmt();
+  }
+  function tick(){var c=document.getElementById('dpbFs2Card');if(c)build(c);}
+  var t0=0;
+  try{new MutationObserver(function(){if(t0)return;t0=setTimeout(function(){t0=0;tick();},60);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
+  tick();
 })();
 </script>
