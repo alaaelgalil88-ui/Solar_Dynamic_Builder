@@ -8089,7 +8089,7 @@ window.dpbPrintSupTable=function(tbl,procName){
   const E=x=>String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const perPage=150,pages=Math.max(1,Math.ceil(data.length/perPage));
   const html=Array.from({length:pages},(_,i)=>{const part=data.slice(i*perPage,(i+1)*perPage);
-    return `<div class="print-report-page"><div class="print-report-head"><h2 style="margin:0 0 1mm;font-size:13px">Activity Report — ${E(procName||'')} — Tracker Production Status</h2><div style="font-size:7px;color:#555">Page ${i+1} of ${pages} · ${part.length} Trackers</div></div>
+    return `<div class="print-report-page"><div class="print-report-head"><h2 style="margin:0 0 1mm;font-size:13px">Activity Report — ${E(procName==='الكل'?'All Operations':(procName||''))} — Tracker Production Status</h2><div style="font-size:7px;color:#555">Page ${i+1} of ${pages} · ${part.length} Trackers</div></div>
     <div class="print-summary">${summary.map(x=>`<div class="box"><div class="k">${E(x[0])}</div><div class="v">${x[1]}</div><div class="pct">${x[2]}</div></div>`).join('')}</div>
     <div class="print-panel-grid"><table class="print-panel"><thead><tr>${head.map(h=>`<th>${E(h)}</th>`).join('')}</tr></thead><tbody>${part.map(r=>`<tr>${r.map(c=>`<td>${E(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
     <div class="print-page-number">Page ${i+1} of ${pages}</div></div>`;}).join('');
@@ -21077,5 +21077,51 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 #mapLegend .me-chip-list{grid-template-columns:repeat(2,minmax(0,1fr))!important;max-height:none!important;overflow:visible!important}
 #dpbFs2Card .fs2Btns>button{display:flex!important;align-items:center;justify-content:center;visibility:visible!important;opacity:1!important;color:#eaf2f8!important;background:rgba(255,255,255,.06)!important;border:1px solid rgba(255,255,255,.18)!important;height:auto!important;overflow:visible!important}
 #dpbMsProcs button[data-p="__all"]{border-style:dashed}
+
+#dpbMsProcs,#dpbRpProcs{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:6px!important;width:100%!important;box-sizing:border-box!important;margin-top:8px}
+#dpbMsProcs button,#dpbRpProcs button{width:100%!important;min-width:0!important;height:40px!important;display:flex!important;align-items:center;justify-content:center;gap:6px;padding:0 6px!important;margin:0!important;white-space:nowrap!important;overflow:hidden!important;box-sizing:border-box!important;font-size:13px}
+#dpbMsProcs button i,#dpbRpProcs button i{flex:0 0 auto}
+/* login: دايرة بس حوالين الصورة، من غير إطار/توهج مربع */
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn .dpbUserAvatar,#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active .dpbUserAvatar{box-shadow:0 0 0 3px rgba(2,12,28,.9)!important;filter:none!important}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active .dpbUserAvatar:before{display:none!important;content:none!important}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active b{text-shadow:none!important}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active small.dpbUserPerm{box-shadow:none!important}
+#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn:after,#dpbSupLogin #dpbSupAccounts .dpbSupAccountBtn.active:after{box-shadow:none!important}
+/* admin: حالة الملفات المحمّلة في عمود واحد منسّق */
+#dpbFsStatus{white-space:normal!important;display:block}
+#dpbFsStatus .fsRow{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid rgba(255,255,255,.07);direction:rtl}
+#dpbFsStatus .fsRow:last-child{border-bottom:0}
+#dpbFsStatus .fsIc{text-align:center;font-size:15px}
+#dpbFsStatus .fsLb{font-weight:800;font-size:13px;unicode-bidi:plaintext;text-align:start}
+#dpbFsStatus .fsVl{font-size:12px;opacity:.9;unicode-bidi:plaintext;text-align:left}
 </style>
+<script id="dpbV111Script">
+(function(){"use strict";
+  var raf=0;
+  function fit(root){
+    var bs=(root||document).querySelectorAll('#dpbMsProcs button,#dpbRpProcs button');
+    for(var i=0;i<bs.length;i++){var b=bs[i];b.style.fontSize='';var fs=parseFloat(getComputedStyle(b).fontSize)||13;
+      var g=0;while(b.scrollWidth>b.clientWidth+1&&fs>8&&g++<12){fs-=0.5;b.style.fontSize=fs+'px';}}
+  }
+  function fsRows(){
+    var el=document.getElementById('dpbFsStatus');if(!el||el.querySelector('.fsRow'))return;
+    var t=el.textContent||'';if(!t.trim())return;
+    var lines=t.split('\n').filter(function(x){return x.trim();});
+    el.textContent='';
+    lines.forEach(function(l){
+      var i=l.indexOf(': '),lab=i>0?l.slice(0,i):l,val=i>0?l.slice(i+2):'',ic='';
+      var m=val.match(/^(✅|⚠️|❌)\s*/);if(m){ic=m[1];val=val.slice(m[0].length);}
+      var r=document.createElement('div');r.className='fsRow';
+      var a=document.createElement('span');a.className='fsIc';a.textContent=ic;
+      var b=document.createElement('span');b.className='fsLb';b.textContent=lab;
+      var c=document.createElement('span');c.className='fsVl';c.textContent=val;
+      r.appendChild(a);r.appendChild(b);r.appendChild(c);el.appendChild(r);
+    });
+  }
+  function tick(){raf=0;try{fsRows();fit();}catch(_){}}
+  try{new MutationObserver(function(){if(!raf)raf=requestAnimationFrame(tick);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
+  window.addEventListener('resize',function(){if(!raf)raf=requestAnimationFrame(tick);});
+})();
+</script>
+
 
