@@ -70,7 +70,17 @@
         try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); } catch (e) { db = fs.getFirestore(app); }
       }
       var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
-      var ready = emu() ? Promise.resolve() : (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (auth.currentUser ? Promise.resolve() : authM.signInAnonymously(auth));
+      // Offline start: auth.currentUser is empty until the SDK has restored the saved user from the device, so wait for that FIRST.
+      // Before this the code saw "no user", tried to sign in over the network, failed offline (auth/network-request-failed) and the whole layer
+      // (maps, overlay) never started. Now a user saved on the device is reused with no network call; a sign-in that fails while a saved user
+      // exists falls back to that user, so the persistent cache on the phone still serves the maps.
+      var restored = (typeof auth.authStateReady === 'function') ? auth.authStateReady() : new Promise(function (res) { var u = authM.onAuthStateChanged(auth, function () { try { u(); } catch (e) {} res(); }); });
+      var ready = emu() ? Promise.resolve() : Promise.resolve(restored).catch(function () {}).then(function () {
+        var cu = auth.currentUser, want = !!(ac && ac.email && ac.password);
+        if (cu && (!want || String(cu.email || '').toLowerCase() === String(ac.email).toLowerCase())) return;   // already signed in as the right user: no network needed
+        var p = want ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (cu ? Promise.resolve() : authM.signInAnonymously(auth));
+        return p.catch(function (e) { if (auth.currentUser) return; throw e; });
+      });
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
