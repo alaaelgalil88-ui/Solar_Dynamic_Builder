@@ -4136,6 +4136,31 @@ async function kv(payload){try{const r=await fetch('https://dpb-firebase.local/k
 async function kvRead(key){const r=await kv({action:'kvGet',key});if(!r||!r.ok)return null;try{return JSON.parse(r.json||'{}');}catch(_){return null;}}
 async function kvWrite(key,obj){const r=await kv({action:'kvPatch',key,set:obj,replace:true});return !!(r&&r.ok);}
 const CAT_LS='DPB_MAPCAT_V1',SNAP_LS='DPB_MAPSNAP_V1_';
+/* v114 (offline-first): the map catalog + snapshots are ALSO kept in IndexedDB. localStorage is small and the quota guard may evict these
+   keys when the production store grows, which left a supervisor opening the app with no signal and NO maps. IndexedDB copies are never evicted. */
+function idbOpen(){return new Promise((res,rej)=>{try{const r=indexedDB.open('dpb-mapcache',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}catch(e){rej(e);}});}
+function idbPut(k,v){return idbOpen().then(db=>new Promise((res,rej)=>{const t=db.transaction('kv','readwrite');t.objectStore('kv').put(v,k);t.oncomplete=()=>res(true);t.onerror=t.onabort=()=>rej(t.error);})).catch(()=>false);}
+function idbGet(k){return idbOpen().then(db=>new Promise((res,rej)=>{const r=db.transaction('kv').objectStore('kv').get(k);r.onsuccess=()=>res(r.result==null?null:r.result);r.onerror=()=>rej(r.error);})).catch(()=>null);}
+/* v114: companies/operators list travels through the cloud (key 'master', shared by all projects) so every supervisor phone gets the Operator picker;
+   the local copy stays the offline source. Newest updatedAt wins; a device with no signal never overwrites anything. */
+const MASTER_LS='DPB_COMPANY_OPERATOR_MASTER_V1';
+function masterNorm(d){d=d||{};return{companies:Array.isArray(d.companies)?d.companies:[],operators:Array.isArray(d.operators)?d.operators:[],updatedAt:String(d.updatedAt||'')};}
+function masterLocal(){try{return masterNorm(JSON.parse(localStorage.getItem(MASTER_LS)||'{}'));}catch(_){return masterNorm();}}
+const masterHas=m=>!!(m.updatedAt||m.companies.length||m.operators.length);
+let _masterBusy=false;
+async function masterPush(){const l=masterLocal();if(!masterHas(l))return false;return kvWrite('master',l);}
+async function masterSync(){
+  if(_masterBusy||!cloudUrl())return;_masterBusy=true;
+  try{
+    const r=await kv({action:'kvGet',key:'master'});if(!r||!r.ok)return;   // no signal / not reachable: keep the local copy untouched
+    let c={};try{c=JSON.parse(r.json||'{}')||{};}catch(_){}
+    const cl=masterNorm(c),l=masterLocal();
+    if(masterHas(cl)&&(!masterHas(l)||cl.updatedAt>l.updatedAt)){try{localStorage.setItem(MASTER_LS,JSON.stringify(cl));}catch(_){}}
+    else if(masterHas(l)&&(!masterHas(cl)||l.updatedAt>cl.updatedAt)){await kvWrite('master',l);}
+  }finally{_masterBusy=false;}
+}
+window.__dpbMasterPush=()=>masterPush().catch(()=>false);
+window.__dpbMasterSync=()=>masterSync().catch(()=>{});
 
 /* ---------- catalog: which maps exist, where their data lives ---------- */
 function sheetFor(wb,name){
@@ -4338,13 +4363,16 @@ async function loadSnap(key,info){
   const ck=key+'|'+info.h;if(snapModels.has(ck))return true;
   let obj=null;
   try{const c=JSON.parse(localStorage.getItem(SNAP_LS+key)||'null');if(c&&c.h===info.h)obj=c;}catch(_){}
+  if(!obj){const c=await idbGet(SNAP_LS+key);if(c&&c.h===info.h)obj=c;}   // offline copy
   if(!obj){obj=await kvRead('mapsnap_'+key);if(!obj||obj.h!==info.h)return false;try{localStorage.setItem(SNAP_LS+key,JSON.stringify(obj));}catch(_){}}
+  idbPut(SNAP_LS+key,obj);
   try{snapModels.set(ck,unpack(JSON.parse(await ungz(obj))));return true;}catch(_){return false;}
 }
 async function adopt(cat){
   state.remote=cat;
   await Promise.all(Object.keys(cat.snaps||{}).map(k=>loadSnap(k,cat.snaps[k])));
   try{localStorage.setItem(CAT_LS,JSON.stringify(cat));}catch(_){}
+  idbPut(CAT_LS,cat);
   try{if(typeof window.__dpbFetchLiveGrid==='function')window.__dpbFetchLiveGrid();}catch(_){}
   try{if(typeof populateMapViews==='function')populateMapViews();if(typeof supervisorRefreshMapButtons==='function')supervisorRefreshMapButtons();}catch(_){}
   refresh();
@@ -4356,11 +4384,29 @@ async function sync(){
   finally{state.syncing=false;}
 }
 function loadCache(){
-  try{const c=JSON.parse(localStorage.getItem(CAT_LS)||'null');if(!c||!c.snaps)return;
-    for(const k of Object.keys(c.snaps)){const s=JSON.parse(localStorage.getItem(SNAP_LS+k)||'null');if(!s||s.h!==c.snaps[k].h)return;}
-    state.remote=c;
-    Promise.all(Object.keys(c.snaps).map(k=>{const s=JSON.parse(localStorage.getItem(SNAP_LS+k));return ungz(s).then(t=>snapModels.set(k+'|'+s.h,unpack(JSON.parse(t))));})).then(refresh).catch(()=>{});
-  }catch(_){}
+  let ok=false;
+  try{const c=JSON.parse(localStorage.getItem(CAT_LS)||'null');
+    if(c&&c.snaps){
+      const objs={};let all=true;
+      for(const k of Object.keys(c.snaps)){const s=JSON.parse(localStorage.getItem(SNAP_LS+k)||'null');if(!s||s.h!==c.snaps[k].h){all=false;break;}objs[k]=s;}
+      if(all){ok=true;state.remote=c;
+        idbPut(CAT_LS,c);Object.keys(objs).forEach(k=>idbPut(SNAP_LS+k,objs[k]));   // existing installs: mirror once
+        Promise.all(Object.keys(objs).map(k=>ungz(objs[k]).then(t=>snapModels.set(k+'|'+objs[k].h,unpack(JSON.parse(t)))))).then(refresh).catch(()=>{});}
+    }}catch(_){}
+  if(!ok)loadCacheIdb().catch(()=>{});
+}
+async function loadCacheIdb(){
+  const c=await idbGet(CAT_LS);if(!c||!c.snaps)return false;
+  const objs={};
+  for(const k of Object.keys(c.snaps)){const s=await idbGet(SNAP_LS+k);if(!s||s.h!==c.snaps[k].h)return false;objs[k]=s;}
+  const models=new Map();
+  for(const k of Object.keys(objs)){try{models.set(k+'|'+objs[k].h,unpack(JSON.parse(await ungz(objs[k]))));}catch(_){return false;}}
+  if(state.remote)return true;   // a fresher catalog was already adopted from the cloud meanwhile
+  models.forEach((m,ck)=>snapModels.set(ck,m));
+  state.remote=c;
+  try{localStorage.setItem(CAT_LS,JSON.stringify(c));}catch(_){}
+  try{if(typeof populateMapViews==='function')populateMapViews();if(typeof supervisorRefreshMapButtons==='function')supervisorRefreshMapButtons();}catch(_){}
+  refresh();return true;
 }
 
 /* ---------- execution (Dynamic) ---------- */
@@ -5975,8 +6021,9 @@ document.addEventListener('click',ev=>{
 });
 function start(){
   loadCache();sync();
-  setInterval(()=>{if(!document.hidden)sync();},60000);
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden)sync();});
+  [6000,25000].forEach(t=>setTimeout(()=>{window.__dpbMasterSync&&window.__dpbMasterSync();},t));
+  setInterval(()=>{if(!document.hidden){sync();window.__dpbMasterSync&&window.__dpbMasterSync();}},60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){sync();window.__dpbMasterSync&&window.__dpbMasterSync();}});
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 
@@ -16611,6 +16658,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   }
   function dpbSaveRammingMaster(d){
     try{ d.updatedAt=new Date().toISOString(); localStorage.setItem('DPB_COMPANY_OPERATOR_MASTER_V1',JSON.stringify(d)); }catch(_){}
+    try{ if(window.__dpbMasterPush)window.__dpbMasterPush(); }catch(_){}
     try{ if(typeof window.dpbPushMaster==='function') window.dpbPushMaster(); }catch(_){}
   }
   function renderRammingMaster(){

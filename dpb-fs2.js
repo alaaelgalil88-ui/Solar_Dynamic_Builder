@@ -208,10 +208,10 @@
   }
   window.__dpbCutOps = cutOps;
   var KV_CHUNK = 600000;
-  function kvMine(key) { return /^(mapcat|mapsnap_|xlfile_)/.test(String(key || '')); }
+  function kvMine(key) { return /^(mapcat|mapsnap_|xlfile_)/.test(String(key || '')) || String(key || '') === 'master'; }
   function kvDoc(key) {
     var k = String(key).replace(/[^A-Za-z0-9_\-]/g, '_');
-    if (k === U_KEY || k === P_KEY) return 'dpb2/' + nsName() + '/kv/' + k;   // the users list and the projects list are shared by every project
+    if (k === U_KEY || k === P_KEY || k === 'master') return 'dpb2/' + nsName() + '/kv/' + k;   // the users list and the projects list are shared by every project
     var pp = pidS(); if (!pp) throw new Error('لسه مفيش مشروع مفتوح');
     return 'dpb2/' + nsName() + '/kv/p_' + pp + '__' + k;                      // everything else (map catalog, shapes, Excel files, history...) belongs to the open project
   }
