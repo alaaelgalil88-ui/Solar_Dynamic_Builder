@@ -5881,6 +5881,7 @@ function details(id){
   const cname=colorNameOf(col.css)||(col.css==='#ffffff'?'White':col.css);
   const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?'':col.src==='unmapped'?' · unmapped code':' · Excel fill';
   cards+=item('CELL COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true);
+  cards+=item('CELL ID',[u.rowLabel,u.label,u.total?('P'+u.post):''].filter(Boolean).join(' · '));
   const ops=(currentCatalog()||{maps:[]}).maps.filter(m=>m.op&&m.op.name&&m.op.kind!=='notstarted').map(m=>m.op);
   const progHere=(spec.op&&spec.op.kind!=='notstarted'&&progressInfoOfModel(model))?spec.op:null;
   const done=ops.filter(o=>isDone(o,u)&&!(progHere&&o.id===progHere.id));
@@ -5928,6 +5929,7 @@ function details(id){
   // v105: LAST ROW = STATUS (first, left) + ENTRY (who entered this process, date, time). Both are auto-width and share the full row width.
   cards+=dpbLastRow(statusCard,spec,u);
   box.innerHTML='<b>'+esc(spec.name)+'</b><div class="map-detail-grid">'+cards+'</div>';
+  try{const g=box.querySelector('.map-detail-grid');if(g){const cols=(getComputedStyle(g).gridTemplateColumns||'').split(' ').filter(Boolean).length||1;const its=[].slice.call(g.children).filter(x=>x.classList.contains('map-detail-item'));const rem=its.length%cols;if(rem&&its.length)its[its.length-1].style.setProperty('grid-column','span '+(cols-rem+1),'important');}}catch(_){}
 }
 /* v105: last row of Cell Details: STATUS + ENTRY card (supervisor / date / time of the process shown on this map). One line per item, no wrapping. */
 function dpbLastRow(statusCard,spec,u){
@@ -5941,13 +5943,9 @@ function dpbLastRow(statusCard,spec,u){
       const rec=cands.sort((a,b)=>String(b.time||'').localeCompare(String(a.time||'')))[0];
       const by=dpbEntryBy(rec);
       const fromSheet=!rec||/^sheet_/i.test(String(rec.id||''))||String(rec.source||'')==='SheetImport';
-      let l='<div>By '+esc(by)+'</div>';
-      if(!fromSheet&&rec.time){
-        const d=new Date(rec.time);
-        if(!isNaN(d)){
-          l+='<div>📅 '+esc(d.toLocaleDateString('en-GB'))+'</div><div>🕒 '+esc(d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}))+'</div>';
-        }
-      }
+      let l='<div>By '+esc(by)+'</div>',dS='-',tS='-';
+      if(!fromSheet&&rec.time){const d=new Date(rec.time);if(!isNaN(d)){dS=d.toLocaleDateString('en-GB');tS=d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});}}
+      l+='<div>📅 '+esc(dS)+'</div><div>🕒 '+esc(tS)+'</div>';
       ent='<div class="map-detail-item map-detail-ent"><div class="k">'+esc(op.name)+' · ENTRY</div><div class="v">'+l+'</div></div>';
     }
   }catch(_){}
@@ -17612,13 +17610,14 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const okSet=new Set(allowed.map(String));
     const procs=allowed.includes("*")?V.procs.slice():V.procs.filter(p=>okSet.has(String(p.id)));
     if(!procs.length){host.innerHTML='<div class="dpbRpCard dpbSupReportBlock"><div class="dpbRpMuted">لا توجد عمليات مسموحة لهذا المشرف.</div></div>';return}
-    let selP=procs.find(p=>String(p.id)===String(window.__dpbMapsSel))||procs[0];
+    const ALLP=(()=>{if(procs.length<2)return null;const tr=new Map();V.list.forEach(L=>{let any=false,full=true,has=false,latest=null;procs.forEach(p=>{const t=p.trackers.get(L.key);if(!t)return;has=true;if(t.done>0){any=true;if(!latest||p.code>=latest.code)latest=p}if(!(t.total>0&&t.done>=t.total))full=false});if(!has)return;const f=procs.find(p=>window.__dpbIsFirstStage&&window.__dpbIsFirstStage(p.name)),ft=f&&f.trackers.get(L.key);tr.set(L.key,{st:!any?"none":(full?"done":"part"),done:any?1:0,total:1,cells:ft?ft.cells:0,cellsDone:ft?ft.cellsDone:0,latest:latest})});return{id:"__all",name:"الكل",all:true,trackers:tr}})();
+    let selP=(String(window.__dpbMapsSel)==="__all"&&ALLP)?ALLP:(procs.find(p=>String(p.id)===String(window.__dpbMapsSel))||procs[0]);
     const rammingByTracker=new Map();
     try{records().forEach(x=>{const isR=!!(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(x.process));const has=String(x.operator||"").trim()||String(x.company||"").trim();if(!has&&!isR)return;const tr=String(x.tracker||"");if(!tr)return;const op=String(x.operator||"").trim()||"By Admin",co=String(x.company||"").trim();if(!rammingByTracker.has(tr))rammingByTracker.set(tr,new Set());rammingByTracker.get(tr).add(co?op+" — "+co:op)})}catch(_){}
     const rowsList=[...new Set(V.list.filter(L=>selP.trackers.has(L.key)).map(L=>String(L.row||"")))].filter(Boolean);
     host.innerHTML=`<div class="dpbRpCard dpbSupReportBlock dpbSupTrackerStatusBlock">
       <div class="dpbRpHead"><div class="dpbRpTitle">📋 حالة التراكرات <small id="dpbMsProc"></small></div><button type="button" id="dpbMsRefresh" class="dpbRpRefresh" aria-label="تحديث">🔄</button></div>
-      <div class="dpbRpProcs" id="dpbMsProcs" dir="ltr">${procs.map(p=>`<button type="button" data-p="${escapeHtml(String(p.id))}">${escapeHtml(p.name)}</button>`).join("")}</div>
+      <div class="dpbRpProcs" id="dpbMsProcs" dir="ltr">${procs.map(p=>`<button type="button" data-p="${escapeHtml(String(p.id))}">${escapeHtml(p.name)}</button>`).join("")}${procs.length>1?'<button type="button" data-p="__all">الكل</button>':""}</div>
       <div class="dpbRpSeg" id="dpbMsSeg"></div>
       <div class="dpbTrackerFilter" dir="ltr" style="margin-top:8px"><select id="dpbMsRow" class="dpbSupSelect"></select><input id="dpbMsSearch" type="text" inputmode="numeric" pattern="[0-9,- ]*" autocomplete="off" placeholder="Tracker: 1-2-3"><button type="button" class="btn" id="dpbMsReset">↺ Reset</button></div>
       <div class="dpbRpLegend"><span class="dpbRpC0">● 0</span><span class="dpbRpC1">● جاري</span><span class="dpbRpC2">● مكتمل</span></div>
@@ -17626,7 +17625,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       <div class="dpbRpCount" id="dpbMsCount"></div>
       <button type="button" class="btn primary" id="dpbMsPrint" style="margin-top:8px;width:100%">🖨️ طباعة الجدول</button></div>`;
     const tbl=host.querySelector("table"),seg=host.querySelector("#dpbMsSeg"),procsEl=host.querySelector("#dpbMsProcs"),cnt=host.querySelector("#dpbMsCount"),rowSel=host.querySelector("#dpbMsRow"),search=host.querySelector("#dpbMsSearch");
-    const stOf=t=>t.done<=0?"none":(t.total>0&&t.done>=t.total?"done":"part");
+    const stOf=t=>t.st?t.st:t.done<=0?"none":(t.total>0&&t.done>=t.total?"done":"part");
     const stTxt={none:"Not Started",part:"In Progress",done:"Done"};
     const fmt=n=>Number(n||0).toLocaleString("en-US");
     const wantedSet=()=>{const v=String(search.value||"").trim();if(!v)return null;const set=new Set(v.split(/[^0-9]+/).filter(Boolean).map(x=>String(Number(x))));return set.size?set:null};
@@ -17643,6 +17642,17 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       seg.innerHTML=`<button type="button" data-f=""><span>الكل</span> <b>${n}</b></button><button type="button" data-f="none"><span>لم يبدأ</span> <b>${c.none}</b> <small>تراكر</small></button><button type="button" data-f="cells"><span>لم يبدأ</span> <b>${fmt(nsc)}</b> <small>خلية</small></button><button type="button" data-f="part"><span>جاري</span> <b>${c.part}</b></button><button type="button" data-f="done"><span>مكتمل</span> <b>${c.done}</b></button>`;
       seg.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.f===cur))};
     const paintTable=()=>{
+      if(selP.all){
+        const hasR=procs.some(p=>window.__dpbIsFirstStage&&window.__dpbIsFirstStage(p.name));
+        tbl.tHead.innerHTML="<tr>"+["Tracker"].concat(procs.map(p=>p.name)).concat(hasR?["Ramming Operator"]:[]).concat(["Overall Stage"]).map(h=>`<th>${escapeHtml(h)}</th>`).join("")+"</tr>";
+        tbl.tBodies[0].innerHTML=V.list.filter(L=>selP.trackers.has(L.key)).map(L=>{
+          const a=selP.trackers.get(L.key);
+          const cs=procs.map(p=>{const t=p.trackers.get(L.key);if(!t)return '<td class="dpbRpC0" style="opacity:.45">—</td>';const c=t.done<=0?"dpbRpC0":(t.total>0&&t.done>=t.total?"dpbRpC2":"dpbRpC1");return `<td class="${c}">${t.done}/${t.total}</td>`}).join("");
+          let ram="";if(hasR){const rs=rammingByTracker.get(String(L.label||""));ram="<td>"+(rs&&rs.size?[...rs].sort((x,y)=>(x==="By Admin"?1:0)-(y==="By Admin"?1:0)).map(escapeHtml).join("<br>"):"—")+"</td>"}
+          const tag=V.labelCount.get(L.label)>1?` <span class="dpbRpRowTag">· ${escapeHtml(L.row)}</span>`:"";
+          return `<tr data-st="${a.st}" data-nsc="${a.cells-a.cellsDone>0?1:0}" data-tn="${String(Number(String(L.label).replace(/[^0-9]/g,""))||0)}" data-row="${escapeHtml(String(L.row||""))}"><td><b>${escapeHtml(L.label)}</b>${tag}</td>${cs}${ram}<td><span class="badge ${a.latest?"ok":"warn"}">${escapeHtml(a.latest?a.latest.name:"Not Started")}</span></td></tr>`}).join("");
+        return;
+      }
       const isR=!!(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(selP.name));
       tbl.tHead.innerHTML="<tr>"+["Tracker",selP.name].concat(isR?["Ramming Operator"]:[]).concat(["Status"]).map(h=>`<th>${escapeHtml(h)}</th>`).join("")+"</tr>";
       tbl.tBodies[0].innerHTML=V.list.filter(L=>selP.trackers.has(L.key)).map(L=>{
@@ -17654,7 +17664,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const paintRows=()=>{const rl=[...new Set(V.list.filter(L=>selP.trackers.has(L.key)).map(L=>String(L.row||"")))].filter(Boolean);rowSel.innerHTML='<option value="all">All Rows</option>'+rl.map(r=>`<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join("");rowSel.value="all"};
     const paintAll=()=>{procsEl.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.p===String(selP.id)));host.querySelector("#dpbMsProc").textContent="· "+selP.name;paintSeg();paintTable();paintRows();applyFilters()};
     seg.addEventListener("click",e=>{const b=e.target.closest("button[data-f]");if(!b)return;tbl.dataset.fst=b.dataset.f;seg.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));try{tbl.parentElement.scrollTop=0}catch(_){}applyFilters()});
-    procsEl.addEventListener("click",e=>{const b=e.target.closest("button[data-p]");if(!b)return;const p=procs.find(x=>String(x.id)===b.dataset.p);if(!p||p===selP)return;selP=p;window.__dpbMapsSel=p.id;tbl.dataset.fst="";paintAll()});
+    procsEl.addEventListener("click",e=>{const b=e.target.closest("button[data-p]");if(!b)return;const p=b.dataset.p==="__all"?ALLP:procs.find(x=>String(x.id)===b.dataset.p);if(!p||p===selP)return;selP=p;window.__dpbMapsSel=p.id;tbl.dataset.fst="";paintAll()});
     search.addEventListener("input",applyFilters);rowSel.addEventListener("change",applyFilters);
     host.querySelector("#dpbMsReset").onclick=()=>{search.value="";rowSel.value="all";tbl.dataset.fst="";paintSeg();applyFilters()};
     host.querySelector("#dpbMsRefresh").onclick=async ev=>{const b=ev.currentTarget;b.disabled=true;b.classList.add("spin");try{if(typeof window.__dpbForcePoll==="function")await window.__dpbForcePoll()}catch(_){}try{openSupervisorMaps()}catch(_){}};
@@ -20885,7 +20895,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 
   /* ---------- 3) محاذاة العربي من اليمين ---------- */
   var AR=/[\u0600-\u06FF]/;
-  var SKIP='.excel-plan,script,style,textarea,input,select,svg,[contenteditable="true"],[data-dpb-ltr],#dpbSupUser,#dpbAdminSupName,.dpbBackupRow';
+  var SKIP='#mapDetail,#mapLegend,.fs2Chip,.excel-plan,script,style,textarea,input,select,svg,[contenteditable="true"],[data-dpb-ltr],#dpbSupUser,#dpbAdminSupName,.dpbBackupRow';
   var done=new WeakSet();
   function blockOf(el){
     var n=el,cs;
@@ -20895,6 +20905,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   function fixText(node){
     var p=node.parentElement;if(!p||p.closest(SKIP))return;
     var b=blockOf(p);if(!b||done.has(b)||b.closest(SKIP))return;
+    {var _fs=(b.textContent||'').match(/[A-Za-z\u0600-\u06FF]/);if(_fs&&!AR.test(_fs[0])){done.add(b);return;}}
     done.add(b);
     var cs=getComputedStyle(b);
     var ta=cs.textAlign;
@@ -21058,3 +21069,13 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   tick();
 })();
 </script>
+<!-- v111 -->
+<style id="dpbV111">
+#mapDetail .map-detail-grid{direction:ltr!important}
+#mapDetail>b,#mapDetail .map-detail-item .k,#mapDetail .map-detail-item .v,#mapDetail .map-detail-item .v div{unicode-bidi:plaintext!important;text-align:start!important}
+#mapLegend{max-height:none!important;overflow:visible!important}
+#mapLegend .me-chip-list{grid-template-columns:repeat(2,minmax(0,1fr))!important;max-height:none!important;overflow:visible!important}
+#dpbFs2Card .fs2Btns>button{display:flex!important;align-items:center;justify-content:center;visibility:visible!important;opacity:1!important;color:#eaf2f8!important;background:rgba(255,255,255,.06)!important;border:1px solid rgba(255,255,255,.18)!important;height:auto!important;overflow:visible!important}
+#dpbMsProcs button[data-p="__all"]{border-style:dashed}
+</style>
+
