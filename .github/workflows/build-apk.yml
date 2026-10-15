@@ -13,11 +13,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Copy web files into www
-        run: |
-          mkdir -p www
-          cp index.html sw.js manifest.json icon-192.png icon-512.png dpb-fs.js dpb-fs2-core.js dpb-fs2.js dpb-config.js www/
-          ls -la www
-
+        run: | mkdir -p www cp index.html sw.js manifest.json icon-192.png icon-512.png dpb-fs.js dpb-fs2-core.js dpb-fs2.js dpb-config.js www/ ls -la www 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -27,6 +23,8 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Bundle Firebase SDK into www/vendor
+        run: | sh build-vendor.sh test -s www/vendor/firebase-bundle.js 
       - name: Install Capacitor
         run: npm i @capacitor/core @capacitor/cli @capacitor/android @capacitor/filesystem @capacitor/share
 
@@ -34,11 +32,7 @@ jobs:
         run: npx cap add android
 
       - name: Add print plugin
-        run: |
-          D=android/app/src/main/java/com/dpb/map/v2
-          mkdir -p "$D"
-          cp android-native/*.java "$D/"
-
+        run: | D=android/app/src/main/java/com/dpb/map/v2 mkdir -p "$D" cp android-native/*.java "$D/" 
       - name: Sync web files
         run: npx cap sync android
 
