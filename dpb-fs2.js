@@ -9,6 +9,11 @@
   var prevFetch = window.fetch.bind(window), CORE = window.DPB_FS2_CORE;
   var LS = { mode: 'dpb_fs2_mode', procs: 'dpb_fs2_procs', cfg: 'dpb_fs_cfg', ns: 'dpb_fs_ns', auth: 'dpb_fs_auth' };
   var SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
+  function loadSdk() {
+    return import('./vendor/firebase-bundle.js').then(function (b) { return [b.app, b.firestore, b.auth]; }, function () {
+      return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]);
+    });
+  }
   function ls(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } }
   // switch from the address bar: ...index.html?fs2=on  /  ?fs2=off
   try { var m = /[?&]fs2=(on|off)/.exec(location.search); if (m) localStorage.setItem(LS.mode, m[1]); } catch (e) {}
@@ -50,7 +55,8 @@
     var conf; try { conf = JSON.parse(ls(LS.cfg, 'null')); } catch (e) { conf = null; }
     if (emu()) conf = { apiKey: 'demo', projectId: 'demo-no-project', appId: 'demo' };   // emulator needs no real config
     if (!conf || !conf.projectId) return Promise.reject(new Error('مفيش Firebase config'));
-    return Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-firestore.js'), import(SDK + 'firebase-auth.js')]).then(function (m) {
+    // المكتبة جوه الـ APK/الموقع نفسه (vendor/firebase-bundle.js): بتفتح من الجهاز من غير نت. لو الملف مش موجود بنرجع للتحميل من الإنترنت زي الأول.
+      return loadSdk().then(function (m) {
       var appM = m[0], fs = m[1], authM = m[2], db, app;
       if (emu()) {
         // own named app + own Firestore instance: dpb-fs.js already calls getFirestore() on the DEFAULT app (real config), and two layers
@@ -81,6 +87,18 @@
         var p = want ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (cu ? Promise.resolve() : authM.signInAnonymously(auth));
         return p.catch(function (e) { if (auth.currentUser) return; throw e; });
       });
+      // Firestore's commit() only resolves when the SERVER acknowledges. Offline it stays pending forever, so the app never counted the cells as executed
+      // until the data was switched on again. The write is already saved on the device (persistent cache) and queued: it is sent by itself when the
+      // network returns and the local listener shows it at once. So offline (or no answer within 4 s) the write is treated as accepted; online the real
+      // answer is still awaited, so a refused write (rules / quota) is still reported.
+      function commitOrQueue(cp) {
+        return new Promise(function (res, rej) {
+          var done = false, t = null;
+          function fin(f, v) { if (done) return; done = true; clearTimeout(t); f(v); }
+          cp.then(function (v) { fin(res, v); }, function (e) { if (done) { try { console.warn('[dpb-fs2] queued write was refused later:', e && e.message); } catch (x) {} } else fin(rej, e); });
+          t = setTimeout(function () { fin(res); }, (typeof navigator !== 'undefined' && navigator.onLine === false) ? 300 : 4000);
+        });
+      }
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
@@ -108,7 +126,7 @@
                   else if (o.t === 'f') { var cells = clean(o.cells); b.set(dref(o.path), Object.assign({}, o.base, { cells: cells }), { mergeFields: Object.keys(o.base).concat(Object.keys(cells).map(function (k) { return 'cells.' + k; })) }); }
                   else b.delete(dref(o.path));
                 });
-                return b.commit();
+                return commitOrQueue(b.commit());
               });
             });
             return p;
@@ -605,12 +623,33 @@
   function owns(name) { try { return on() && mine(name); } catch (e) { return false; } }
   function liveValues(name) {
     var st1 = curStore(); if (!owns(name) || !st1) return null;
-    var sl = CORE.slug(name), m = new Map();
-    st1.all().forEach(function (d) {
+    var sl = CORE.slug(name), m = new Map(), all = st1.all();
+    all.forEach(function (d) {
       if (CORE.slug(d.process) !== sl) return;
       var v = (d.done !== undefined && d.done !== null) ? Number(d.done) : Number(d.code);
       if (v && isFinite(v)) m.set(Number(d.r1) + '|' + Number(d.c1), v);
     });
+    // grouped processes (Ramming/Saddle/Bearing): a cell that a LATER stage already reached counts as done in the earlier stages too, the same
+    // rule the cards use. Marks made in the app are back-filled when they are written, but the Excel baseline is not, so without this the
+    // map showed an earlier stage empty while the card (and the later stage) said it was done. Computed on read only - nothing is stored.
+    try {
+      var codes = (typeof window.DPB_stageCodes === 'function') ? window.DPB_stageCodes() : null, grp = (typeof window.DPB_groupedProcessNames === 'function') ? window.DPB_groupedProcessNames() : [];
+      var own = 0, later = [];
+      if (codes) {
+        grp.forEach(function (g) { var c = Number(codes[String(g).trim().toLowerCase()]) || 0; if (CORE.slug(g) === sl) own = c; });
+        if (own > 0) grp.forEach(function (g) { var c = Number(codes[String(g).trim().toLowerCase()]) || 0; if (c > own) later.push({ slug: CORE.slug(g), code: c }); });
+      }
+      if (own > 0 && later.length) {
+        all.forEach(function (d) {
+          var ds = CORE.slug(d.process), L = null; for (var i = 0; i < later.length; i++) if (later[i].slug === ds) L = later[i];
+          if (!L) return;
+          var v = (d.done !== undefined && d.done !== null) ? Number(d.done) : Number(d.code);
+          if (!(v >= L.code)) return;
+          var k = Number(d.r1) + '|' + Number(d.c1), cur = m.get(k) || 0;
+          if (cur < own) m.set(k, own);
+        });
+      }
+    } catch (e) {}
     return m;
   }
   window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, usersCount: usersCount, testConnection: testConn, projectsGet: projectsGet, projectsUpdate: projectsUpdate };
