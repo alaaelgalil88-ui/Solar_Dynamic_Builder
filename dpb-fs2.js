@@ -114,6 +114,12 @@
             var r = dref('dpb2/' + nsName() + '/kv/clock-' + dev);
             return fs.setDoc(r, { t: fs.serverTimestamp() }).then(function () { return fs.getDocFromServer(r); }).then(function (x) { var v = x.data() && x.data().t; return v && v.toMillis ? v.toMillis() : Promise.reject(new Error('no server time')); });
           },
+          // real server check used by the warning bar: can this device READ from the server, and can it WRITE (a tiny doc) - each bounded to 8 s, with the real error code
+          probe: function () {
+            var dev = ls('dpb_fs2_dev', '') || 'dev', r = dref('dpb2/' + nsName() + '/kv/clock-' + dev), out = {};
+            function wait(p, ms) { return Promise.race([p.then(function () { return 'ok'; }, function (e) { return String(e && e.code || e && e.message || e); }), new Promise(function (res) { setTimeout(function () { res('timeout'); }, ms); })]); }
+            return wait(fs.getDocFromServer(r), 8000).then(function (a) { out.read = a; return wait(fs.setDoc(r, { t: fs.serverTimestamp() }), 8000); }).then(function (b) { out.write = b; return out; });
+          },
           get: function (path) { return fs.getDoc(dref(path)).then(function (x) { return x.exists() ? x.data() : null; }); },
           listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { cb(q.docChanges().map(function (c) { return c.type === 'removed' ? { id: c.doc.id, removed: true } : { id: c.doc.id, data: c.doc.data() }; }), null, true); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
           // every document of a collection, read from the SERVER (never the local cache), so a backup is exactly what Firestore holds
@@ -200,11 +206,27 @@
   function rebuildNow() { if (curStore() || !pidS() || creating) return; clearTimeout(rebT); rebT = null; failedAt = 0; getStore().then(function () { rebN = 0; warnNow(); }, function () { rebuildLater(); }); }
   try { window.addEventListener('online', function () { if (lastErr || failedAt) rebuildNow(); }); document.addEventListener('visibilitychange', function () { if (!document.hidden && lastErr && !curStore()) rebuildNow(); }); } catch (e) {}
   // small non-clickable notice, shown ONLY when something is wrong (nothing at all when healthy): this device is not receiving, or its edits did not reach the server
+  var probeBusy = false, probeAt = 0;
+  function runProbe() {
+    if (probeBusy) return Promise.resolve(); probeBusy = true; probeAt = Date.now();
+    var W = window.__dpbFs2W = window.__dpbFs2W || {};
+    return getAdapter().then(function (a) { return a.probe ? a.probe() : null; }).then(function (r) { W.probe = r; W.probeAt = Date.now(); }, function (e) { W.probe = { read: String(e && (e.code || e.message) || e), write: '-' }; W.probeAt = Date.now(); }).then(function () { probeBusy = false; warnNow(); });
+  }
+  function diag() {
+    var W = window.__dpbFs2W || {}, p = W.probe; if (!p || Date.now() - (W.probeAt || 0) > 5 * 60 * 1000) return '';
+    var s = String(p.read) + ' ' + String(p.write);
+    if (/resource-exhausted|quota/i.test(s)) return ' — السبب: حصة Firebase اليومية خلصت';
+    if (/permission|unauth/i.test(s)) return ' — السبب: قواعد Firebase أو الدخول رافضين';
+    if (p.read === 'timeout') return ' — السبب: مفيش اتصال فعلي بسيرفر Firebase (الشبكة)';
+    if (p.read === 'ok' && p.write === 'timeout') return ' — القراءة شغالة لكن الكتابة عالقة';
+    if (p.read === 'ok' && p.write === 'ok') return ' — السيرفر سليم والتعديلات القديمة عالقة في طابور الجهاز';
+    return ' — (' + s + ')';
+  }
   function warnText() {
     var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i;
     if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
     if (pidS() && !curStore() && lastErr) return quota.test(lastErr) ? '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية' : '⚠️ مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني';
-    if (W.pending && W.since && Date.now() - W.since > 20000 && navigator.onLine !== false) return '⚠️ ' + W.pending + ' تعديل لسه ماوصلش للسيرفر';
+    if (W.pending && W.since && Date.now() - W.since > 20000 && navigator.onLine !== false) { if (!probeBusy && Date.now() - probeAt > 60000) runProbe(); return '⚠️ ' + W.pending + ' تعديل لسه ماوصلش للسيرفر' + diag(); }
     return '';
   }
   function warnNow() {
@@ -688,7 +710,7 @@
     } catch (e) {}
     return m;
   }
-  window.DPB_FS2 = { clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, usersCount: usersCount, testConnection: testConn, projectsGet: projectsGet, projectsUpdate: projectsUpdate };
+  window.DPB_FS2 = { probe: runProbe, clockOffset: clockOff, owns: owns, liveValues: liveValues, getXlFile: getXlFile, on: on, recordAt: recordAt, setProcs: setProcs, setMode: function (v) { try { localStorage.setItem(LS.mode, v ? 'on' : 'off'); } catch (e) {} }, procs: procs, store: getStore, seedUsers: seedUsers, usersCount: usersCount, testConnection: testConn, projectsGet: projectsGet, projectsUpdate: projectsUpdate };
 
   /* ---- Import: make the new layer match what the layer underneath (the Google Sheet side) shows right now ---- */
   function readGrid(name) {
