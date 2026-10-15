@@ -95,7 +95,13 @@
         return new Promise(function (res, rej) {
           var done = false, t = null;
           function fin(f, v) { if (done) return; done = true; clearTimeout(t); f(v); }
-          cp.then(function (v) { fin(res, v); }, function (e) { if (done) { try { console.warn('[dpb-fs2] queued write was refused later:', e && e.message); } catch (x) {} } else fin(rej, e); });
+          var W = window.__dpbFs2W = window.__dpbFs2W || { pending: 0, since: 0, refused: '', refusedAt: 0 };
+          if (!W.pending) W.since = Date.now(); W.pending++;
+          cp.then(function (v) { W.pending = Math.max(0, W.pending - 1); if (!W.pending) W.since = 0; if (!W.pending) W.refused = ''; fin(res, v); }, function (e) {
+            W.pending = Math.max(0, W.pending - 1); if (!W.pending) W.since = 0;
+            if (done) { W.refused = String(e && (e.code || e.message) || e); W.refusedAt = Date.now(); try { console.warn('[dpb-fs2] queued write was refused later:', e && e.message); } catch (x) {} try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (x2) {} }
+            else fin(rej, e);
+          });
           t = setTimeout(function () { fin(res); }, (typeof navigator !== 'undefined' && navigator.onLine === false) ? 300 : 4000);
         });
       }
@@ -184,12 +190,42 @@
     retryT = setTimeout(function () { retryT = null; if (curStore() || !pidS()) return; getStore().then(function () { retryN = 0; }, function () {}); }, wait);
   }
   try { window.addEventListener('online', function () { retryN = 0; clearTimeout(retryT); retryT = null; if (!curStore() && pidS()) { failedAt = 0; getStore().catch(function () {}); } }); } catch (e) {}
+  // rebuild after a dead listener: 5 s, 15 s, 45 s, 2 min, then every 5 min (also at once when the phone comes online / the app comes back to the screen)
+  var rebT = null, rebN = 0;
+  function rebuildLater() {
+    if (rebT) return;
+    var w = [5000, 15000, 45000, 120000, 300000][Math.min(rebN++, 4)];
+    rebT = setTimeout(function () { rebT = null; if (curStore() || !pidS()) { rebN = 0; return; } failedAt = 0; getStore().then(function () { rebN = 0; warnNow(); }, function () { warnNow(); rebuildLater(); }); }, w);
+  }
+  function rebuildNow() { if (curStore() || !pidS() || creating) return; clearTimeout(rebT); rebT = null; failedAt = 0; getStore().then(function () { rebN = 0; warnNow(); }, function () { rebuildLater(); }); }
+  try { window.addEventListener('online', function () { if (lastErr || failedAt) rebuildNow(); }); document.addEventListener('visibilitychange', function () { if (!document.hidden && lastErr && !curStore()) rebuildNow(); }); } catch (e) {}
+  // small non-clickable notice, shown ONLY when something is wrong (nothing at all when healthy): this device is not receiving, or its edits did not reach the server
+  function warnText() {
+    var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i;
+    if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
+    if (pidS() && !curStore() && lastErr) return quota.test(lastErr) ? '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية' : '⚠️ مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني';
+    if (W.pending && W.since && Date.now() - W.since > 20000 && navigator.onLine !== false) return '⚠️ ' + W.pending + ' تعديل لسه ماوصلش للسيرفر';
+    return '';
+  }
+  function warnNow() {
+    try {
+      var t = warnText(), el = document.getElementById('dpbFs2Warn');
+      if (!t) { if (el) el.remove(); return; }
+      if (!el) { el = document.createElement('div'); el.id = 'dpbFs2Warn'; el.style.cssText = 'position:fixed;left:8px;right:8px;bottom:70px;z-index:2147483000;background:rgba(120,60,0,.94);color:#fff;border:1px solid #ffb74d;border-radius:10px;padding:6px 10px;font-size:12px;text-align:center;pointer-events:none;direction:rtl'; document.body.appendChild(el); }
+      el.textContent = t;
+    } catch (e) {}
+  }
+  window.__dpbFs2Warn = warnNow; setInterval(warnNow, 5000);
   function startCreate() {
     if (creating) return creating;
     var forPid = pidS();
     if (!forPid) return Promise.reject(new Error('لسه مفيش مشروع مفتوح — الخرائط بتتربط بعد ما تفتح مشروع'));
     creating = getAdapter().then(function (a) {
-      var s = CORE.create(a, { ns: nsName(), pid: forPid, offset: clockOff });
+      var s = CORE.create(a, { ns: nsName(), pid: forPid, offset: clockOff, onError: function (e) {
+        // the live listener died (token refresh, quota, rules, network): this device would stop receiving other devices' edits silently. Drop the store and rebuild it.
+        if (store !== s) return;
+        lastErr = permHint(e); dropStore(); failedAt = 0; paintState(); warnNow(); rebuildLater();
+      } });
       s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); schedPull(1500); });
       return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; retryN = 0; s.ensureEpoch(); paintState(); syncClock(a); try { loadBase(s); } catch (e) {} return s; });
     }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); scheduleRetry(e); throw e; });

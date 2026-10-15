@@ -7,7 +7,7 @@
   var EPOCH_MARGIN_MS = 10 * 60 * 1000; // records older than (epoch - 10 min) are leftovers from the old system, never written
   function create(adapter, o) {
     o = o || {};
-    var ns = o.ns || 'test', cache = {}, subs = [];
+    var ns = o.ns || 'test', cache = {}, subs = [], broken = null;
     // project scope: every row doc belongs to ONE project (id prefix + projectId field), the listener only sees that project's docs,
     // so two projects that use the same process names can never read or overwrite each other's cells
     var base = {}, byDoc = {};   // base = executed cells of the published Excel, held in memory only (never written to Firestore cell by cell)
@@ -48,7 +48,10 @@
       var done = false;
       unsub = adapter.listen(COL, function (docs, err, delta) {
         if (dead) return;
-        if (err) { if (!done) { done = true; rej(err); } return; }   // listener failed (rules / network): report it, never hang
+        if (err) {   // listener failed (rules / network / quota): before ready -> reject; AFTER ready the listener is dead for good, so tell the owner (it rebuilds the store)
+          if (!done) { done = true; rej(err); } else { broken = err; try { if (o.onError) o.onError(err); } catch (e) {} }
+          return;
+        }
         // delta=true: docs holds ONLY the documents that changed (first snapshot = all of them once); each one replaces just its own cells.
         // delta falsy (old adapters / tests): docs is the whole collection and the cache is rebuilt from it, exactly as before.
         var m = delta ? cache : {};
@@ -182,7 +185,7 @@
     function all() { return keys().filter(function (k) { return !isMeta(k); }).map(get).filter(live); }
     function counts() { var c = {}; all().forEach(function (d) { var k = d.process; c[k] = (c[k] || 0) + (Number(d.code) > 0 ? 1 : 0); }); return c; }
     function destroy() { dead = true; subs = []; try { if (typeof unsub === 'function') unsub(); } catch (e) {} }
-    return { destroy: destroy, pid: P, adapter: adapter, ready: ready, put: put, removeIds: removeIds, removeCells: removeCells, importProcess: importProcess, ensureEpoch: ensureEpoch, epoch: epochMs, counts: counts, value: value, lockOf: lockOf, all: all, setBase: setBase, baseSize: function () { return Object.keys(base).length; }, onChange: function (f) { subs.push(f); }, id: id };
+    return { broken: function () { return broken; }, destroy: destroy, pid: P, adapter: adapter, ready: ready, put: put, removeIds: removeIds, removeCells: removeCells, importProcess: importProcess, ensureEpoch: ensureEpoch, epoch: epochMs, counts: counts, value: value, lockOf: lockOf, all: all, setBase: setBase, baseSize: function () { return Object.keys(base).length; }, onChange: function (f) { subs.push(f); }, id: id };
   }
   var api = { create: create, slug: slug, projectScoped: true };
   root.DPB_FS2_CORE = api; if (typeof module !== 'undefined') module.exports = api;
