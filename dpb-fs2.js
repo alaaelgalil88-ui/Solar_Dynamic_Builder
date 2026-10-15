@@ -240,6 +240,8 @@
     } catch (e) {}
   }
   window.__dpbFs2Warn = warnNow; setInterval(warnNow, 5000);
+  // v124: true only when every write this device made has been ACKNOWLEDGED by the server (pending counter back to 0); false after ms if some are still waiting
+  window.__dpbFs2Ack = function (ms) { return new Promise(function (res) { var t0 = Date.now(); (function chk() { var W = window.__dpbFs2W || {}; if (!W.pending) { res(true); return; } if (Date.now() - t0 >= ms) { res(false); return; } setTimeout(chk, 200); })(); }); };
   function startCreate() {
     if (creating) return creating;
     var forPid = pidS();

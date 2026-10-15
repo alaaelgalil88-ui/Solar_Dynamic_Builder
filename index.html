@@ -5858,7 +5858,8 @@ async function deleteMark(){
   if(!res||res.ok===false){toast('فشل الحذف: '+(res&&res.error||'تعذر الاتصال بالسيرفر.'),4000);return;}
   const srvBlocked=(res.blocked||[]).length;
   try{const bl=new Set((res.blocked||[]).map(b=>String(b.id)));if(window.DPB_CLOUD_PRODUCTION&&window.DPB_CLOUD_PRODUCTION.forgetLocal)window.DPB_CLOUD_PRODUCTION.forgetLocal(cleanIds.filter(id=>!bl.has(String(id))));}catch(_){}
-  toast(srvBlocked?('تم حذف '+(cleanIds.length-srvBlocked)+' سجل — و🔒 '+srvBlocked+' اتمنع لأن مرحلة لاحقة اتنفذت عليهم.'):('تم حذف '+cleanIds.length+' سجل، والخلايا رجعت فاضية ✓'),4000);
+  const ackDel=window.__dpbFs2Ack?await window.__dpbFs2Ack(6000):true;
+  toast(srvBlocked?('تم حذف '+(cleanIds.length-srvBlocked)+' سجل — و🔒 '+srvBlocked+' اتمنع لأن مرحلة لاحقة اتنفذت عليهم.'):(ackDel?('تم حذف '+cleanIds.length+' سجل، والخلايا رجعت فاضية ✓'):('اتحذف '+cleanIds.length+' سجل عندك بس ⏳ لسه ماوصلش للسيرفر — هيتبعت أول ما الاتصال يشتغل، والجهاز التاني مش هيشوفه قبل كده.')),ackDel?4000:9000);
   clearMarkSelection();
   try{if(typeof window.__dpbFetchLiveGrid==='function')await window.__dpbFetchLiveGrid();}catch(_){}
   await loadLocks();refresh();
@@ -11394,6 +11395,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
             const payload={buildResult:pr.buildResult,types:pr.types,colors:(typeof EXACT_CODE_COLORS!=="undefined"?EXACT_CODE_COLORS:undefined),savedAt:new Date().toISOString()};
             const res=await window.DPB_GS.saveBuildResult(payload);
             const ok=!!(res&&res.ok!==false&&res.__reachable!==false);
+            const ackPub=ok&&window.__dpbFs2Ack?await window.__dpbFs2Ack(20000):true;
+            if(ok&&!ackPub){alert("⏳ الخرايط اتحفظت على الجهاز بس لسه ماوصلتش للسيرفر (الاتصال بطيء أو واقف). ماتقفلش التطبيق — استنى لحد ما شريط التحذير يختفي وبعدها ابعت للمشرفين.");b.disabled=false;b.textContent=t0;return;}
             const meta=ok?await window.DPB_GS.getBuildMeta().catch(()=>null):null;
             alert(ok&&meta?"✅ اترفعت الخرايط على السحابة. المشرفين يقدروا يفتحوا المشروع دلوقتي.":ok?"⚠️ الرفع رد تمام بس مقدرتش أتأكد منه — جرّب تفتح المشروع من الموبايل.":"❌ فشل الرفع: "+String(res&&res.error||"مفيش اتصال")+"\nتأكد إن حالة Firestore فوق ✅ وجرّب تاني.");
           }catch(e){alert("❌ فشل الرفع: "+(e&&e.message||e));}
@@ -12840,7 +12843,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   };
   setInterval(fastPollTick,8000);
 
-  function scheduleSync(){ cloudPull().then(cloudPush); fetchLiveGrid(); }
+  function scheduleSync(){ cloudPull().catch(()=>{}).then(cloudPush); fetchLiveGrid(); }
 
   // Fire a push shortly after any local save (markDataChanged is already
   // called by every code path that writes production records, including
@@ -16323,6 +16326,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(!Array.isArray(arr)||!arr.length)return false;
     const ids=new Set(arr.map(r=>r.id));
     saveRecords(records().filter(r=>!ids.has(r.id)).concat(arr));
+    try{if(window.DPB_CLOUD_PRODUCTION&&typeof window.DPB_CLOUD_PRODUCTION.cloudPush==='function')Promise.resolve(window.DPB_CLOUD_PRODUCTION.cloudPush()).catch(()=>{});}catch(_){}
     try{if(window.DPB_CLOUD_PRODUCTION&&typeof window.DPB_CLOUD_PRODUCTION.scheduleSync==='function')window.DPB_CLOUD_PRODUCTION.scheduleSync();}catch(_){}
     return true;
   };
