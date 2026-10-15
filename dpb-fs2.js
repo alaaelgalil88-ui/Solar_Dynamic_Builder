@@ -73,7 +73,9 @@
         console.info('dpb-fs2: connected to LOCAL Firestore emulator (127.0.0.1:8080)');
       } else {
         app = appM.getApps().length ? appM.getApp() : appM.initializeApp(conf);
-        try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); } catch (e) { db = fs.getFirestore(app); }
+        // experimentalForceLongPolling: some networks / WebViews throttle or buffer Firestore's streaming channel, so reads work but writes hang for minutes (the warning bar showed "read ok, write stuck").
+        // Long polling uses plain request/response calls that such networks let through. Never combined with auto-detect (the SDK refuses both together).
+        try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }), experimentalForceLongPolling: true }); } catch (e) { try { console.warn('[dpb-fs2] initializeFirestore failed, using default instance', e && e.message); } catch (x) {} db = fs.getFirestore(app); }
       }
       var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       // Offline start: auth.currentUser is empty until the SDK has restored the saved user from the device, so wait for that FIRST.
