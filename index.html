@@ -12355,10 +12355,13 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       }
       if(json && json.ok){
         const staleIds=new Set((Array.isArray(json.stale)?json.stale:[]).map(s=>String(s.id)));
-        pending.forEach(r=>{ if(!staleIds.has(String(r.id))){ synced[r.id]=r.time; if(deleted[String(r.id)]) delete deleted[String(r.id)]; } });
+        // v125: السيرفر بيقول "queued" عن السجلات اللي اتحفظت على الجهاز بس وهو لسه ماأكدهاش — دي ماتتعلّمش "متزامنة" وهتتراجع في الدورة الجاية لحد ما يتأكد وصولها
+        const queuedIds=new Set((Array.isArray(json.queued)?json.queued:[]).map(x=>String(x)));
+        let nDone=0;
+        pending.forEach(r=>{ if(!staleIds.has(String(r.id))&&!queuedIds.has(String(r.id))){ synced[r.id]=r.time; nDone++; if(deleted[String(r.id)]) delete deleted[String(r.id)]; } });
         setSyncedMap(synced); setDeletedMap(deleted);
-        hideCloudStatus();
-        try{localStorage.setItem("DPB_LAST_SYNC_MESSAGE_V1",JSON.stringify({msg:"✅ آخر مزامنة ناجحة ("+pending.length+" سجل)",time:new Date().toISOString()}));}catch(_){}
+        if(!queuedIds.size) hideCloudStatus();
+        try{ if(nDone) localStorage.setItem("DPB_LAST_SYNC_MESSAGE_V1",JSON.stringify({msg:"✅ آخر مزامنة ناجحة ("+nDone+" سجل)"+(queuedIds.size?" — و"+queuedIds.size+" لسه مستنيين تأكيد السيرفر":""),time:new Date().toISOString()})); }catch(_){}
         // FIX (بلّغ بدل ما تسكت): لو السيرفر لقى عمليات (زي Torque Tube)
         // مالهاش تبويب مطابق في الشيت، السجل بيتسجل بس الخلية الفعلية
         // متتكتبش - وكانت المشكلة إن مفيش أي تنبيه يوصل للمستخدم خالص.
@@ -12530,6 +12533,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         showCloudStatus("🔒 اتمنع حذف "+json.blocked.length+" سجل لأن مرحلة لاحقة ("+json.blocked[0].lockedBy+") اتنفذت على نفس الخلية.");
         setTimeout(()=>{ try{ cloudPull(); }catch(_){} },300);
       }
+      // v125: الحذف اتحفظ على الجهاز بس والسيرفر ماأكدهوش لسه: يفضل في طابور الإعادة لحد ما يتأكد (الإعادة بتتسأل عن نفس الـ ids ومش بتكتب تاني)
+      if(Array.isArray(json.queued)&&json.queued.length){ queueDeleteRetry(json.queued,siblings); }
       if(siblings.length){
         siblings.forEach(r=>{ delete deleted[String(r.id)]; synced[r.id]=r.time; });
         setDeletedMap(deleted); setSyncedMap(synced);

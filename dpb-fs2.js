@@ -36,6 +36,53 @@
   function nsName() { return String(ls(LS.ns, 'test')).replace(/[^A-Za-z0-9_\-]/g, '_'); }
   function jsonRes(o) { return new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
   function clean(o) { return JSON.parse(JSON.stringify(o)); }
+
+  /* ---- v125 connection diagnostics: the last 60 events (slow / late ack / rejected / listener died / probe / network bounce), kept on the device
+     so they survive a restart and can be read in Admin > sync card without any computer. Each kind is throttled so an Excel upload cannot flood it. ---- */
+  var DLOG_KEY = 'dpb_fs2_diaglog', dlogBuf = [], dlogLast = {};
+  try { dlogBuf = JSON.parse(localStorage.getItem(DLOG_KEY) || '[]') || []; if (!Array.isArray(dlogBuf)) dlogBuf = []; } catch (e) { dlogBuf = []; }
+  function dlog(kind, text) {
+    try {
+      var n = Date.now(), l = dlogLast[kind];
+      if (l && n - l.t < 5000 && l.x === String(text)) { l.c++; return; }
+      dlogLast[kind] = { t: n, x: String(text), c: 0 };
+      dlogBuf.push({ t: n, k: kind, x: String(text == null ? '' : text).slice(0, 220) });
+      if (dlogBuf.length > 60) dlogBuf = dlogBuf.slice(-60);
+      localStorage.setItem(DLOG_KEY, JSON.stringify(dlogBuf));
+    } catch (e) {}
+  }
+  window.__dpbFs2Diag = function () { return dlogBuf.slice(); };
+
+  // Firestore's commit() only resolves when the SERVER acknowledges. This wrapper answers {acked:true} when the server confirmed within the wait,
+  // and {acked:false, done} when it did not (offline, or no answer within 4 s): the write is saved on the device and queued by the SDK, so the screen can
+  // go on, but the caller KNOWS it is not delivered yet; `done` settles when the server finally confirms (or rejects). Pure: tested in Node.
+  function makeCommitter(deps) {
+    deps = deps || {};
+    var setT = deps.setTimeout || setTimeout, clearT = deps.clearTimeout || clearTimeout, now = deps.now || Date.now;
+    var online = deps.online || function () { return typeof navigator === 'undefined' || navigator.onLine !== false; };
+    var getW = deps.W || function () { return (window.__dpbFs2W = window.__dpbFs2W || { pending: 0, since: 0, refused: '', refusedAt: 0 }); };
+    var onEvent = deps.onEvent || function () {};
+    return function commitOrQueue(cp) {
+      return new Promise(function (res, rej) {
+        var done = false, t = null, t0 = now(), doneRes, doneRej, W = getW();
+        var dp = new Promise(function (a, b) { doneRes = a; doneRej = b; }); dp.catch(function () {});
+        function fin(f, v) { if (done) return; done = true; clearT(t); f(v); }
+        if (!W.pending) W.since = now(); W.pending++;
+        cp.then(function () {
+          W.pending = Math.max(0, W.pending - 1); if (!W.pending) { W.since = 0; W.refused = ''; }
+          if (done) onEvent('ack-late', (now() - t0) + 'ms');
+          fin(res, { acked: true }); doneRes();
+        }, function (e) {
+          W.pending = Math.max(0, W.pending - 1); if (!W.pending) W.since = 0;
+          var code = String(e && (e.code || e.message) || e);
+          if (done) { W.refused = code; W.refusedAt = now(); onEvent('rejected', code); doneRej(e); }
+          else fin(rej, e);
+        });
+        t = setT(function () { onEvent('slow', 'no server answer after ' + (now() - t0) + 'ms (pending ' + W.pending + ')'); fin(res, { acked: false, done: dp }); }, online() ? 4000 : 300);
+      });
+    };
+  }
+  window.__dpbMakeCommitter = makeCommitter;
   // The app filters its local records by the active project (r.projectId). Map-engine marks are sent without one, so stamp it:
   // on the way in (stored in Firestore) and on the way out (older docs that were stored without it).
   function pid() { try { return window.__dpbActiveProjectId || ''; } catch (e) { return ''; } }
@@ -75,7 +122,7 @@
         app = appM.getApps().length ? appM.getApp() : appM.initializeApp(conf);
         // experimentalForceLongPolling: some networks / WebViews throttle or buffer Firestore's streaming channel, so reads work but writes hang for minutes (the warning bar showed "read ok, write stuck").
         // Long polling uses plain request/response calls that such networks let through. Never combined with auto-detect (the SDK refuses both together).
-        try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }), experimentalForceLongPolling: true }); } catch (e) { try { console.warn('[dpb-fs2] initializeFirestore failed, using default instance', e && e.message); } catch (x) {} db = fs.getFirestore(app); }
+        try { var tr = ls('dpb_fs2_transport', 'lp'), st0 = { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }; if (tr === 'lp') st0.experimentalForceLongPolling = true; else if (tr === 'auto') st0.experimentalAutoDetectLongPolling = true; dlog('transport', tr); db = fs.initializeFirestore(app, st0); } catch (e) { try { console.warn('[dpb-fs2] initializeFirestore failed, using default instance', e && e.message); } catch (x) {} db = fs.getFirestore(app); }
       }
       var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       // Offline start: auth.currentUser is empty until the SDK has restored the saved user from the device, so wait for that FIRST.
@@ -93,20 +140,7 @@
       // until the data was switched on again. The write is already saved on the device (persistent cache) and queued: it is sent by itself when the
       // network returns and the local listener shows it at once. So offline (or no answer within 4 s) the write is treated as accepted; online the real
       // answer is still awaited, so a refused write (rules / quota) is still reported.
-      function commitOrQueue(cp) {
-        return new Promise(function (res, rej) {
-          var done = false, t = null;
-          function fin(f, v) { if (done) return; done = true; clearTimeout(t); f(v); }
-          var W = window.__dpbFs2W = window.__dpbFs2W || { pending: 0, since: 0, refused: '', refusedAt: 0 };
-          if (!W.pending) W.since = Date.now(); W.pending++;
-          cp.then(function (v) { W.pending = Math.max(0, W.pending - 1); if (!W.pending) W.since = 0; if (!W.pending) W.refused = ''; fin(res, v); }, function (e) {
-            W.pending = Math.max(0, W.pending - 1); if (!W.pending) W.since = 0;
-            if (done) { W.refused = String(e && (e.code || e.message) || e); W.refusedAt = Date.now(); try { console.warn('[dpb-fs2] queued write was refused later:', e && e.message); } catch (x) {} try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (x2) {} }
-            else fin(rej, e);
-          });
-          t = setTimeout(function () { fin(res); }, (typeof navigator !== 'undefined' && navigator.onLine === false) ? 300 : 4000);
-        });
-      }
+      var commitOrQueue = makeCommitter({ onEvent: function (k, x) { dlog(k, x); if (k === 'rejected') { try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (e) {} } } });
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       return ready.then(function () {
         return {
@@ -131,7 +165,7 @@
             var p = Promise.resolve();
             // batches are cut by the NUMBER OF CELLS (every cell is a map with ~10 indexed sub-fields, so the index entries, not the JSON size, are what hit
             // Firestore's 10 MiB limit = "Transaction too big"), and also by size and by op count; order is kept (a pointer doc stays last)
-            var chunks = cutOps(ops);
+            var chunks = cutOps(ops), ws = [];
             chunks.forEach(function (chunk) {
               p = p.then(function () {
                 var b = fs.writeBatch(db);
@@ -140,11 +174,18 @@
                   else if (o.t === 'f') { var cells = clean(o.cells); b.set(dref(o.path), Object.assign({}, o.base, { cells: cells }), { mergeFields: Object.keys(o.base).concat(Object.keys(cells).map(function (k) { return 'cells.' + k; })) }); }
                   else b.delete(dref(o.path));
                 });
-                return commitOrQueue(b.commit());
+                return commitOrQueue(b.commit()).then(function (w) { ws.push(w); });
               });
             });
-            return p;
-          }
+            // {acked:true} = the server confirmed every batch; {acked:false, done} = at least one batch is only saved on the device so far
+            return p.then(function () {
+              var un = ws.filter(function (w) { return w && w.acked === false; });
+              if (!un.length) return { acked: true };
+              return { acked: false, done: Promise.all(un.map(function (w) { return w.done; })).then(function () {}) };
+            });
+          },
+          // close and reopen the network channel of Firestore (queued writes and listeners are kept): the standard way to wake a dead stream after the phone switched networks
+          bounce: function () { return fs.disableNetwork(db).then(function () { return fs.enableNetwork(db); }); }
         };
       });
     });
@@ -212,23 +253,23 @@
   function runProbe() {
     if (probeBusy) return Promise.resolve(); probeBusy = true; probeAt = Date.now();
     var W = window.__dpbFs2W = window.__dpbFs2W || {};
-    return getAdapter().then(function (a) { return a.probe ? a.probe() : null; }).then(function (r) { W.probe = r; W.probeAt = Date.now(); }, function (e) { W.probe = { read: String(e && (e.code || e.message) || e), write: '-' }; W.probeAt = Date.now(); }).then(function () { probeBusy = false; warnNow(); });
+    return getAdapter().then(function (a) { return a.probe ? a.probe() : null; }).then(function (r) { W.probe = r; W.probeAt = Date.now(); }, function (e) { W.probe = { read: String(e && (e.code || e.message) || e), write: '-' }; W.probeAt = Date.now(); }).then(function () { probeBusy = false; try { dlog('probe', 'read=' + (W.probe && W.probe.read) + ' write=' + (W.probe && W.probe.write)); } catch (e) {} warnNow(); });
   }
   function diag() {
-    var W = window.__dpbFs2W || {}, p = W.probe; if (!p || Date.now() - (W.probeAt || 0) > 5 * 60 * 1000) return '';
+    var W = window.__dpbFs2W || {}, p = W.probe; if (!p || Date.now() - (W.probeAt || 0) > 90 * 1000) return '';
     var s = String(p.read) + ' ' + String(p.write);
     if (/resource-exhausted|quota/i.test(s)) return ' — السبب: حصة Firebase اليومية خلصت';
     if (/permission|unauth/i.test(s)) return ' — السبب: قواعد Firebase أو الدخول رافضين';
     if (p.read === 'timeout') return ' — السبب: مفيش اتصال فعلي بسيرفر Firebase (الشبكة)';
     if (p.read === 'ok' && p.write === 'timeout') return ' — القراءة شغالة لكن الكتابة عالقة';
-    if (p.read === 'ok' && p.write === 'ok') return ' — السيرفر سليم والتعديلات القديمة عالقة في طابور الجهاز';
+    if (p.read === 'ok' && p.write === 'ok') return ' — السيرفر ردّ دلوقتي؛ بعيد فتح قناة الاتصال تلقائيًا';
     return ' — (' + s + ')';
   }
   function warnText() {
     var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i;
     if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
     if (pidS() && !curStore() && lastErr) return quota.test(lastErr) ? '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية' : '⚠️ مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني';
-    if (W.pending && W.since && Date.now() - W.since > 20000 && navigator.onLine !== false) { if (!probeBusy && Date.now() - probeAt > 60000) runProbe(); return '⚠️ ' + W.pending + ' تعديل لسه ماوصلش للسيرفر' + diag(); }
+    if (W.pending && W.since && Date.now() - W.since > 20000 && navigator.onLine !== false) { if (!probeBusy && Date.now() - probeAt > 45000) runProbe(); return '⚠️ ' + W.pending + ' كتابة لسه السيرفر ماأكدهاش (محفوظة على الجهاز)' + diag(); }
     return '';
   }
   function warnNow() {
@@ -240,6 +281,26 @@
     } catch (e) {}
   }
   window.__dpbFs2Warn = warnNow; setInterval(warnNow, 5000);
+  // A write that stays unconfirmed (stream dead after the phone switched network / the app was in the background) is woken up by closing and reopening the
+  // network channel of Firestore. Queued writes and listeners are kept by the SDK. At most once a minute.
+  var lastBounce = 0, bounces = 0;
+  function bounceNow(why) {
+    if (Date.now() - lastBounce < 60000) return Promise.resolve(false);
+    lastBounce = Date.now(); bounces++; dlog('bounce', why);
+    return getAdapter().then(function (a) { return a.bounce ? a.bounce() : null; }).then(function () { dlog('bounce-done', ''); return true; }, function (e) { dlog('bounce-fail', e && (e.code || e.message)); return false; });
+  }
+  function healTick() {
+    var W = window.__dpbFs2W || {};
+    if (W.pending && W.since && Date.now() - W.since > 45000 && navigator.onLine !== false) bounceNow('pending ' + W.pending + ' for ' + Math.round((Date.now() - W.since) / 1000) + 's');
+  }
+  setInterval(healTick, 15000);
+  try {
+    window.addEventListener('online', function () { dlog('online', ''); setTimeout(function () { var W = window.__dpbFs2W || {}; if (W.pending) bounceNow('back online with ' + W.pending + ' pending'); }, 1500); });
+    window.addEventListener('offline', function () { dlog('offline', ''); });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { var W = window.__dpbFs2W || {}; if (W.pending && W.since && Date.now() - W.since > 10000) bounceNow('app back on screen with ' + W.pending + ' pending'); }, 1500); });
+  } catch (e) {}
+  window.__dpbFs2Net = function () { var W = window.__dpbFs2W || {}; return { pending: W.pending || 0, sinceMs: W.since ? Date.now() - W.since : 0, probe: W.probe || null, probeAgeMs: W.probeAt ? Date.now() - W.probeAt : -1, bounces: bounces, unacked: Object.keys(UN).length, connected: !!curStore(), err: String(lastErr || ''), online: navigator.onLine !== false, transport: ls('dpb_fs2_transport', 'lp') }; };
+  window.__dpbFs2Bounce = function () { lastBounce = 0; return bounceNow('manual'); };
   // v124: true only when every write this device made has been ACKNOWLEDGED by the server (pending counter back to 0); false after ms if some are still waiting
   window.__dpbFs2Ack = function (ms) { return new Promise(function (res) { var t0 = Date.now(); (function chk() { var W = window.__dpbFs2W || {}; if (!W.pending) { res(true); return; } if (Date.now() - t0 >= ms) { res(false); return; } setTimeout(chk, 200); })(); }); };
   function startCreate() {
@@ -250,11 +311,11 @@
       var s = CORE.create(a, { ns: nsName(), pid: forPid, offset: clockOff, onError: function (e) {
         // the live listener died (token refresh, quota, rules, network): this device would stop receiving other devices' edits silently. Drop the store and rebuild it.
         if (store !== s) return;
-        lastErr = permHint(e); dropStore(); failedAt = 0; paintState(); warnNow(); rebuildLater();
+        lastErr = permHint(e); dlog('listener-dead', (e && e.code ? e.code + ' ' : '') + lastErr); dropStore(); failedAt = 0; paintState(); warnNow(); rebuildLater();
       } });
       s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); schedPull(1500); });
-      return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; retryN = 0; s.ensureEpoch(); paintState(); syncClock(a); try { loadBase(s); } catch (e) {} return s; });
-    }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); paintState(); scheduleRetry(e); throw e; });
+      return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; retryN = 0; dlog('store-up', forPid); s.ensureEpoch(); paintState(); syncClock(a); try { loadBase(s); } catch (e) {} return s; });
+    }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); dlog('store-failed', (e && e.code ? e.code + ' ' : '') + lastErr); paintState(); scheduleRetry(e); throw e; });
     return creating;
   }
   // never waits forever: ready within 8s, or it fails fast (and is retried at most every 30s) so nothing else in the app hangs behind it
@@ -282,6 +343,22 @@
 
   /* ---- Map catalog / map shapes / original Excel files (kv keys mapcat, mapsnap_*, xlfile_*) live in Firestore under dpb2/{ns}/kv.
      Same request format the app already sends (kvGet / kvPatch), so the app code does not change. Values longer than 600k chars are split into parts. ---- */
+  /* ---- delivery tracking (v125): record ids whose write is saved on the device but NOT yet confirmed by the server. The app is told about them
+     (reply field `queued`) so it does not mark them "synced"; when the server confirms (or rejects) the app is nudged to push again. ---- */
+  var UN = {}, REJ = {};
+  function releaseIds(ids) { ids.forEach(function (i) { if (UN[i] > 1) UN[i]--; else delete UN[i]; }); }
+  function kickPush() { try { if (window.DPB_CLOUD_PRODUCTION && window.DPB_CLOUD_PRODUCTION.cloudPush) window.DPB_CLOUD_PRODUCTION.cloudPush(); } catch (e) {} }
+  function trackQueued(ids, w) {
+    if (!w || w.acked !== false || !w.done) return;
+    ids = ids.map(String).filter(Boolean); if (!ids.length) return;
+    ids.forEach(function (i) { UN[i] = (UN[i] || 0) + 1; });
+    w.done.then(function () { releaseIds(ids); dlog('delivered', ids.length + ' record(s)'); kickPush(); }, function (e) {
+      releaseIds(ids); var code = String(e && (e.code || e.message) || e); ids.forEach(function (i) { REJ[i] = { t: Date.now(), e: code }; });
+      dlog('rejected-late', ids.length + ' record(s): ' + code); kickPush();
+    });
+  }
+  function queuedOf(ids) { return ids.map(String).filter(function (i) { return UN[i]; }); }
+  window.__dpbFs2Unacked = function () { return Object.keys(UN); };
   var U_KEY = 'users';
   var P_KEY = 'projects';   // the list of projects (id + name + small facts): lets any signed-in device find the projects without typing an ID
   // pure helper (also used by the Node test): cut a list of write ops into batches that stay far below Firestore's limit
@@ -623,11 +700,18 @@
         if ((body.action === 'kvGet' || body.action === 'kvPatch' || body.action === 'kvDelete') && kvMine(body.key)) return kvHandle(body);
         if (body.action === 'upsertMany') {
           var recs = body.records || [], m = recs.filter(isCell), rest = recs.filter(function (r) { return !isCell(r); });
+          var mIds = m.map(function (r) { return String(r.id); });
+          // every record is still waiting for the server: do not write them again, just say so
+          if (m.length && !rest.length && mIds.every(function (i) { return UN[i]; })) return Promise.resolve(jsonRes({ ok: true, stale: [], queued: mIds, serverTime: new Date().toISOString() }));
+          // the server refused these a moment ago: say so instead of sending the same refused write again and again
+          if (m.length && !rest.length && mIds.every(function (i) { return REJ[i] && Date.now() - REJ[i].t < 60000; })) return Promise.resolve(jsonRes({ ok: false, error: 'السيرفر رفض الحفظ: ' + REJ[mIds[0]].e }));
           return getStore().then(function (s) {
             var p1 = m.length ? s.put(m.map(stamp), stagesOf(body)) : Promise.resolve({ stale: [] });
             return p1.then(function (pr) {
+              trackQueued(mIds, pr);
+              mIds.forEach(function (i) { delete REJ[i]; });
               return (rest.length ? restPut(s.adapter, rest.map(stamp)) : Promise.resolve([])).then(function (st) {
-                return jsonRes({ ok: true, stale: (pr.stale || []).concat(st), serverTime: new Date().toISOString() });
+                return jsonRes({ ok: true, stale: (pr.stale || []).concat(st), queued: queuedOf(mIds), serverTime: new Date().toISOString() });
               });
             });
           }).catch(fail);
@@ -639,8 +723,11 @@
             var mineIds = ids.filter(function (x) { return known[x]; }), otherIds = ids.filter(function (x) { return !known[x]; });
             var p1 = mineIds.length ? s.removeIds(mineIds, stagesOf(body)) : Promise.resolve({ ok: true, deleted: 0, blocked: [] });
             return p1.then(function (r) {
-              if (!otherIds.length) return jsonRes(r);
-              return restRemove(s.adapter, otherIds).then(function (n) { return jsonRes({ ok: r.ok !== false, deleted: (r.deleted || 0) + n, blocked: r.blocked || [] }); });
+              trackQueued(mineIds, r);
+              var bl = {}; (r.blocked || []).forEach(function (b) { bl[String(b.id)] = true; });
+              var q = queuedOf(ids.filter(function (i) { return !bl[i]; }));   // ALL ids asked for: a retry finds the cells already deleted on the device, but still waiting for the server
+              if (!otherIds.length) return jsonRes({ ok: r.ok !== false, deleted: r.deleted || 0, blocked: r.blocked || [], queued: q });
+              return restRemove(s.adapter, otherIds).then(function (n) { return jsonRes({ ok: r.ok !== false, deleted: (r.deleted || 0) + n, blocked: r.blocked || [], queued: q }); });
             });
           }).catch(fail);
         }
@@ -1086,10 +1173,39 @@
       '<div class="hint" id="dpbFs2DriveInfo" style="margin-top:8px;line-height:1.9"></div>' +
       '<div class="hint" id="dpbFs2BkInfo" style="margin-top:8px">النسخ: بيحتفظ بنسختين بس (حالية + سابقة).</div>' +
       '<div class="hint" id="dpbFs2State" style="margin-top:8px"></div>' +
+      '<div class="hint" id="dpbFs2Net" style="margin-top:8px;line-height:1.9"></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="dpbAdminBtn" id="dpbFs2NetTest">🩺 فحص الاتصال + إعادة فتح القناة</button><button type="button" class="dpbAdminBtn" id="dpbFs2NetCopy">📋 نسخ تقرير الاتصال</button></div>' +
+      '<label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">نوع الاتصال (بعد التغيير اقفل التطبيق وافتحه): <select id="dpbFs2Transport"><option value="lp">قنوات متقطعة (الحالي)</option><option value="auto">تلقائي</option><option value="ws">مباشر</option></select></label>' +
+      '<pre id="dpbFs2NetLog" style="margin:8px 0 0;max-height:210px;overflow:auto;white-space:pre-wrap;direction:ltr;text-align:left;font-size:11px;line-height:1.5;background:#091827;border:1px solid #243b57;border-radius:10px;padding:8px"></pre>' +
       '<div class="hint" id="dpbFs2Msg" style="margin-top:6px"></div>';
     var old = document.getElementById('dpbFsCard');
     if (old && old.parentNode === host) host.insertBefore(c, old.nextSibling); else host.appendChild(c);
     function paint() { paintState(); if (on() && !store) getStore().catch(function () {}); }
+    // ---- connection report (live) ----
+    function hms(t) { var d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }
+    function netText() {
+      var n = window.__dpbFs2Net ? window.__dpbFs2Net() : {}, pr = n.probe ? ('قراءة ' + n.probe.read + ' / كتابة ' + n.probe.write + ' (من ' + Math.round(n.probeAgeMs / 1000) + ' ث)') : 'لسه ماتفحصش';
+      return 'الاتصال: ' + (n.online ? 'النت شغّال' : 'النت مقطوع') + ' — الـlistener: ' + (n.connected ? 'شغّال ✅' : 'واقع ❌' + (n.err ? ' (' + n.err + ')' : '')) +
+        '\nكتابات مستنية تأكيد السيرفر: ' + (n.pending || 0) + (n.sinceMs ? ' (من ' + Math.round(n.sinceMs / 1000) + ' ث)' : '') + ' — سجلات لسه مش مؤكدة: ' + (n.unacked || 0) +
+        '\nآخر فحص: ' + pr + ' — مرات إعادة فتح القناة: ' + (n.bounces || 0) + ' — نوع الاتصال: ' + (n.transport || '');
+    }
+    function logText() {
+      var L = window.__dpbFs2Diag ? window.__dpbFs2Diag() : [];
+      return L.slice(-25).reverse().map(function (e) { return hms(e.t) + '  ' + e.k + '  ' + e.x; }).join('\n') || '(مفيش أحداث لسه)';
+    }
+    function paintNet() { var a = document.getElementById('dpbFs2Net'), b = document.getElementById('dpbFs2NetLog'); if (!a || !b) return; a.textContent = netText(); a.style.whiteSpace = 'pre-wrap'; b.textContent = logText(); }
+    paintNet(); var netTimer = setInterval(function () { if (!document.getElementById('dpbFs2Net')) { clearInterval(netTimer); return; } paintNet(); }, 3000);
+    var tsel = document.getElementById('dpbFs2Transport'); tsel.value = ls('dpb_fs2_transport', 'lp');
+    tsel.addEventListener('change', function () { try { localStorage.setItem('dpb_fs2_transport', tsel.value); } catch (e) {} dlog('transport-set', tsel.value); document.getElementById('dpbFs2Msg').textContent = 'اتحفظ نوع الاتصال — اقفل التطبيق وافتحه تاني عشان يشتغل.'; paintNet(); });
+    document.getElementById('dpbFs2NetTest').addEventListener('click', function () {
+      var m = document.getElementById('dpbFs2Msg'); m.textContent = 'بفحص الاتصال…';
+      var W = window.__dpbFs2W = window.__dpbFs2W || {}; probeAt = 0;
+      (window.__dpbFs2Bounce ? window.__dpbFs2Bounce() : Promise.resolve()).then(function () { return runProbe(); }).then(function () { var p = W.probe || {}; m.textContent = 'نتيجة الفحص: قراءة ' + p.read + ' / كتابة ' + p.write; paintNet(); }, function (e) { m.textContent = 'فشل الفحص: ' + permHint(e); });
+    });
+    document.getElementById('dpbFs2NetCopy').addEventListener('click', function () {
+      var txt = netText() + '\n\n' + logText(), m = document.getElementById('dpbFs2Msg');
+      try { navigator.clipboard.writeText(txt).then(function () { m.textContent = 'اتنسخ التقرير ✅'; }, function () { m.textContent = 'مقدرتش أنسخ — صوّر الشاشة.'; }); } catch (e) { m.textContent = 'مقدرتش أنسخ — صوّر الشاشة.'; }
+    });
     document.getElementById('dpbFs2CheckXl').addEventListener('click', function () {
       var msg = document.getElementById('dpbFs2Msg');
       var src = typeof window.__dpbExcelUnitCells === 'function' ? window.__dpbExcelUnitCells() : [];

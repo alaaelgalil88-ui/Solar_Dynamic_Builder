@@ -94,12 +94,16 @@
       return null;
     }
     // write ops; on failure put the local cache back exactly as it was so the map never shows a mark that was not saved
+    // v125: the adapter answers {acked, done}. acked=false means the write is saved on the device and queued but the SERVER has not confirmed it yet;
+    // done settles when the server confirms (or rejects). The caller (dpb-fs2.js) uses it to tell the app \"not delivered yet\" instead of \"saved\".
+    // A late rejection needs no rollback here: the Firestore listener itself re-delivers the server's truth for that row.
     function commit(ops, before) {
-      return adapter.write(pack(ops)).catch(function (e) {
+      return adapter.write(pack(ops)).then(function (w) { return (w && typeof w === 'object') ? w : { acked: true }; }, function (e) {
         Object.keys(before).forEach(function (k) { if (before[k] === undefined) delete cache[k]; else cache[k] = before[k]; });
         emit(); throw e;
       });
     }
+    function ackInfo(w) { return { acked: !w || w.acked !== false, done: w && w.done }; }
     function put(records, stages) {
       var st = norm(stages), now = nowIso(), ops = [], pending = {}, before = {}, stale = [], ignored = 0, bumped = 0, ep = epochMs();
       records.forEach(function (rec) {
@@ -138,7 +142,7 @@
       Object.keys(pending).forEach(function (k) { cache[k] = pending[k]; });
       if (ops.length) emit();
       if (!ops.length) return Promise.resolve({ ok: true, written: 0, stale: stale, ignored: ignored, bumped: bumped });
-      return commit(ops, before).then(function () { return { ok: true, written: ops.length, stale: stale, ignored: ignored, bumped: bumped }; });
+      return commit(ops, before).then(function (w) { var a = ackInfo(w); return { ok: true, written: ops.length, stale: stale, ignored: ignored, bumped: bumped, acked: a.acked, done: a.done }; });
     }
     function removeIds(ids, stages) {
       var want = {}; ids.forEach(function (x) { want[String(x)] = true; });
@@ -153,7 +157,7 @@
       });
       gone.forEach(function (g) { cache[g[0]] = g[1]; }); if (gone.length) emit();
       if (!ops.length) return Promise.resolve({ ok: true, deleted: 0, blocked: blocked });
-      return commit(ops, before).then(function () { return { ok: true, deleted: deleted, blocked: blocked }; });
+      return commit(ops, before).then(function (w) { var a = ackInfo(w); return { ok: true, deleted: deleted, blocked: blocked, acked: a.acked, done: a.done }; });
     }
     function removeCells(p, cells, stages) {
       var ids = []; cells.forEach(function (x) { var d = get(id(p, x.r, x.c)); if (live(d)) ids.push(d.id); });
@@ -180,7 +184,7 @@
       var res = { add: add, change: change, remove: remove };
       if (dry || !ops.length) return Promise.resolve(res);
       emit();
-      return commit(ops, before).then(function () { return res; });
+      return commit(ops, before).then(function (w) { var a = ackInfo(w); res.acked = a.acked; res.done = a.done; return res; });
     }
     function all() { return keys().filter(function (k) { return !isMeta(k); }).map(get).filter(live); }
     function counts() { var c = {}; all().forEach(function (d) { var k = d.process; c[k] = (c[k] || 0) + (Number(d.code) > 0 ? 1 : 0); }); return c; }
