@@ -160,6 +160,50 @@
     } catch (e) { return []; }
   }
 
+
+  /* ---- v127: OUTBOX for map-cell writes (fixes "deleted cells come back" / "edits silently lost" between an online admin and an offline supervisor) ----
+     Before: a cell write went to Firestore as a blind merge, so whichever write ARRIVED last won. An offline supervisor who still showed a cell that the admin
+     had already deleted could mark it, and when the phone got its network back that write landed AFTER the delete and brought the cell back.
+     Now every cell write is a server-side TRANSACTION: it reads the row from the server first and writes only the cells that are not older than what the
+     server holds (times are ISO strings from the shared clock, so a plain string compare is the order). A write that cannot reach the server is kept in
+     this outbox (saved in localStorage, survives closing the app) and is sent through the same check when the network returns. */
+  var OB_KEY = 'dpb_fs2_outbox_v1', ob = {}, obWait = {}, OBF = { run: function () {} };
+  try { ob = JSON.parse(ls(OB_KEY, '{}')) || {}; } catch (e) { ob = {}; }
+  function obSave() { try { localStorage.setItem(OB_KEY, JSON.stringify(ob)); } catch (e) {} }
+  function obN() { return Object.keys(ob).length; }
+  window.__dpbFs2Outbox = function () { return obN(); };
+  // pure: what a transaction does with one row. cur = the server's cells of that row, incoming = the cells this device wants to write.
+  function planTx(cur, incoming) {
+    var put = {}, skipped = [];
+    Object.keys(incoming || {}).forEach(function (col) {
+      var n = incoming[col], s0 = cur && cur[col];
+      if (s0 && String(s0.time || '') > String(n && n.time || '')) skipped.push(s0); else put[col] = n;
+    });
+    return { put: put, skipped: skipped };
+  }
+  window.__dpbPlanTx = planTx;
+  function obAdd(o) {
+    var keys = [];
+    Object.keys(o.cells).forEach(function (col) {
+      var k = o.path + '|' + col, c = o.cells[col], cur = ob[k]; keys.push(k);
+      if (!cur || String(cur.cell.time || '') <= String(c.time || '')) ob[k] = { path: o.path, base: o.base, col: col, cell: JSON.parse(JSON.stringify(c)) };
+    });
+    obSave(); return keys;
+  }
+  function obSettle(k, err) { (obWait[k] || []).forEach(function (w) { if (err) w.rej(err); else if (--w.left <= 0) w.res(); }); delete obWait[k]; }
+  function obWaiter(keys) {
+    var w = { left: keys.length }; w.p = new Promise(function (res, rej) { w.res = res; w.rej = rej; }); w.p.catch(function () {});
+    keys.forEach(function (k) { (obWait[k] = obWait[k] || []).push(w); }); return w.p;
+  }
+  var obT = null, obBack = 0;
+  function obLater(ms) { if (obT) return; obT = setTimeout(function () { obT = null; OBF.run(); }, ms); }
+  try {
+    window.addEventListener('online', function () { obBack = 0; setTimeout(function () { OBF.run(); }, 800); });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden && obN()) OBF.run(); });
+    setInterval(function () { if (obN() && !document.hidden) OBF.run(); }, 20000);
+  } catch (e) {}
+  var DEFINITE = /permission|unauth|resource-exhausted|quota|invalid-argument/i;
+
   function makeAdapter() {
     var conf; try { conf = JSON.parse(ls(LS.cfg, 'null')); } catch (e) { conf = null; }
     if (emu()) conf = { apiKey: 'demo', projectId: 'demo-no-project', appId: 'demo' };   // emulator needs no real config
@@ -220,8 +264,85 @@
         var dev = ls('dpb_fs2_dev', '') || 'dev';
         return restSend([{ update: { name: DOCS + '/dpb2/' + nsName() + '/kv/clock-' + dev, fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 't', setToServerValue: 'REQUEST_TIME' }] }]).then(function () { return 'ok'; }, function (e) { return String(e && (e.code || e.message) || e); });
       }
+
+      // ---- v127 cell writes: transaction (server compare) online, outbox otherwise ----
+      function txChunk(chunk) {
+        var skipped = [];
+        return Promise.race([
+          fs.runTransaction(db, function (tx) {
+            skipped = [];
+            return Promise.all(chunk.map(function (o) { return tx.get(dref(o.path)); })).then(function (snaps) {
+              chunk.forEach(function (o, i) {
+                var cur = snaps[i].exists() ? ((snaps[i].data() || {}).cells || {}) : {}, pl = planTx(cur, o.cells);
+                skipped = skipped.concat(pl.skipped);
+                var cols = Object.keys(pl.put); if (!cols.length) return;
+                tx.set(dref(o.path), Object.assign({}, o.base, { cells: clean(pl.put) }), { mergeFields: Object.keys(o.base).concat(cols.map(function (k) { return 'cells.' + k; })) });
+              });
+            });
+          }, { maxAttempts: 3 }),
+          new Promise(function (_, rej) { setTimeout(function () { rej(Object.assign(new Error('tx-timeout'), { code: 'tx-timeout' })); }, 9000); })
+        ]).then(function () { return skipped; });
+      }
+      function tellSkipped(sk) {
+        if (!sk.length) return;
+        try { api && api.onSkip && api.onSkip(sk); } catch (e) {}
+        try { if (typeof window.showToast === 'function') window.showToast('⚠️ ' + sk.length + ' تعديل اتلغى: جهاز تاني عدّل أو حذف نفس الخلية بعده'); } catch (e) {}
+        dlog('skipped-older', sk.length + ' cell(s) were older than the server copy');
+      }
+      function refuse(e) {
+        var W = window.__dpbFs2W = window.__dpbFs2W || {}; W.refused = String(e && (e.code || e.message) || e); W.refusedAt = Date.now();
+        try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (x) {}
+      }
+      function writeCells(fOps) {
+        var chunks = cutOps(fOps), p = Promise.resolve(), keys = [], skippedAll = [], queueRest = (navigator.onLine === false);
+        chunks.forEach(function (chunk) {
+          p = p.then(function () {
+            if (queueRest) { chunk.forEach(function (o) { keys = keys.concat(obAdd(o)); }); return; }
+            return txChunk(chunk).then(function (sk) { skippedAll = skippedAll.concat(sk); }, function (e) {
+              if (DEFINITE.test(String(e && (e.code || e.message) || e))) { refuse(e); throw e; }
+              queueRest = true; chunk.forEach(function (o) { keys = keys.concat(obAdd(o)); });   // no answer from the server: keep it, send it later through the same check
+            });
+          });
+        });
+        return p.then(function () {
+          tellSkipped(skippedAll);
+          if (!keys.length) return { acked: true };
+          var done = obWaiter(keys); obLater(3000); try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (e) {}
+          return { acked: false, done: done };
+        });
+      }
+      var draining = false;
+      function obRun() {
+        if (draining || !obN()) return;
+        if (navigator.onLine === false) { obLater(15000); return; }
+        draining = true;
+        var by = {}, sent = {};
+        Object.keys(ob).forEach(function (k) { var e = ob[k], o = by[e.path] || (by[e.path] = { t: 'f', path: e.path, base: e.base, cells: {} }); o.cells[e.col] = e.cell; sent[k] = e.cell.time; });
+        var chunks = cutOps(Object.keys(by).map(function (q) { return by[q]; })), p = Promise.resolve(), failed = null, skippedAll = [], okKeys = [];
+        chunks.forEach(function (chunk) {
+          p = p.then(function () {
+            if (failed) return;
+            return txChunk(chunk).then(function (sk) {
+              skippedAll = skippedAll.concat(sk);
+              chunk.forEach(function (o) { Object.keys(o.cells).forEach(function (col) { okKeys.push(o.path + '|' + col); }); });
+            }, function (e) { failed = e; });
+          });
+        });
+        p.then(function () {
+          var refused = failed && DEFINITE.test(String(failed.code || failed.message || failed));
+          okKeys.forEach(function (k) { if (ob[k] && ob[k].cell.time === sent[k]) { delete ob[k]; obSettle(k); } });
+          obSave();
+          tellSkipped(skippedAll);
+          draining = false;
+          if (refused) { refuse(failed); dlog('outbox-refused', String(failed.code || failed.message)); obLater(60000); }
+          else if (failed) { obBack = Math.min(obBack + 1, 4); dlog('outbox-retry', String(failed.code || failed.message)); obLater([5000, 15000, 30000, 60000, 60000][obBack]); }
+          else { obBack = 0; dlog('outbox-delivered', okKeys.length + ' cell(s)'); kickPush(); if (obN()) obLater(500); }
+          try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (e) {}
+        });
+      }
+      var api;
       return ready.then(function () {
-        return {
+        api = {
           // server clock: write a tiny doc with serverTimestamp and read it back from the server (dpb2/{ns}/kv is already allowed by the rules)
           serverNow: function () {
             var dev = ls('dpb_fs2_dev', ''); if (!dev) { dev = Math.random().toString(36).slice(2, 10); try { localStorage.setItem('dpb_fs2_dev', dev); } catch (e) {} }
@@ -240,6 +361,17 @@
           list: function (path) { var col = fs.collection.apply(null, [db].concat(path.split('/'))); return (fs.getDocsFromServer ? fs.getDocsFromServer(col) : fs.getDocs(col)).then(function (q) { return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }); },
           // t:'s' = write a whole small doc (meta). t:'f' = write only the listed cells inside a row doc (mergeFields replaces exactly those cells, never the rest of the row)
           write: function (ops) {
+            var fOps = ops.filter(function (o) { return o.t === 'f'; }), rest = ops.filter(function (o) { return o.t !== 'f'; });
+            var pr = rest.length ? api.writeRaw(rest) : Promise.resolve({ acked: true });
+            return pr.then(function (w0) {
+              if (!fOps.length) return w0;
+              return writeCells(fOps).then(function (w1) {
+                var un = [w0, w1].filter(function (w) { return w && w.acked === false; });
+                return un.length ? { acked: false, done: Promise.all(un.map(function (w) { return w.done; })).then(function () {}) } : { acked: true };
+              });
+            });
+          },
+          writeRaw: function (ops) {
             var p = Promise.resolve();
             // batches are cut by the NUMBER OF CELLS (every cell is a map with ~10 indexed sub-fields, so the index entries, not the JSON size, are what hit
             // Firestore's 10 MiB limit = "Transaction too big"), and also by size and by op count; order is kept (a pointer doc stays last)
@@ -263,8 +395,11 @@
             });
           },
           // close and reopen the network channel of Firestore (queued writes and listeners are kept): the standard way to wake a dead stream after the phone switched networks
-          bounce: function () { return fs.disableNetwork(db).then(function () { return fs.enableNetwork(db); }); }
+          bounce: function () { return fs.disableNetwork(db).then(function () { return fs.enableNetwork(db); }); },
+          pendingCells: function () { return Object.keys(ob).map(function (k) { return ob[k].cell; }); }
         };
+        OBF.run = obRun; if (obN()) setTimeout(obRun, 1500);
+        return api;
       });
     });
   }
@@ -352,6 +487,7 @@
     var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i;
     if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
     if (pidS() && !curStore() && lastErr) return quota.test(lastErr) ? '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية' : '⚠️ مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني';
+    if (obN() > 0 && !W.pending) return '⏳ ' + obN() + ' تعديل محفوظ على الجهاز ومستني الاتصال — هيتبعت لوحده بعد ما يتقارن بحالة السيرفر';
     if (W.pending && W.since && Date.now() - W.since > 20000 && navigator.onLine !== false) { if (!probeBusy && Date.now() - probeAt > 45000) runProbe(); return '⚠️ ' + W.pending + ' كتابة لسه السيرفر ماأكدهاش (محفوظة على الجهاز)' + diag(); }
     return '';
   }

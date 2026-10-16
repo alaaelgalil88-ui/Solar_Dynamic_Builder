@@ -44,6 +44,9 @@
     function norm(stages) { return (stages || []).map(function (s, i) { return { name: s.name, code: Number(s.code) || (i + 1) }; }).sort(function (a, b) { return a.code - b.code; }); }
     function stageOf(st, p) { for (var i = 0; i < st.length; i++) if (slug(st[i].name) === slug(p)) return st[i]; return null; }
     function emit() { subs.forEach(function (f) { try { f(); } catch (e) {} }); }
+    // v127: cells this device wrote while offline / without server answer wait in the adapter's outbox. They are re-applied on top of every snapshot
+    // (a snapshot of the same row would otherwise wipe them from the screen), and a cell the server refused because a NEWER one exists is put back to the server's version.
+    adapter.onSkip = function (cells) { (cells || []).forEach(function (c) { if (!c || c.process == null || c.r1 == null) return; cache[id(c.process, c.r1, c.c1)] = c; }); emit(); };
     var ready = new Promise(function (res, rej) {
       var done = false;
       unsub = adapter.listen(COL, function (docs, err, delta) {
@@ -71,6 +74,7 @@
           }
           byDoc[d.id] = ks;
         });
+        try { if (adapter.pendingCells) adapter.pendingCells().forEach(function (c) { if (!c || c.process == null || c.r1 == null) return; var k = id(c.process, c.r1, c.c1), cur = m[k]; if (!cur || String(cur.time || '') < String(c.time || '')) m[k] = c; }); } catch (e) {}
         cache = m;
         if (!done) { done = true; res(); } if (!delta || docs.length) emit();
       }, P ? { where: ['projectId', '==', P] } : null);
