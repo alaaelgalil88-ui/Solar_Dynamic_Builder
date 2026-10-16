@@ -12711,6 +12711,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         g.colorByCoord=(window.__dpbLiveGridByProcess[p]&&window.__dpbLiveGridByProcess[p].colorByCoord)||new Map(); // v72: keep live colors
         window.__dpbLiveGridByProcess[p]=g;
         if(g.trackers.length) anyTrackers=true;
+        else{ try{ const pg=pickLiveGrid_(p); if(pg&&Array.isArray(pg.trackers)&&pg.trackers.length) anyTrackers=true; }catch(_){} } // v126: Firestore-owned process: its tracker geometry comes from the map model on first read, so the cards must refresh once it is there
         if(changed) anyChanged=true;
       });
       // Legacy alias: كود قديم بينادي window.__dpbLiveGrid من غير اسم

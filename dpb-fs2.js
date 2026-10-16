@@ -62,27 +62,89 @@
     var online = deps.online || function () { return typeof navigator === 'undefined' || navigator.onLine !== false; };
     var getW = deps.W || function () { return (window.__dpbFs2W = window.__dpbFs2W || { pending: 0, since: 0, refused: '', refusedAt: 0 }); };
     var onEvent = deps.onEvent || function () {};
-    return function commitOrQueue(cp) {
+    // v126: when the SDK's write channel stays silent while the phone IS online (reads work, writes never get an answer), the same batch is sent
+    // through a plain HTTPS request (`rescue`, one explicit request with its own timeout and a real error code). First try after 12 s; once a rescue
+    // worked on this device the next ones start after 1.5 s. A definite refusal (HTTP 400/403/429...) stops the retries and is shown with its real reason.
+    var RESCUE_FIRST = deps.rescueFirst || 12000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_MAX = deps.rescueMax || 6;
+    return function commitOrQueue(cp, rescue) {
       return new Promise(function (res, rej) {
-        var done = false, t = null, t0 = now(), doneRes, doneRej, W = getW();
+        var done = false, t = null, rt = null, t0 = now(), doneRes, doneRej, W = getW(), counted = true, settled = false, tries = 0;
         var dp = new Promise(function (a, b) { doneRes = a; doneRej = b; }); dp.catch(function () {});
         function fin(f, v) { if (done) return; done = true; clearT(t); f(v); }
+        function release() { if (!counted) return; counted = false; W.pending = Math.max(0, W.pending - 1); if (!W.pending) { W.since = 0; W.refused = ''; } }
         if (!W.pending) W.since = now(); W.pending++;
         cp.then(function () {
-          W.pending = Math.max(0, W.pending - 1); if (!W.pending) { W.since = 0; W.refused = ''; }
+          settled = true; clearT(rt); release();
           if (done) onEvent('ack-late', (now() - t0) + 'ms');
           fin(res, { acked: true }); doneRes();
         }, function (e) {
-          W.pending = Math.max(0, W.pending - 1); if (!W.pending) W.since = 0;
+          settled = true; clearT(rt); release();
           var code = String(e && (e.code || e.message) || e);
           if (done) { W.refused = code; W.refusedAt = now(); onEvent('rejected', code); doneRej(e); }
           else fin(rej, e);
         });
+        function armRescue(ms) {
+          if (!rescue || settled || tries >= RESCUE_MAX) return;
+          rt = setT(function () {
+            if (settled) return;
+            if (!online()) { armRescue(RESCUE_EVERY); return; }
+            tries++; onEvent('rescue-start', 'try ' + tries + ' after ' + (now() - t0) + 'ms');
+            var rp; try { rp = Promise.resolve(rescue()); } catch (e) { rp = Promise.reject(e); }
+            rp.then(function () {
+              if (settled) return; settled = true; release(); W.rescueOk = now(); W.rescued = (W.rescued || 0) + 1;
+              onEvent('rescued', (now() - t0) + 'ms'); fin(res, { acked: true }); doneRes();
+            }, function (e) {
+              if (settled) return;
+              var code = String(e && (e.code || e.message) || e); W.rescueErr = code; W.rescueErrAt = now(); onEvent('rescue-failed', code);
+              if (e && e.definite) { W.refused = code; W.refusedAt = now(); return; }   // the server answered "no": retrying the same thing changes nothing
+              armRescue(RESCUE_EVERY);
+            });
+          }, ms);
+        }
+        armRescue((W.rescueOk && now() - W.rescueOk < 300000) ? RESCUE_FAST : RESCUE_FIRST);
         t = setT(function () { onEvent('slow', 'no server answer after ' + (now() - t0) + 'ms (pending ' + W.pending + ')'); fin(res, { acked: false, done: dp }); }, online() ? 4000 : 300);
       });
     };
   }
   window.__dpbMakeCommitter = makeCommitter;
+
+  /* ---- v126: plain-HTTPS twin of a write batch (Firestore REST `documents:commit`). Pure functions, tested in Node. ----
+     op {t:'s', path, data}  -> whole document      (same as batch.set)
+     op {t:'f', path, base, cells} -> only the listed cells of a row document (same as batch.set with mergeFields: base keys + cells.<col>)
+     op {t:'d', path}        -> delete */
+  function restVal(v) {
+    if (v === null || v === undefined) return { nullValue: null };
+    var t = typeof v;
+    if (t === 'boolean') return { booleanValue: v };
+    if (t === 'number') return (isFinite(v) && Math.floor(v) === v && Math.abs(v) <= 9007199254740991) ? { integerValue: String(v) } : { doubleValue: isFinite(v) ? v : 0 };
+    if (t === 'string') return { stringValue: v };
+    if (Array.isArray(v)) return { arrayValue: { values: v.map(restVal) } };
+    if (t === 'object') return { mapValue: { fields: restFields(v) } };
+    return { stringValue: String(v) };
+  }
+  function restFields(o) { var f = {}; Object.keys(o).forEach(function (k) { if (o[k] !== undefined) f[k] = restVal(o[k]); }); return f; }
+  function restFp(k) { return /^[A-Za-z_][A-Za-z_0-9]*$/.test(k) ? k : '`' + String(k).replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`'; }
+  function restWrites(docsBase, ops) {
+    return ops.map(function (o) {
+      var name = docsBase + '/' + o.path;
+      if (o.t === 's') return { update: { name: name, fields: restFields(JSON.parse(JSON.stringify(o.data))) } };
+      if (o.t === 'f') {
+        var cells = JSON.parse(JSON.stringify(o.cells)), base = JSON.parse(JSON.stringify(o.base || {})), f = restFields(base);
+        f.cells = { mapValue: { fields: restFields(cells) } };
+        return { update: { name: name, fields: f }, updateMask: { fieldPaths: Object.keys(base).map(restFp).concat(Object.keys(cells).map(function (k) { return 'cells.' + restFp(k); })) } };
+      }
+      return { delete: name };
+    });
+  }
+  // HTTP failure -> Error with a readable code (e.g. "resource-exhausted") and `definite` = the server understood and refused (do not retry blindly)
+  function restError(status, text) {
+    var j = null; try { j = JSON.parse(text); if (Array.isArray(j)) j = j[0]; } catch (e) {}
+    var st = String((j && j.error && j.error.status) || status).toLowerCase().replace(/_/g, '-'), msg = String((j && j.error && j.error.message) || text || '').slice(0, 140);
+    var err = new Error('HTTP ' + status + ' ' + st + (msg ? ': ' + msg : '')); err.code = st; err.status = status;
+    err.definite = status === 400 || status === 403 || status === 404 || status === 409 || status === 429;
+    return err;
+  }
+  window.__dpbRestWrites = restWrites; window.__dpbRestError = restError;
   // The app filters its local records by the active project (r.projectId). Map-engine marks are sent without one, so stamp it:
   // on the way in (stored in Firestore) and on the way out (older docs that were stored without it).
   function pid() { try { return window.__dpbActiveProjectId || ''; } catch (e) { return ''; } }
@@ -142,6 +204,22 @@
       // answer is still awaited, so a refused write (rules / quota) is still reported.
       var commitOrQueue = makeCommitter({ onEvent: function (k, x) { dlog(k, x); if (k === 'rejected') { try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (e) {} } } });
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
+      // v126: one explicit HTTPS request (Firestore REST) with the signed-in user's token: used when the SDK write channel is silent, and by the connection test
+      var DOCS = 'projects/' + conf.projectId + '/databases/(default)/documents';
+      function restSend(writes) {
+        if (!auth.currentUser) return Promise.reject(Object.assign(new Error('no signed-in user'), { code: 'no-auth' }));
+        return auth.currentUser.getIdToken().then(function (tok) {
+          var ctl = (typeof AbortController === 'function') ? new AbortController() : null, tm = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, 20000);
+          return prevFetch('https://firestore.googleapis.com/v1/' + DOCS + ':commit', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ writes: writes }), signal: ctl ? ctl.signal : undefined })
+            .then(function (r) { clearTimeout(tm); return r.text().then(function (t) { if (r.ok) return true; throw restError(r.status, t); }); },
+              function (e) { clearTimeout(tm); throw Object.assign(new Error(String(e && e.name === 'AbortError' ? 'rest-timeout (20s)' : (e && e.message) || e)), { code: e && e.name === 'AbortError' ? 'rest-timeout' : 'rest-network' }); });
+        });
+      }
+      function restCommit(chunk) { return restSend(restWrites(DOCS, chunk)); }
+      function restProbe() {
+        var dev = ls('dpb_fs2_dev', '') || 'dev';
+        return restSend([{ update: { name: DOCS + '/dpb2/' + nsName() + '/kv/clock-' + dev, fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 't', setToServerValue: 'REQUEST_TIME' }] }]).then(function () { return 'ok'; }, function (e) { return String(e && (e.code || e.message) || e); });
+      }
       return ready.then(function () {
         return {
           // server clock: write a tiny doc with serverTimestamp and read it back from the server (dpb2/{ns}/kv is already allowed by the rules)
@@ -154,7 +232,7 @@
           probe: function () {
             var dev = ls('dpb_fs2_dev', '') || 'dev', r = dref('dpb2/' + nsName() + '/kv/clock-' + dev), out = {};
             function wait(p, ms) { return Promise.race([p.then(function () { return 'ok'; }, function (e) { return String(e && e.code || e && e.message || e); }), new Promise(function (res) { setTimeout(function () { res('timeout'); }, ms); })]); }
-            return wait(fs.getDocFromServer(r), 8000).then(function (a) { out.read = a; return wait(fs.setDoc(r, { t: fs.serverTimestamp() }), 8000); }).then(function (b) { out.write = b; return out; });
+            return wait(fs.getDocFromServer(r), 8000).then(function (a) { out.read = a; return restProbe(); }).then(function (rr) { out.rest = rr; return wait(fs.setDoc(r, { t: fs.serverTimestamp() }), 8000); }).then(function (b) { out.write = b; return out; });
           },
           get: function (path) { return fs.getDoc(dref(path)).then(function (x) { return x.exists() ? x.data() : null; }); },
           listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { cb(q.docChanges().map(function (c) { return c.type === 'removed' ? { id: c.doc.id, removed: true } : { id: c.doc.id, data: c.doc.data() }; }), null, true); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
@@ -174,7 +252,7 @@
                   else if (o.t === 'f') { var cells = clean(o.cells); b.set(dref(o.path), Object.assign({}, o.base, { cells: cells }), { mergeFields: Object.keys(o.base).concat(Object.keys(cells).map(function (k) { return 'cells.' + k; })) }); }
                   else b.delete(dref(o.path));
                 });
-                return commitOrQueue(b.commit()).then(function (w) { ws.push(w); });
+                return commitOrQueue(b.commit(), function () { return restCommit(chunk); }).then(function (w) { ws.push(w); });
               });
             });
             // {acked:true} = the server confirmed every batch; {acked:false, done} = at least one batch is only saved on the device so far
@@ -261,6 +339,11 @@
     if (/resource-exhausted|quota/i.test(s)) return ' — السبب: حصة Firebase اليومية خلصت';
     if (/permission|unauth/i.test(s)) return ' — السبب: قواعد Firebase أو الدخول رافضين';
     if (p.read === 'timeout') return ' — السبب: مفيش اتصال فعلي بسيرفر Firebase (الشبكة)';
+    if (p.rest && p.rest !== 'ok' && /resource-exhausted|quota/i.test(String(p.rest))) return ' — السبب: حصة الكتابة اليومية في Firebase خلصت';
+    if (p.rest && p.rest !== 'ok' && /permission|unauth|no-auth/i.test(String(p.rest))) return ' — السبب: قواعد Firebase أو تسجيل الدخول رافضين الكتابة (' + p.rest + ')';
+    if (p.rest && p.rest !== 'ok' && /rest-network|rest-timeout/i.test(String(p.rest))) return ' — السبب: الكتابة مش عارفة توصل لسيرفر Firebase (' + p.rest + ')';
+    if (p.rest && p.rest !== 'ok') return ' — السبب: السيرفر رد على الكتابة بـ ' + p.rest;
+    if (p.read === 'ok' && p.write === 'timeout' && p.rest === 'ok') return ' — قناة الكتابة العادية عالقة والسيرفر شغال، بابعت بالطريق التاني تلقائيًا';
     if (p.read === 'ok' && p.write === 'timeout') return ' — القراءة شغالة لكن الكتابة عالقة';
     if (p.read === 'ok' && p.write === 'ok') return ' — السيرفر ردّ دلوقتي؛ بعيد فتح قناة الاتصال تلقائيًا';
     return ' — (' + s + ')';
@@ -299,7 +382,7 @@
     window.addEventListener('offline', function () { dlog('offline', ''); });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { var W = window.__dpbFs2W || {}; if (W.pending && W.since && Date.now() - W.since > 10000) bounceNow('app back on screen with ' + W.pending + ' pending'); }, 1500); });
   } catch (e) {}
-  window.__dpbFs2Net = function () { var W = window.__dpbFs2W || {}; return { pending: W.pending || 0, sinceMs: W.since ? Date.now() - W.since : 0, probe: W.probe || null, probeAgeMs: W.probeAt ? Date.now() - W.probeAt : -1, bounces: bounces, unacked: Object.keys(UN).length, connected: !!curStore(), err: String(lastErr || ''), online: navigator.onLine !== false, transport: ls('dpb_fs2_transport', 'lp') }; };
+  window.__dpbFs2Net = function () { var W = window.__dpbFs2W || {}; return { pending: W.pending || 0, sinceMs: W.since ? Date.now() - W.since : 0, probe: W.probe || null, probeAgeMs: W.probeAt ? Date.now() - W.probeAt : -1, bounces: bounces, rescued: W.rescued || 0, rescueErr: (W.rescueErr && Date.now() - (W.rescueErrAt || 0) < 600000) ? W.rescueErr : '', unacked: Object.keys(UN).length, connected: !!curStore(), err: String(lastErr || ''), online: navigator.onLine !== false, transport: ls('dpb_fs2_transport', 'lp') }; };
   window.__dpbFs2Bounce = function () { lastBounce = 0; return bounceNow('manual'); };
   // v124: true only when every write this device made has been ACKNOWLEDGED by the server (pending counter back to 0); false after ms if some are still waiting
   window.__dpbFs2Ack = function (ms) { return new Promise(function (res) { var t0 = Date.now(); (function chk() { var W = window.__dpbFs2W || {}; if (!W.pending) { res(true); return; } if (Date.now() - t0 >= ms) { res(false); return; } setTimeout(chk, 200); })(); }); };
@@ -1184,10 +1267,11 @@
     // ---- connection report (live) ----
     function hms(t) { var d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }
     function netText() {
-      var n = window.__dpbFs2Net ? window.__dpbFs2Net() : {}, pr = n.probe ? ('قراءة ' + n.probe.read + ' / كتابة ' + n.probe.write + ' (من ' + Math.round(n.probeAgeMs / 1000) + ' ث)') : 'لسه ماتفحصش';
+      var n = window.__dpbFs2Net ? window.__dpbFs2Net() : {}, pr = n.probe ? ('قراءة ' + n.probe.read + ' / كتابة-مباشرة ' + (n.probe.rest || '-') + ' / كتابة-عادية ' + n.probe.write + ' (من ' + Math.round(n.probeAgeMs / 1000) + ' ث)') : 'لسه ماتفحصش';
       return 'الاتصال: ' + (n.online ? 'النت شغّال' : 'النت مقطوع') + ' — الـlistener: ' + (n.connected ? 'شغّال ✅' : 'واقع ❌' + (n.err ? ' (' + n.err + ')' : '')) +
         '\nكتابات مستنية تأكيد السيرفر: ' + (n.pending || 0) + (n.sinceMs ? ' (من ' + Math.round(n.sinceMs / 1000) + ' ث)' : '') + ' — سجلات لسه مش مؤكدة: ' + (n.unacked || 0) +
-        '\nآخر فحص: ' + pr + ' — مرات إعادة فتح القناة: ' + (n.bounces || 0) + ' — نوع الاتصال: ' + (n.transport || '');
+        '\nآخر فحص: ' + pr + ' — مرات إعادة فتح القناة: ' + (n.bounces || 0) + ' — نوع الاتصال: ' + (n.transport || '') +
+        '\nإرسال بالطريق التاني: نجح ' + (n.rescued || 0) + ' مرة' + (n.rescueErr ? ' — آخر فشل: ' + n.rescueErr : '');
     }
     function logText() {
       var L = window.__dpbFs2Diag ? window.__dpbFs2Diag() : [];
