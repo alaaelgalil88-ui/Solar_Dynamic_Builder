@@ -4376,6 +4376,7 @@ async function adopt(cat){
   try{if(typeof window.__dpbFetchLiveGrid==='function')window.__dpbFetchLiveGrid();}catch(_){}
   try{if(typeof populateMapViews==='function')populateMapViews();if(typeof supervisorRefreshMapButtons==='function')supervisorRefreshMapButtons();}catch(_){}
   refresh();
+  try{if(typeof window.__dpbRefreshSupervisorUI==='function')window.__dpbRefreshSupervisorUI();}catch(_){}   // كروت العمليات تتبني فور وصول الكتالوج
 }
 async function sync(){
   if(state.syncing||!cloudUrl()||localSources().src.size)return;
@@ -7802,6 +7803,19 @@ function getAppliedProcessEntries(){
   add(pc.files?.grouped,'grouped');
   Object.keys(pc.files?.separate||{}).sort((a,b)=>Number(a)-Number(b)).forEach(k=>add(pc.files.separate[k],'separate'+k));
   add(pc.files?.manualTorque,'manualtorque');
+  // FIX (المشرف): جهاز المشرف ما بيعملش Process Setup ولا بيرفع ملفات، فمفيش عنده تعريف عمليات محلي. من غير ده كانت القايمة فاضية فكل الوحدات
+  // تظهر "متاحة" و0 مقفولة. لو القايمة فاضية نبنيها من كتالوج الخرايط اللي الأدمن نشره (id/كود/اسم/مجمّع أو منفصل) - من غير أسماء ثابتة.
+  if(!out.length&&!project.wb&&!window.__dpbInCatFallback&&typeof window.__dpbCatalogProcesses==='function'){
+    window.__dpbInCatFallback=true;
+    try{
+      const cp=(window.__dpbCatalogProcesses()||[]).filter(p=>p&&p.name);
+      const rows=cp.map((p,i)=>({id:String(p.id),name:String(p.name).trim(),code:String(p.code==null?'':p.code).trim(),processIndex:(Number(String(p.id).split(':')[1])||0),
+        rec:{applied:true,fromCatalog:true,definition:{processes:[{name:String(p.name).trim(),code:String(p.code==null?'':p.code).trim()}],dataRangeName:''}}}));
+      const cn=x=>{const n=Number(x.code);return Number.isFinite(n)&&String(x.code).trim()!==''?n:Infinity;};
+      rows.map((x,k)=>[x,k]).sort((a,b)=>(cn(a[0])-cn(b[0]))||(a[1]-b[1])).forEach(a=>out.push(a[0]));
+    }catch(_){}
+    finally{window.__dpbInCatFallback=false;}
+  }
   return out;
 }
 function populateMapViews(){
@@ -9878,7 +9892,8 @@ function overallLiveStage(t,u){
   // منفصلة (Torque Tube أو أي حاجة تتضاف بعدين) بتتجاهل هنا تمامًا.
   let stage=0;
   try{
-    const groupedNames=new Set((project.processConfig?.files?.grouped?.definition?.processes||[]).map(p=>String(p.name||'').trim().toLowerCase()));
+    let groupedNames=new Set((project.processConfig?.files?.grouped?.definition?.processes||[]).map(p=>String(p.name||'').trim().toLowerCase()));
+    if(!groupedNames.size){groupedNames=new Set(getAppliedProcessEntries().filter(e=>String(e.id||'').indexOf('grouped:')===0).map(e=>String(e.name||'').trim().toLowerCase()));}   // المشرف: من الكتالوج
     const entries=getAppliedProcessEntries().filter(e=>e.code!=='' && Number.isFinite(Number(e.code)) && groupedNames.has(String(e.name||'').trim().toLowerCase()));
     for(const e of entries){
       const v=Number(effectiveUnitStage(t,u,e.name)||0);
@@ -11395,9 +11410,15 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
             const payload={buildResult:pr.buildResult,types:pr.types,colors:(typeof EXACT_CODE_COLORS!=="undefined"?EXACT_CODE_COLORS:undefined),savedAt:new Date().toISOString()};
             const res=await window.DPB_GS.saveBuildResult(payload);
             const ok=!!(res&&res.ok!==false&&res.__reachable!==false);
+            // FIX: الزرار كان بيرفع الـ Build بس ويقول "اترفعت الخرايط" حتى لو كتالوج الخرايط ناقص عملية (مثلًا Modules) - المشرف كان بيفتح من غير العملية دي.
+            // دلوقتي بينشر الكتالوج كمان، ويتأكد إن كل عملية مطبّقة موجودة فيه، ولو لأ بيقول أنهي عملية ناقصة.
+            const missingMaps=()=>{try{const want=(typeof getAppliedProcessEntries==='function'?getAppliedProcessEntries():[]).map(e=>String(e.name||'').trim()).filter(Boolean);const have=new Set(((window.DPBMap&&DPBMap.processNames&&DPBMap.processNames())||[]).map(x=>String(x).trim().toLowerCase()));return want.filter(n=>!have.has(n.toLowerCase()));}catch(_){return [];}};
+            let missMaps=[];
+            if(ok){for(let k=0;k<3;k++){try{if(window.DPBMap&&typeof DPBMap.publish==='function')await DPBMap.publish();}catch(_){}missMaps=missingMaps();if(!missMaps.length)break;await new Promise(r=>setTimeout(r,2500));}}
             const ackPub=ok&&window.__dpbFs2Ack?await window.__dpbFs2Ack(20000):true;
             if(ok&&!ackPub){alert("⏳ الخرايط اتحفظت على الجهاز بس لسه ماوصلتش للسيرفر (الاتصال بطيء أو واقف). ماتقفلش التطبيق — استنى لحد ما شريط التحذير يختفي وبعدها ابعت للمشرفين.");b.disabled=false;b.textContent=t0;return;}
             const meta=ok?await window.DPB_GS.getBuildMeta().catch(()=>null):null;
+            if(ok&&missMaps.length){alert("⚠️ الـ Build اترفع، بس العمليات دي لسه ناقصة من كتالوج الخرايط: "+missMaps.join("، ")+"\nتأكد إن ملفاتها مرفوعة ومطبّقة في Process Setup وجرّب تضغط النشر تاني.");b.disabled=false;b.textContent=t0;return;}
             alert(ok&&meta?"✅ اترفعت الخرايط على السحابة. المشرفين يقدروا يفتحوا المشروع دلوقتي.":ok?"⚠️ الرفع رد تمام بس مقدرتش أتأكد منه — جرّب تفتح المشروع من الموبايل.":"❌ فشل الرفع: "+String(res&&res.error||"مفيش اتصال")+"\nتأكد إن حالة Firestore فوق ✅ وجرّب تاني.");
           }catch(e){alert("❌ فشل الرفع: "+(e&&e.message||e));}
           b.disabled=false;b.textContent=t0;
@@ -17820,7 +17841,10 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       };
     });
   }
-  function showScreen(name){ if(name==="home")renderHomeSummary();
+  let __supSyncAt=0;
+  function supSyncNow(force){try{const now=Date.now();if(!force&&now-__supSyncAt<4000)return;__supSyncAt=now;if(window.DPBMap&&typeof DPBMap.sync==='function')Promise.resolve(DPBMap.sync()).catch(()=>{});}catch(_){}}
+  window.__dpbSupSyncNow=supSyncNow;
+  function showScreen(name){ if(name!=="login")supSyncNow(); if(name==="home")renderHomeSummary();
     if(name!=="maps") restoreSupervisorMapNodes();
     const map={login:"dpbSupLogin",projects:"dpbSupProjects",home:"dpbSupHomeScreen",maps:"dpbSupMaps",production:"dpbSupProduction",selection:"dpbSupSelectionScreen",units:"dpbSupUnitsScreen",history:"dpbSupHistory",myedits:"dpbSupMyEdits"};
     Object.values(map).forEach(id=>q(id).classList.remove("active"));q(map[name]).classList.add("active");state.screen=name;
@@ -18079,7 +18103,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     // اللي المشرف شايفها فعليًا. renderUnits() هي نفس الدالة اللي بترسم
     // الشاشة دي أول مرة، فمنادتها تاني بترسمها تاني بأحدث البيانات.
     renderUnits();
-  }else if(state.screen==="history"){renderHistory()}}catch(_){}};
+  }else if(state.screen==="history"){renderHistory()}else if(state.screen==="home"){renderHomeSummary()}}catch(_){}};
   function updateSupPinDots(){const v=q("dpbSupPass").value||"";q("dpbSupPinDots").querySelectorAll("i").forEach((d,i)=>d.classList.toggle("filled",i<v.length));}
   let supLoginInProgress=false;
   function supKey(k){
