@@ -66,13 +66,13 @@
     // through a plain HTTPS request (`rescue`, one explicit request with its own timeout and a real error code). First try after 12 s; once a rescue
     // worked on this device the next ones start after 1.5 s. A definite refusal (HTTP 400/403/429...) stops the retries and is shown with its real reason.
     var RESCUE_FIRST = deps.rescueFirst || 12000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_MAX = deps.rescueMax || 6;
-    return function commitOrQueue(cp, rescue) {
+    return function commitOrQueue(cp, rescue, pidArg) {
       return new Promise(function (res, rej) {
-        var done = false, t = null, rt = null, t0 = now(), doneRes, doneRej, W = getW(), counted = true, settled = false, tries = 0;
+        var done = false, t = null, rt = null, t0 = now(), doneRes, doneRej, W = getW(), counted = true, settled = false, tries = 0, P = String(pidArg || '');
         var dp = new Promise(function (a, b) { doneRes = a; doneRej = b; }); dp.catch(function () {});
         function fin(f, v) { if (done) return; done = true; clearT(t); f(v); }
-        function release() { if (!counted) return; counted = false; W.pending = Math.max(0, W.pending - 1); if (!W.pending) { W.since = 0; W.refused = ''; } }
-        if (!W.pending) W.since = now(); W.pending++;
+        function release() { if (!counted) return; counted = false; W.pending = Math.max(0, W.pending - 1); if (W.pend) { W.pend[P] = Math.max(0, (W.pend[P] || 1) - 1); if (!W.pend[P]) { delete W.pend[P]; if (W.pendSince) delete W.pendSince[P]; } } if (!W.pending) { W.since = 0; W.refused = ''; W.refusedPid = ''; } }
+        if (!W.pending) W.since = now(); W.pending++; W.pend = W.pend || {}; W.pendSince = W.pendSince || {}; W.pend[P] = (W.pend[P] || 0) + 1; if (W.pend[P] === 1) W.pendSince[P] = now();
         cp.then(function () {
           settled = true; clearT(rt); release();
           if (done) onEvent('ack-late', (now() - t0) + 'ms');
@@ -80,7 +80,7 @@
         }, function (e) {
           settled = true; clearT(rt); release();
           var code = String(e && (e.code || e.message) || e);
-          if (done) { W.refused = code; W.refusedAt = now(); onEvent('rejected', code); doneRej(e); }
+          if (done) { W.refused = code; W.refusedPid = P; W.refusedAt = now(); onEvent('rejected', code); doneRej(e); }
           else fin(rej, e);
         });
         function armRescue(ms) {
@@ -96,7 +96,7 @@
             }, function (e) {
               if (settled) return;
               var code = String(e && (e.code || e.message) || e); W.rescueErr = code; W.rescueErrAt = now(); onEvent('rescue-failed', code);
-              if (e && e.definite) { W.refused = code; W.refusedAt = now(); return; }   // the server answered "no": retrying the same thing changes nothing
+              if (e && e.definite) { W.refused = code; W.refusedPid = P; W.refusedAt = now(); return; }   // the server answered "no": retrying the same thing changes nothing
               armRescue(RESCUE_EVERY);
             });
           }, ms);
@@ -200,6 +200,17 @@
   // Edits of another project keep going to that project in the background; they are not counted in the warning bar of the open project,
   // and a failure on one project's edits never holds back the edits of the open project.
   function obPid(e) { return String((e && e.base && e.base.projectId) || '').replace(/[^A-Za-z0-9_\-]/g, '_'); }
+  // v131: the SDK-level "not confirmed yet" counter is per project too. Only the OPEN project's writes drive the warning bar, the heal/bounce timers and the retries.
+  function curPend() { var W = window.__dpbFs2W || {}, cur = pidS(), n = 0; Object.keys(W.pend || {}).forEach(function (k) { if (!k || !cur || k === cur) n += W.pend[k]; }); return n; }
+  function curPendSince() { var W = window.__dpbFs2W || {}, cur = pidS(), t = 0; Object.keys(W.pendSince || {}).forEach(function (k) { if (!k || !cur || k === cur) { if (!t || W.pendSince[k] < t) t = W.pendSince[k]; } }); return t; }
+  // a deleted project takes its own pending edits with it (a new project can never inherit them: ids are unique, and nothing is left under the old id)
+  function forgetProject(id) {
+    var p = String(id || '').replace(/[^A-Za-z0-9_\-]/g, '_'), n = 0; if (!p) return 0;
+    Object.keys(ob).forEach(function (k) { if (obPid(ob[k]) === p) { try { obSettle(k); } catch (e) {} delete ob[k]; n++; } });
+    obSave(); var W = window.__dpbFs2W; if (W && W.pend) { W.pending = Math.max(0, (W.pending || 0) - (W.pend[p] || 0)); delete W.pend[p]; if (W.pendSince) delete W.pendSince[p]; }
+    try { dlog('forget-project', p + ' dropped ' + n); } catch (e) {} return n;
+  }
+  window.__dpbFs2Forget = forgetProject;
   function obNCur() { var cur = pidS(), n = 0; Object.keys(ob).forEach(function (k) { var p = obPid(ob[k]); if (!p || !cur || p === cur) n++; }); return n; }
   function obLater(ms) { if (obT) return; obT = setTimeout(function () { obT = null; OBF.run(); }, ms); }
   try {
@@ -235,7 +246,7 @@
         // Long polling uses plain request/response calls that such networks let through. Never combined with auto-detect (the SDK refuses both together).
         try { var tr = ls('dpb_fs2_transport', 'lp'), st0 = { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }; if (tr === 'lp') st0.experimentalForceLongPolling = true; else if (tr === 'auto') st0.experimentalAutoDetectLongPolling = true; dlog('transport', tr); db = fs.initializeFirestore(app, st0); } catch (e) { try { console.warn('[dpb-fs2] initializeFirestore failed, using default instance', e && e.message); } catch (x) {} db = fs.getFirestore(app); }
       }
-      var auth = authM.getAuth(app), ac; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
+      var auth = authM.getAuth(app), ac; window.__dpbFs2Tok = function (force) { try { return auth.currentUser ? auth.currentUser.getIdToken(!!force) : Promise.resolve(); } catch (e) { return Promise.reject(e); } }; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       // Offline start: auth.currentUser is empty until the SDK has restored the saved user from the device, so wait for that FIRST.
       // Before this the code saw "no user", tried to sign in over the network, failed offline (auth/network-request-failed) and the whole layer
       // (maps, overlay) never started. Now a user saved on the device is reused with no network call; a sign-in that fails while a saved user
@@ -393,7 +404,9 @@
                   else if (o.t === 'f') { var cells = clean(o.cells); b.set(dref(o.path), Object.assign({}, o.base, { cells: cells }), { mergeFields: Object.keys(o.base).concat(Object.keys(cells).map(function (k) { return 'cells.' + k; })) }); }
                   else b.delete(dref(o.path));
                 });
-                return commitOrQueue(b.commit(), function () { return restCommit(chunk); }).then(function (w) { ws.push(w); });
+                var cpid = ''; for (var ci = 0; ci < chunk.length && !cpid; ci++) { var co = chunk[ci], cb = (co.base && co.base.projectId) || (co.data && co.data.projectId) || ((/\/rows\/([A-Za-z0-9_\-]+?)__/.exec(String(co.path || '')) || [])[1]); if (cb) cpid = String(cb).replace(/[^A-Za-z0-9_\-]/g, '_'); }
+                if (!cpid) cpid = pidS();   // project-less batches (pointer docs) belong to the project that is open now
+                return commitOrQueue(b.commit(), function () { return restCommit(chunk); }, cpid).then(function (w) { ws.push(w); });
               });
             });
             // {acked:true} = the server confirmed every batch; {acked:false, done} = at least one batch is only saved on the device so far
@@ -404,7 +417,7 @@
             });
           },
           // close and reopen the network channel of Firestore (queued writes and listeners are kept): the standard way to wake a dead stream after the phone switched networks
-          bounce: function () { return fs.disableNetwork(db).then(function () { return fs.enableNetwork(db); }); },
+          bounce: function () { return fs.disableNetwork(db).then(function () { return new Promise(function (r) { setTimeout(r, 400); }); }).then(function () { return fs.enableNetwork(db); }); },
           pendingCells: function () { return Object.keys(ob).map(function (k) { return ob[k].cell; }); }
         };
         OBF.run = obRun; if (obN()) setTimeout(obRun, 1500);
@@ -456,8 +469,8 @@
   function scheduleRetry(e) {
     var m = String(e && (e.code || '') || '') + ' ' + String(e && e.message || e || '');
     if (!/network-request-failed|unavailable|timeout|انتهت مهلة|offline|network/i.test(m)) return;
-    if (retryT || retryN >= 6) return;
-    var wait = [35000, 60000, 120000, 240000, 480000, 900000][retryN++];
+    if (retryT) return;
+    var wait = [5000, 10000, 20000, 30000][Math.min(retryN++, 3)];   // v131: never gives up; at most 30 s between tries
     retryT = setTimeout(function () { retryT = null; if (curStore() || !pidS()) return; getStore().then(function () { retryN = 0; }, function () {}); }, wait);
   }
   try { window.addEventListener('online', function () { retryN = 0; clearTimeout(retryT); retryT = null; if (!curStore() && pidS()) { failedAt = 0; getStore().catch(function () {}); } }); } catch (e) {}
@@ -465,7 +478,7 @@
   var rebT = null, rebN = 0;
   function rebuildLater() {
     if (rebT) return;
-    var w = [5000, 15000, 45000, 120000, 300000][Math.min(rebN++, 4)];
+    var w = [5000, 15000, 30000][Math.min(rebN++, 2)];   // v131: at most 30 s between tries
     rebT = setTimeout(function () { rebT = null; if (curStore() || !pidS()) { rebN = 0; return; } failedAt = 0; getStore().then(function () { rebN = 0; warnNow(); }, function () { warnNow(); rebuildLater(); }); }, w);
   }
   function rebuildNow() { if (curStore() || !pidS() || creating) return; clearTimeout(rebT); rebT = null; failedAt = 0; getStore().then(function () { rebN = 0; warnNow(); }, function () { rebuildLater(); }); }
@@ -486,6 +499,7 @@
     if (p.rest && p.rest !== 'ok' && /resource-exhausted|quota/i.test(String(p.rest))) return ' — السبب: حصة الكتابة اليومية في Firebase خلصت';
     if (p.rest && p.rest !== 'ok' && /permission|unauth|no-auth/i.test(String(p.rest))) return ' — السبب: قواعد Firebase أو تسجيل الدخول رافضين الكتابة (' + p.rest + ')';
     if (p.rest && p.rest !== 'ok' && /rest-network|rest-timeout/i.test(String(p.rest))) return ' — السبب: الكتابة مش عارفة توصل لسيرفر Firebase (' + p.rest + ')';
+    if (p.rest && /network-request-failed/i.test(String(p.rest))) return ' — السبب: الجهاز مش قادر يجدد تصريح الدخول لسيرفر Firebase (شبكة مؤقتة) — بيحاول تاني لوحده';
     if (p.rest && p.rest !== 'ok') return ' — السبب: السيرفر رد على الكتابة بـ ' + p.rest;
     if (p.read === 'ok' && p.write === 'timeout' && p.rest === 'ok') return ' — قناة الكتابة العادية عالقة والسيرفر شغال، بابعت بالطريق التاني تلقائيًا';
     if (p.read === 'ok' && p.write === 'timeout') return ' — القراءة شغالة لكن الكتابة عالقة';
@@ -494,10 +508,10 @@
   }
   function warnText() {
     var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i;
-    if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
+    if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000 && (!W.refusedPid || !pidS() || W.refusedPid === pidS())) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
     if (pidS() && !curStore() && lastErr) return quota.test(lastErr) ? '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية' : '⚠️ مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني';
-    if (obNCur() > 0 && !W.pending) return '⏳ ' + obNCur() + ' تعديل محفوظ على الجهاز ومستني الاتصال — هيتبعت لوحده بعد ما يتقارن بحالة السيرفر';
-    if (W.pending && W.since && Date.now() - W.since > 20000 && navigator.onLine !== false) { if (!probeBusy && Date.now() - probeAt > 45000) runProbe(); return '⚠️ ' + W.pending + ' كتابة لسه السيرفر ماأكدهاش (محفوظة على الجهاز)' + diag(); }
+    if (obNCur() > 0 && !curPend()) return '⏳ ' + obNCur() + ' تعديل محفوظ على الجهاز ومستني الاتصال — هيتبعت لوحده بعد ما يتقارن بحالة السيرفر';
+    if (curPend() && curPendSince() && Date.now() - curPendSince() > 20000 && navigator.onLine !== false) { if (!probeBusy && Date.now() - probeAt > 45000) runProbe(); return '⚠️ ' + curPend() + ' كتابة لسه السيرفر ماأكدهاش (محفوظة على الجهاز)' + diag(); }
     return '';
   }
   function warnNow() {
@@ -511,23 +525,44 @@
   window.__dpbFs2Warn = warnNow; setInterval(warnNow, 5000);
   // A write that stays unconfirmed (stream dead after the phone switched network / the app was in the background) is woken up by closing and reopening the
   // network channel of Firestore. Queued writes and listeners are kept by the SDK. At most once a minute.
-  var lastBounce = 0, bounces = 0;
+  var lastBounce = 0, bounces = 0, bouncing = false;
   function bounceNow(why) {
-    if (Date.now() - lastBounce < 60000) return Promise.resolve(false);
-    lastBounce = Date.now(); bounces++; dlog('bounce', why);
-    return getAdapter().then(function (a) { return a.bounce ? a.bounce() : null; }).then(function () { dlog('bounce-done', ''); return true; }, function (e) { dlog('bounce-fail', e && (e.code || e.message)); return false; });
+    if (Date.now() - lastBounce < 60000 || bouncing || navigator.onLine === false) return Promise.resolve(false);
+    lastBounce = Date.now(); bounces++; bouncing = true; dlog('bounce', why);
+    return getAdapter().then(function (a) { var tk = null; try { tk = window.__dpbFs2Tok ? window.__dpbFs2Tok(true).catch(function () {}) : null; } catch (e) {} return Promise.resolve(tk).then(function () { return a.bounce ? a.bounce() : null; }); }).then(function () { bouncing = false; dlog('bounce-done', ''); return true; }, function (e) { bouncing = false; dlog('bounce-fail', e && (e.code || e.message)); return false; });
   }
   function healTick() {
     var W = window.__dpbFs2W || {};
-    if (W.pending && W.since && Date.now() - W.since > 45000 && navigator.onLine !== false) bounceNow('pending ' + W.pending + ' for ' + Math.round((Date.now() - W.since) / 1000) + 's');
+    if (curPend() && curPendSince() && Date.now() - curPendSince() > 45000 && navigator.onLine !== false) bounceNow('pending ' + curPend() + ' for ' + Math.round((Date.now() - curPendSince()) / 1000) + 's');
   }
   setInterval(healTick, 15000);
+  // v131: Firebase's own "INTERNAL ASSERTION FAILED" leaves the SDK in a broken state until the app restarts. Edits are safe (they sit in the device outbox),
+  // so when it happens while something is unsent, or the connection is gone, the app restarts itself once (never more than once per 3 minutes).
+  function onAssert(msg) {
+    if (!/INTERNAL ASSERTION FAILED/i.test(String(msg || ''))) return;
+    var W = window.__dpbFs2W = window.__dpbFs2W || {}; W.assertAt = Date.now(); W.asserts = (W.asserts || 0) + 1;
+    try { dlog('assertion', String(msg).slice(0, 120)); } catch (e) {}
+    if (!(obN() > 0 || curPend() > 0 || (pidS() && !curStore()))) return;
+    var last = 0; try { last = +sessionStorage.getItem('dpb_fs2_assert_reload') || 0; } catch (e) {}
+    if (Date.now() - last < 180000) return;
+    try { sessionStorage.setItem('dpb_fs2_assert_reload', String(Date.now())); } catch (e) {}
+    try { var d = document.createElement('div'); d.style.cssText = 'position:fixed;left:12px;right:12px;bottom:90px;z-index:2147483000;background:#0b3a66;color:#fff;border-radius:12px;padding:10px 14px;font:14px/1.5 sans-serif;text-align:center;direction:rtl'; d.textContent = 'بعيد تشغيل الاتصال تلقائيًا — تعديلاتك محفوظة ومش هتضيع'; document.body.appendChild(d); } catch (e) {}
+    window.__dpbFs2AssertReloadAt = Date.now();
+    var t0 = Date.now();
+    (function calm() {
+      var idle = true; try { var a = document.activeElement; if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) idle = false; if (document.querySelector('.me-sel')) idle = false; var ov = document.getElementById('dpbInPageAlertOverlay'); if (ov && getComputedStyle(ov).display !== 'none') idle = false; } catch (e) {}
+      if (!idle && Date.now() - t0 < 60000) return setTimeout(calm, 2000);
+      try { if (!window.__dpbFs2NoReload) location.reload(); } catch (e) {}
+    })();
+  }
+  try { window.addEventListener('unhandledrejection', function (e) { var r = e && e.reason; onAssert(r && (r.message || r)); }); window.addEventListener('error', function (e) { onAssert(e && e.message); }); } catch (e) {}
+  window.__dpbFs2OnAssert = onAssert;
   try {
-    window.addEventListener('online', function () { dlog('online', ''); setTimeout(function () { var W = window.__dpbFs2W || {}; if (W.pending) bounceNow('back online with ' + W.pending + ' pending'); }, 1500); });
+    window.addEventListener('online', function () { dlog('online', ''); setTimeout(function () { var W = window.__dpbFs2W || {}; try { window.__dpbFs2Tok && window.__dpbFs2Tok(true).catch(function () {}); } catch (e2) {} if (curPend()) bounceNow('back online with ' + curPend() + ' pending'); }, 1500); });
     window.addEventListener('offline', function () { dlog('offline', ''); });
-    document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { var W = window.__dpbFs2W || {}; if (W.pending && W.since && Date.now() - W.since > 10000) bounceNow('app back on screen with ' + W.pending + ' pending'); }, 1500); });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { var W = window.__dpbFs2W || {}; try { window.__dpbFs2Tok && window.__dpbFs2Tok(true).catch(function () {}); } catch (e2) {} if (curPend() && curPendSince() && Date.now() - curPendSince() > 10000) bounceNow('app back on screen with ' + curPend() + ' pending'); }, 1500); });
   } catch (e) {}
-  window.__dpbFs2Net = function () { var W = window.__dpbFs2W || {}; return { pending: W.pending || 0, sinceMs: W.since ? Date.now() - W.since : 0, probe: W.probe || null, probeAgeMs: W.probeAt ? Date.now() - W.probeAt : -1, bounces: bounces, rescued: W.rescued || 0, rescueErr: (W.rescueErr && Date.now() - (W.rescueErrAt || 0) < 600000) ? W.rescueErr : '', unacked: Object.keys(UN).length, connected: !!curStore(), err: String(lastErr || ''), online: navigator.onLine !== false, transport: ls('dpb_fs2_transport', 'lp') }; };
+  window.__dpbFs2Net = function () { var W = window.__dpbFs2W || {}; return { pending: W.pending || 0, pendingCur: curPend(), pendByProject: JSON.parse(JSON.stringify(W.pend || {})), asserts: W.asserts || 0, sinceMs: W.since ? Date.now() - W.since : 0, probe: W.probe || null, probeAgeMs: W.probeAt ? Date.now() - W.probeAt : -1, bounces: bounces, rescued: W.rescued || 0, rescueErr: (W.rescueErr && Date.now() - (W.rescueErrAt || 0) < 600000) ? W.rescueErr : '', unacked: Object.keys(UN).length, connected: !!curStore(), err: String(lastErr || ''), online: navigator.onLine !== false, transport: ls('dpb_fs2_transport', 'lp') }; };
   window.__dpbFs2Bounce = function () { lastBounce = 0; return bounceNow('manual'); };
   // v124: true only when every write this device made has been ACKNOWLEDGED by the server (pending counter back to 0); false after ms if some are still waiting
   window.__dpbFs2Ack = function (ms) { return new Promise(function (res) { var t0 = Date.now(); (function chk() { var W = window.__dpbFs2W || {}; if (!W.pending) { res(true); return; } if (Date.now() - t0 >= ms) { res(false); return; } setTimeout(chk, 200); })(); }); };

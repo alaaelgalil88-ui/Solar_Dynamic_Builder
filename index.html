@@ -654,6 +654,8 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   }
   function show(msg){
     log.push(msg);if(log.length>6)log.shift();
+    // v131: Firebase/network noise is handled by the sync layer itself (and logged in Diagnostics); never put a red box on the supervisor's screen for it
+    try{if(/FIRESTORE|INTERNAL ASSERTION|network-request-failed|auth\/|unavailable|Failed to fetch|NetworkError/i.test(String(msg))&&localStorage.getItem('dpb_debug_box')!=='1')return;}catch(_){}
     try{var b=box();b.style.display='block';b.textContent='DPB error (tap to hide):\n'+log.join('\n---\n');}catch(_){}
   }
   window.addEventListener('error',function(e){show((e.message||'error')+'\n'+(e.filename?String(e.filename).split('/').pop():'')+':'+(e.lineno||'')+':'+(e.colno||'')+(e.error&&e.error.stack?'\n'+String(e.error.stack).split('\n').slice(0,3).join('\n'):''));});
@@ -13937,7 +13939,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   async function deleteProject(id){
     let ps=await projects(); if(ps.length<=1){alert('لا يمكن حذف آخر مشروع. أنشئ مشروعًا جديدًا أولًا.');return;}
     const idx=ps.findIndex(x=>x.id===id); if(idx<0)return;
-    const wasCurrent=id===window.__dpbActiveProjectId; ps.splice(idx,1); await saveProjects(ps); const cloudOk=await cloudRemove(id); if(cloudOk===false)alert('اتحذف المشروع من الجهاز ده. مقدرتش أسجّل الحذف على السحابة (مفيش اتصال دلوقتي)، وهيتسجّل لوحده أول ما النت يرجع من غير ما تعمل حاجة.');
+    const wasCurrent=id===window.__dpbActiveProjectId; ps.splice(idx,1); await saveProjects(ps); const cloudOk=await cloudRemove(id); try{if(window.__dpbFs2Forget)window.__dpbFs2Forget(id);}catch(e){} if(cloudOk===false)alert('اتحذف المشروع من الجهاز ده. مقدرتش أسجّل الحذف على السحابة (مفيش اتصال دلوقتي)، وهيتسجّل لوحده أول ما النت يرجع من غير ما تعمل حاجة.');
     if(typeof testCacheDeleteProject==='function') await testCacheDeleteProject(id);
     try{const raw=JSON.parse(localStorage.getItem('DPB_SHARED_PRODUCTION_V2')||'{}');if(Array.isArray(raw.records)){raw.records=raw.records.filter(r=>String(r.projectId||'')!==String(id));localStorage.setItem('DPB_SHARED_PRODUCTION_V2',JSON.stringify(raw));}}catch(_){ }
     if(wasCurrent){
