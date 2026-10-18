@@ -196,6 +196,11 @@
     keys.forEach(function (k) { (obWait[k] = obWait[k] || []).push(w); }); return w.p;
   }
   var obT = null, obBack = 0;
+  // v129: every pending edit is tied to ITS OWN project (row path rows/<project>__..., base.projectId). It is never dropped and never sent anywhere else.
+  // Edits of another project keep going to that project in the background; they are not counted in the warning bar of the open project,
+  // and a failure on one project's edits never holds back the edits of the open project.
+  function obPid(e) { return String((e && e.base && e.base.projectId) || '').replace(/[^A-Za-z0-9_\-]/g, '_'); }
+  function obNCur() { var cur = pidS(), n = 0; Object.keys(ob).forEach(function (k) { var p = obPid(ob[k]); if (!p || !cur || p === cur) n++; }); return n; }
   function obLater(ms) { if (obT) return; obT = setTimeout(function () { obT = null; OBF.run(); }, ms); }
   try {
     window.addEventListener('online', function () { obBack = 0; setTimeout(function () { OBF.run(); }, 800); });
@@ -318,14 +323,18 @@
         draining = true;
         var by = {}, sent = {};
         Object.keys(ob).forEach(function (k) { var e = ob[k], o = by[e.path] || (by[e.path] = { t: 'f', path: e.path, base: e.base, cells: {} }); o.cells[e.col] = e.cell; sent[k] = e.cell.time; });
-        var chunks = cutOps(Object.keys(by).map(function (q) { return by[q]; })), p = Promise.resolve(), failed = null, skippedAll = [], okKeys = [];
-        chunks.forEach(function (chunk) {
-          p = p.then(function () {
-            if (failed) return;
-            return txChunk(chunk).then(function (sk) {
-              skippedAll = skippedAll.concat(sk);
-              chunk.forEach(function (o) { Object.keys(o.cells).forEach(function (col) { okKeys.push(o.path + '|' + col); }); });
-            }, function (e) { failed = e; });
+        var cur = pidS(), groups = {}, p = Promise.resolve(), failed = null, otherFail = null, skippedAll = [], okKeys = [];
+        Object.keys(by).forEach(function (q) { var o = by[q], pj = obPid(o); (groups[pj] = groups[pj] || []).push(o); });
+        Object.keys(groups).sort(function (a, b) { return (b === cur) - (a === cur); }).forEach(function (pj) {
+          var bad = false;
+          cutOps(groups[pj]).forEach(function (chunk) {
+            p = p.then(function () {
+              if (bad) return;
+              return txChunk(chunk).then(function (sk) {
+                skippedAll = skippedAll.concat(sk);
+                chunk.forEach(function (o) { Object.keys(o.cells).forEach(function (col) { okKeys.push(o.path + '|' + col); }); });
+              }, function (e) { bad = true; if (!pj || pj === cur) failed = failed || e; else otherFail = otherFail || e; });
+            });
           });
         });
         p.then(function () {
@@ -335,7 +344,7 @@
           tellSkipped(skippedAll);
           draining = false;
           if (refused) { refuse(failed); dlog('outbox-refused', String(failed.code || failed.message)); obLater(60000); }
-          else if (failed) { obBack = Math.min(obBack + 1, 4); dlog('outbox-retry', String(failed.code || failed.message)); obLater([5000, 15000, 30000, 60000, 60000][obBack]); }
+          else if (failed || otherFail) { failed = failed || otherFail; obBack = Math.min(obBack + 1, 4); dlog('outbox-retry', String(failed.code || failed.message)); obLater([3000, 5000, 10000, 15000, 15000][obBack]); }
           else { obBack = 0; dlog('outbox-delivered', okKeys.length + ' cell(s)'); kickPush(); if (obN()) obLater(500); }
           try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (e) {}
         });
@@ -487,7 +496,7 @@
     var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i;
     if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
     if (pidS() && !curStore() && lastErr) return quota.test(lastErr) ? '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية' : '⚠️ مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني';
-    if (obN() > 0 && !W.pending) return '⏳ ' + obN() + ' تعديل محفوظ على الجهاز ومستني الاتصال — هيتبعت لوحده بعد ما يتقارن بحالة السيرفر';
+    if (obNCur() > 0 && !W.pending) return '⏳ ' + obNCur() + ' تعديل محفوظ على الجهاز ومستني الاتصال — هيتبعت لوحده بعد ما يتقارن بحالة السيرفر';
     if (W.pending && W.since && Date.now() - W.since > 20000 && navigator.onLine !== false) { if (!probeBusy && Date.now() - probeAt > 45000) runProbe(); return '⚠️ ' + W.pending + ' كتابة لسه السيرفر ماأكدهاش (محفوظة على الجهاز)' + diag(); }
     return '';
   }

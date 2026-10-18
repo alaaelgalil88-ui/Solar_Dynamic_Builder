@@ -14016,8 +14016,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   openBtn?.addEventListener('click',()=>document.getElementById('dpbProjectRecentSection')?.scrollIntoView({behavior:'smooth',block:'center'}));
   deleteBtn?.addEventListener('click',()=>confirmDelete(window.__dpbActiveProjectId));
   createBtn?.addEventListener('click',async()=>{
-    const id=(idInput?.value||'').trim().toUpperCase()||'PRJ-'+String(Date.now()).slice(-4); const name=(nameInput?.value||'').trim()||'New Project';
-    const ps=await projects(); if(ps.some(x=>x.id.toUpperCase()===id)){alert('Project ID موجود بالفعل. استخدم ID مختلف.');return;}
+    const id0=(idInput?.value||'').trim().toUpperCase()||'PRJ-'+String(Date.now()).slice(-4); const name=(nameInput?.value||'').trim()||'New Project';
+    const ps=await projects(); if(ps.some(x=>{const u=x.id.toUpperCase();return u===id0||u.startsWith(id0+'-');})){alert('Project ID موجود بالفعل. استخدم ID مختلف.');return;}
+    /* v129: every NEW project gets its own unique stamp, so its data path (p_<id>, rows/<id>__) can never be the same as an old/deleted project's with the same typed ID, and nothing stored for the old one can land in it */
+    const id=id0+'-'+(Date.now().toString(36).slice(-4)+Math.random().toString(36).slice(2,4)).toUpperCase();
     await saveCurrent(); const rec={id,name,createdAt:Date.now(),updatedAt:Date.now(),planFileName:'',planApplied:false,trackerCount:0,built:false,user:true}; ps.push(rec); await saveProjects(ps); setTimeout(()=>cloudSync(),200); fields?.classList.remove('show'); if(idInput)idInput.value='';if(nameInput)nameInput.value=''; await activate(id,false); go('setup');
   });
   /* ---- Projects list in Firestore: any signed-in device finds the projects by itself (no ID typing). ----
