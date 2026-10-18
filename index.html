@@ -16860,7 +16860,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           }else{
             available++;
             if(isSelected)selectedCount++;
-            b.onclick=()=>{hideSupKeyboard();if(sel.has(i))sel.delete(i);else sel.add(i);renderUnits()};
+            b.onclick=()=>{hideSupKeyboard();if(multiMap().size){showToast('في كروت منفذة متحددة — الغي تحديدها أو احذفها الأول.');return;}if(sel.has(i))sel.delete(i);else sel.add(i);renderUnits()};
           }
           grid.appendChild(b);
           return;
@@ -16892,7 +16892,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
             // ممكن تتلغي، وبنبني مرجع السجل مباشرة من إحداثيات الخلية
             // نفسها (معرّفها ثابت زي ما هو متفق عليه في saveSelected()).
             const canDelete=d.done && d.editable;
-            b.innerHTML=`U${i+1}<small>🔒 ${escapeHtml(d.source||"Completed")}</small><span class="dpbUnitEditBtn">${editLabel}</span>${canDelete?'<span class="dpbUnitDeleteBtn">إلغاء</span>':''}`;
+            b.innerHTML=`U${i+1}<small>🔒 ${escapeHtml(d.source||"Completed")}</small>${canDelete?'<span class="dpbUnitDeleteBtn">إلغاء</span>':''}`;
             b.disabled=false;
             b.onclick=()=>{
               hideSupKeyboard();
@@ -16919,7 +16919,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           available++;if(isSelected)selectedCount++;
           b.className="dpbSupUnit "+(isSelected?"selected":"available");
           b.innerHTML=`U${i+1}${isSelected?"<small>✓ Selected</small>":"<small>Available</small>"}`;
-          b.onclick=()=>{hideSupKeyboard();if(sel.has(i))sel.delete(i);else sel.add(i);renderUnits()};
+          b.onclick=()=>{hideSupKeyboard();if(multiMap().size){showToast('في كروت منفذة متحددة — الغي تحديدها أو احذفها الأول.');return;}if(sel.has(i))sel.delete(i);else sel.add(i);renderUnits()};
         }
         grid.appendChild(b);
       });
@@ -16939,11 +16939,12 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       state.multiSeen&&state.multiSeen.add(unitK);
       const md=multiMap();
       if(md.has(unitK))b.classList.add('dpbMultiSel');
-      const orig=b.onclick;
       const toggle=()=>{
         const m=multiMap();
         if(m.has(unitK))m.delete(unitK);
         else{
+          let hasAvail=false;try{state.selectedUnits.forEach(set=>{if(set&&set.size)hasAvail=true;});}catch(_){}
+          if(hasAvail){showToast('في كروت متاحة متحددة للحفظ — امسحها الأول (مسح الوحدات).');return;}
           const sheet=u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||"");
           const pu=window.__dpbProcUnit(t,u,state.process.name);
           const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+pu.r1+"_"+pu.c1,sheet,r1:pu.r1,c1:pu.c1,r2:pu.r2,c2:pu.c2,alt:{r1:u.r1,c1:u.c1}};
@@ -16951,41 +16952,35 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
         }
         renderUnits();
       };
-      let timer=null,sx=0,sy=0,fired=false;
-      const stop=()=>{if(timer){clearTimeout(timer);timer=null;}};
-      b.addEventListener('pointerdown',ev=>{
-        if(ev.target&&ev.target.closest&&ev.target.closest('.dpbRammingX,.dpbUnitDeleteBtn,.dpbUnitEditBtn'))return;
-        fired=false;sx=ev.clientX;sy=ev.clientY;stop();
-        timer=setTimeout(()=>{timer=null;fired=true;try{navigator.vibrate&&navigator.vibrate(25);}catch(_){}hideSupKeyboard();toggle();},550);
-      });
-      b.addEventListener('pointermove',ev=>{if(timer&&(Math.abs(ev.clientX-sx)>10||Math.abs(ev.clientY-sy)>10))stop();});
-      ['pointerup','pointercancel','pointerleave'].forEach(n=>b.addEventListener(n,stop));
       b.addEventListener('contextmenu',ev=>{ev.preventDefault();});
+      /* v133: one plain tap on a done card selects / un-selects it (same idea as the tracker cards). The small X / "إلغاء" button on the card still cancels just that one. */
       b.onclick=function(ev){
-        if(fired){fired=false;if(ev&&ev.preventDefault)ev.preventDefault();return;}
-        const onBtn=ev&&ev.target&&ev.target.closest&&ev.target.closest('.dpbRammingX,.dpbUnitDeleteBtn,.dpbUnitEditBtn');
-        if(multiMap().size&&!onBtn){if(ev&&ev.preventDefault)ev.preventDefault();hideSupKeyboard();toggle();return;}
-        if(orig)return orig.call(this,ev);
+        const onBtn=ev&&ev.target&&ev.target.closest&&ev.target.closest('.dpbRammingX,.dpbUnitDeleteBtn');
+        if(onBtn)return;
+        if(ev&&ev.preventDefault)ev.preventDefault();
+        hideSupKeyboard();toggle();
       };
     }catch(_){}
   }
-  setInterval(function(){try{const b=document.getElementById('dpbMultiBar');if(b){const r=document.querySelector('.dpbSupUnits');if(!r||!r.offsetParent){multiMap().clear();b.remove();}}}catch(_){}},1500);
+  /* the selection is dropped when the units screen is left */
+  setInterval(function(){try{if(multiMap().size){const sc=document.getElementById('dpbSupUnitsScreen');if(!sc||!sc.classList.contains('active')){multiMap().clear();renderMultiBar();}}}catch(_){}},800);
   function pruneMulti(){
     try{const md=multiMap(),seen=state.multiSeen||new Set();[...md.keys()].forEach(k=>{if(!seen.has(k))md.delete(k);});}catch(_){}
   }
+  /* v133: no floating bar any more — the bottom green "Save" button turns into a red "حذف (N)" button while done cards are selected */
   function renderMultiBar(){
     try{
-      const md=multiMap();let bar=document.getElementById('dpbMultiBar');
-      if(!md.size){if(bar)bar.remove();return;}
-      if(!bar){
-        bar=document.createElement('div');bar.id='dpbMultiBar';
-        bar.style.cssText='position:fixed;left:10px;right:10px;bottom:84px;z-index:2147482000;display:flex;gap:8px;align-items:center;justify-content:space-between;background:rgba(7,26,40,.97);border:1px solid #22d3ee;border-radius:14px;padding:8px 10px;color:#fff;font:700 13px/1.4 sans-serif;direction:rtl;box-shadow:0 6px 24px rgba(0,0,0,.5)';
-        bar.innerHTML='<span id="dpbMultiCount"></span><span style="display:flex;gap:8px"><button type="button" id="dpbMultiDel" style="background:#b4232f;color:#fff;border:0;border-radius:10px;padding:8px 14px;font-weight:800">🗑 حذف</button><button type="button" id="dpbMultiCancel" style="background:#16384f;color:#dceafa;border:1px solid #31516d;border-radius:10px;padding:8px 12px;font-weight:700">إلغاء التحديد</button></span>';
-        document.body.appendChild(bar);
-        bar.querySelector('#dpbMultiDel').onclick=multiDelete;
-        bar.querySelector('#dpbMultiCancel').onclick=()=>{multiMap().clear();renderUnits();};
+      const md=multiMap();const old=document.getElementById('dpbMultiBar');if(old)old.remove();
+      const save=document.getElementById('dpbSupSave');if(!save)return;
+      if(md.size){
+        save.style.display='block';save.disabled=false;
+        save.textContent='🗑 حذف المحدد ('+md.size+')';
+        save.style.background='linear-gradient(135deg,#b4232f,#e04452)';save.style.color='#fff';
+        save.dataset.multi='1';
+      }else if(save.dataset.multi){
+        delete save.dataset.multi;save.style.background='';save.style.color='';
+        if(/^🗑/.test(save.textContent))save.textContent='Save Selected Units';
       }
-      bar.querySelector('#dpbMultiCount').textContent=md.size+' محدد';
     }catch(_){}
   }
   async function multiDelete(){
@@ -16996,7 +16991,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     for(const it of items){
       try{await Promise.resolve(deleteSavedRecordForUnit(it.unitK,it.rec));}catch(_){}
     }
-    renderMultiBar();
+    renderUnits();
     try{showToast('تم إلغاء '+items.length+' وحدة.');}catch(_){}
   }
   // FIX (استئصال الترقيع القديم بالكامل): بما إن كل خلية بقى ليها معرّف
@@ -18157,6 +18152,12 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   q("dpbSupBack").onclick=back;
   {const _gp=q("dpbSupGoProjects");if(_gp)_gp.onclick=()=>showScreen("projects")}
   q("dpbSupHome").onclick=()=>showScreen("home");
+  q("dpbSupSave").addEventListener('click',function(ev){
+    try{
+      const sc=document.getElementById('dpbSupUnitsScreen');
+      if(multiMap().size&&sc&&sc.classList.contains('active')){ev.stopImmediatePropagation();ev.preventDefault();multiDelete();}
+    }catch(_){}
+  },true);
   q("dpbSupSave").onclick=saveSelected;
   q("dpbSupContinueUnits").onclick=openSelectedTrackers;
   q("dpbSupSelectRowsTrackers").onclick=selectTrackersForRows;
