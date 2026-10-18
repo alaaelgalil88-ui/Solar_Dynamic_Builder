@@ -506,20 +506,38 @@
     if (p.read === 'ok' && p.write === 'ok') return ' — السيرفر ردّ دلوقتي؛ بعيد فتح قناة الاتصال تلقائيًا';
     return ' — (' + s + ')';
   }
+  // v132: display rules only (nothing about sending changes). A NEW project (not built yet = still uploading Excel files) never shows pending-write
+  // messages; a connection-lost message needs to last 20 s before it shows; the unconfirmed-writes message waits 45 s.
+  var condSeen = {};
+  function lasted(key, on, ms) { if (!on) { delete condSeen[key]; return false; } if (!condSeen[key]) condSeen[key] = Date.now(); return Date.now() - condSeen[key] >= ms; }
   function warnText() {
-    var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i;
+    var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i, newProj = window.__dpbProjBuilt === false;
     if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000 && (!W.refusedPid || !pidS() || W.refusedPid === pidS())) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
-    if (pidS() && !curStore() && lastErr) return quota.test(lastErr) ? '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية' : '⚠️ مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني';
-    if (obNCur() > 0 && !curPend()) return '⏳ ' + obNCur() + ' تعديل محفوظ على الجهاز ومستني الاتصال — هيتبعت لوحده بعد ما يتقارن بحالة السيرفر';
-    if (curPend() && curPendSince() && Date.now() - curPendSince() > 20000 && navigator.onLine !== false) { if (!probeBusy && Date.now() - probeAt > 45000) runProbe(); return '⚠️ ' + curPend() + ' كتابة لسه السيرفر ماأكدهاش (محفوظة على الجهاز)' + diag(); }
+    var conn = !!(pidS() && !curStore() && lastErr);
+    // v132: the "مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني" message is removed (the app reconnects by itself); only the quota case still warns.
+    if (lasted('conn', conn && !newProj && quota.test(lastErr), 20000)) return '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية';
+    var obOnly = obNCur() > 0 && !curPend();
+    if (lasted('ob', obOnly && !newProj, 20000)) return '⏳ ' + obNCur() + ' تعديل محفوظ على الجهاز ومستني الاتصال — هيتبعت لوحده بعد ما يتقارن بحالة السيرفر';
+    if (curPend() && curPendSince() && Date.now() - curPendSince() > 20000 && navigator.onLine !== false) {
+      if (!probeBusy && Date.now() - probeAt > 45000) runProbe();
+      if (!newProj && Date.now() - curPendSince() > 45000) return '⚠️ ' + curPend() + ' كتابة لسه السيرفر ماأكدهاش (محفوظة على الجهاز)' + diag();
+    }
     return '';
   }
   function warnNow() {
     try {
       var t = warnText(), el = document.getElementById('dpbFs2Warn');
+      window.__dpbFs2WarnFull = t;
       if (!t) { if (el) el.remove(); return; }
-      if (!el) { el = document.createElement('div'); el.id = 'dpbFs2Warn'; el.style.cssText = 'position:fixed;left:8px;right:8px;bottom:70px;z-index:2147483000;background:rgba(120,60,0,.94);color:#fff;border:1px solid #ffb74d;border-radius:10px;padding:6px 10px;font-size:12px;text-align:center;pointer-events:none;direction:rtl'; document.body.appendChild(el); }
-      el.textContent = t;
+      var big = /رفض حفظ|حصة Firebase/.test(t);
+      var css = big
+        ? 'position:fixed;left:8px;right:8px;bottom:70px;z-index:2147483000;background:rgba(120,60,0,.94);color:#fff;border:1px solid #ffb74d;border-radius:10px;padding:6px 10px;font-size:12px;text-align:center;pointer-events:none;direction:rtl'
+        : 'position:fixed;left:4px;top:calc(env(safe-area-inset-top,0px) + 2px);z-index:2147483000;background:rgba(120,60,0,.85);color:#fff;border:1px solid #ffb74d;border-radius:999px;padding:1px 8px;font-size:10px;line-height:1.5;opacity:.9;pointer-events:none;direction:ltr';
+      if (!el) { el = document.createElement('div'); el.id = 'dpbFs2Warn'; document.body.appendChild(el); }
+      el.style.cssText = css;
+      var n = (t.match(/\d+/) || [''])[0];
+      el.textContent = big ? t : (t.slice(0, 2) + (n ? ' ' + n : ''));
+      el.title = t;
     } catch (e) {}
   }
   window.__dpbFs2Warn = warnNow; setInterval(warnNow, 5000);
