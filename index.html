@@ -10218,6 +10218,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 .dpbMsgFull .dpbMsgThread{flex:1;max-height:none}
 .dpbMsgFull .dpbMsgBtns{display:flex;gap:8px;margin-top:8px}
 .dpbMsgFull button{padding:11px 14px;border-radius:11px;border:1px solid #31516d;background:#12304a;color:#fff;font-weight:800}
+.dpbMsgFull button.dpbMsgX{width:42px;height:42px;padding:0;border-radius:13px;font-size:29px;line-height:1;font-weight:500;display:inline-flex;align-items:center;justify-content:center;background:rgba(120,28,44,.55);border:1px solid rgba(255,120,130,.45);color:#fff}
+.dpbMsgFull button.dpbMsgX:active{transform:scale(.94);filter:brightness(1.18)}
 .dpbMsgFull button.go{flex:1;background:#116b52;border-color:#1ca878}
 #dpbMsgToast{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:2147483001;background:#116b52;color:#fff;padding:9px 16px;border-radius:999px;font-weight:800;font-size:13px;display:none}
 
@@ -21559,14 +21561,14 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 </script>
 
 <div id="dpbSupMsgModal" class="dpbMsgFull" role="dialog" aria-label="الرسائل">
-  <div class="dpbMsgHead"><span>💬 الرسائل</span><button type="button" id="dpbSupMsgClose">✕ إغلاق</button></div>
+  <div class="dpbMsgHead"><span>💬 الرسائل</span><button type="button" id="dpbSupMsgClose" class="dpbMsgX" aria-label="إغلاق">×</button></div>
   <div id="dpbSupMsgThread" class="dpbMsgThread"></div>
   <textarea id="dpbSupMsgText" maxlength="500" rows="2" placeholder="اكتب ردك…"></textarea>
   <div class="dpbMsgBtns"><button type="button" class="go" id="dpbSupMsgSend">إرسال الرد</button></div>
 </div>
 <div id="dpbAdminMsgModal" class="dpbMsgFull" role="dialog" aria-label="رسائل المشرفين">
-  <div class="dpbMsgHead"><span>💬 رسائل المشرفين</span><button type="button" id="dpbAdminMsgClose">✕ إغلاق</button></div>
-  <div class="dpbMsgRow"><select id="dpbMsgUser"></select><button type="button" id="dpbMsgRefresh">↻ تحديث</button></div>
+  <div class="dpbMsgHead"><span>💬 رسائل المشرفين</span><button type="button" id="dpbAdminMsgClose" class="dpbMsgX" aria-label="إغلاق">×</button></div>
+  <div class="dpbMsgRow"><select id="dpbMsgUser"></select></div>
   <div id="dpbMsgThread" class="dpbMsgThread"></div>
   <textarea id="dpbMsgText" maxlength="500" rows="2" placeholder="اكتب رسالة للمشرف…"></textarea>
   <div class="dpbMsgBtns"><button type="button" class="go" id="dpbMsgSend">إرسال</button></div>
@@ -21670,9 +21672,20 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
     var box=$('dpbSupMsgThread');box.textContent='جاري التحميل…';
     var thr=await api.thread(u);
     if(!thr){box.textContent='مفيش اتصال دلوقتي — الرسايل هتظهر لما النت يرجع.';return}
-    renderSupThread(thr);
+    supSig=thrSig(thr);renderSupThread(thr);
     await api.supMarkSeen(u,thr);setSupBadge(0);lastUnread=0;
   }
+  var supSig='';
+  function thrSig(thr){return thr.items.map(function(i){return i.from+i.t}).join('|')}
+  async function supAuto(){
+    var m=$('dpbSupMsgModal');if(!m||!m.classList.contains('open'))return;
+    var u=supName();if(!u)return;
+    var thr=await api.thread(u);if(!thr)return;
+    var sg=thrSig(thr);if(sg!==supSig){supSig=sg;renderSupThread(thr)}
+    await api.supMarkSeen(u,thr);setSupBadge(0);
+  }
+  function adminAuto(){var m=$('dpbAdminMsgModal');if(m&&m.classList.contains('open'))loadAdminThread(true)}
+  setInterval(function(){try{supAuto();adminAuto()}catch(_){}},6000);
   function renderSupThread(thr){
     var box=$('dpbSupMsgThread');box.textContent='';
     if(!thr.items.length){box.textContent='مفيش رسايل لسه.';return}
@@ -21689,14 +21702,21 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
     sups().forEach(function(a){var o=document.createElement('option');o.value=a.name;o.textContent=a.name;sel.appendChild(o)});
     if(cur)sel.value=cur;else if(sel.options.length===2)sel.selectedIndex=1;
   }
-  async function loadAdminThread(){
-    var user=$('dpbMsgUser').value,box=$('dpbMsgThread');box.textContent='';if(!user){box.textContent='اختار مشرف.';return}
-    box.textContent='جاري التحميل…';var thr=await api.thread(user);
-    if(!thr){box.textContent='مفيش اتصال دلوقتي.';return}
-    box.textContent='';
-    if(!thr.items.length)box.textContent='مفيش رسايل لسه.';
-    thr.items.forEach(function(i){bubble(box,i.from==='admin'?'me':'them',i.x,(i.from==='admin'?'إنت'+(i.read?' ✓✓':' ✓'):user)+' · '+fmt(i.t))});
-    box.scrollTop=box.scrollHeight;
+  var admSig='';
+  async function loadAdminThread(silent){
+    var user=$('dpbMsgUser').value,box=$('dpbMsgThread');
+    if(!user){box.textContent='اختار مشرف.';admSig='';return}
+    if(!silent){box.textContent='جاري التحميل…';admSig=''}
+    var thr=await api.thread(user);
+    if(!thr){if(!silent)box.textContent='مفيش اتصال دلوقتي.';return}
+    if($('dpbMsgUser').value!==user)return;
+    var sg=user+'#'+thr.items.map(function(i){return i.from+i.t+(i.read?'r':'')}).join('|');
+    if(!(silent&&sg===admSig)){
+      admSig=sg;box.textContent='';
+      if(!thr.items.length)box.textContent='مفيش رسايل لسه.';
+      thr.items.forEach(function(i){bubble(box,i.from==='admin'?'me':'them',i.x,(i.from==='admin'?'إنت'+(i.read?' ✓✓':' ✓'):user)+' · '+fmt(i.t))});
+      box.scrollTop=box.scrollHeight;
+    }
     var newestReply='';thr.items.forEach(function(i){if(i.from==='sup'&&i.t>newestReply)newestReply=i.t});
     if(newestReply){lsSet(seenKey(user),newestReply);lsSet('DPB_MSG_ADMIN_NOTIFIED_'+String(user).toLowerCase(),newestReply)}
     adminBadge();
@@ -21728,7 +21748,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
       var u=supName(),inp=$('dpbSupMsgText'),x=(inp.value||'').trim();if(!u||!x)return;
       t.disabled=true;var r=await api.supReply(u,x);t.disabled=false;
       if(!r.ok){toast('الرد ما اتبعتش — اتأكد من النت وجرّب تاني.');return}
-      inp.value='';var thr=await api.thread(u);if(thr)renderSupThread(thr);return;
+      inp.value='';var thr=await api.thread(u);if(thr){supSig=thrSig(thr);renderSupThread(thr)}return;
     }
     if(t.id==='dpbMsgRefresh'){await loadAdminThread();return}
     if(t.id==='dpbMsgSend'){
@@ -21748,10 +21768,10 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 })();
 </script>
 <style>
-/* v138 – professional input behaviour + sticky connection/publish bar */
-#dpbAdminStickyBar{position:sticky;top:var(--dpbAdminTopH,0px);z-index:95;display:flex;gap:8px;align-items:stretch;padding:6px 12px;background:rgba(7,17,29,.97);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
-#dpbAdminStickyBar #dpbConnectionStatus{display:flex!important;align-items:center;justify-content:center;flex:0 1 40%;margin:0!important;padding:8px 10px!important;font-size:12px!important;line-height:1.4}
-#dpbAdminStickyBar #dpbPublishBuildBtn{flex:1 1 55%;margin:0!important;width:auto!important;padding:10px 8px!important;font-size:14px!important}
+/* v138 – professional input behaviour + sticky connection/publish bar (v140: stacked like the original, same look) */
+#dpbAdminStickyBar{position:sticky;top:var(--dpbAdminTopH,0px);z-index:95;display:block;padding:0 0 8px;background:#07111d}
+#dpbAdminStickyBar #dpbConnectionStatus{display:block!important}
+#dpbAdminStickyBar #dpbPublishBuildBtn{display:block;box-sizing:border-box;margin:8px 12px 0!important;width:calc(100% - 24px)!important}
 input:focus,select:focus,textarea:focus,.dpbKeepFocus{outline:2px solid #2dd4a3!important;outline-offset:2px;box-shadow:0 0 0 5px rgba(45,212,163,.2)!important}
 </style>
 <script>
