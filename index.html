@@ -5227,9 +5227,9 @@ function renderProgBar(row,spec){
   row.innerHTML=
     '<button type="button" id="dpbMarkReload" title="تحديث" style="'+iconBtnCss('neutral')+'">🔄</button>'+
     '<span style="font-size:12px;font-weight:800;min-width:120px">'+label+'</span>'+
-    '<button type="button" id="dpbProgEdit" title="تعديل القيمة" style="'+iconBtnCss(mark.progEdit?'primary':'neutral')+'"'+dis+'>✎ Edit</button>'+
     '<input id="dpbProgQty" type="number" inputmode="numeric" min="0" step="1" placeholder="عدد الشاشات" '+(n?'':'disabled ')+'style="width:110px;'+selCss().replace('max-width:130px;','')+'">'+
     '<button type="button" id="dpbMarkCancel" title="إلغاء التحديد" style="'+iconBtnCss('neutral')+'"'+dis+'>↺</button>'+
+    '<button type="button" id="dpbProgEdit" title="تعديل القيمة" aria-label="تعديل القيمة" style="'+iconBtnCss(mark.progEdit?'primary':'neutral')+'"'+dis+'>✎</button>'+
     '<button type="button" id="dpbProgDelete" title="حذف القيمة" style="'+iconBtnCss('danger')+'"'+dis+'>🗑️</button>'+
     '<button type="button" id="dpbProgApply" title="تطبيق وحفظ" style="'+iconBtnCss('primary')+'"'+dis+'>✓</button>';
   const nq=document.getElementById('dpbProgQty');
@@ -10201,6 +10201,36 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 .dpbBackupModal{position:fixed;inset:0;z-index:250000;background:rgba(0,0,0,.58);display:none;align-items:center;justify-content:center;padding:18px}
 .dpbBackupBox{width:min(620px,100%);background:#f7f7f7;color:#222;border-radius:28px;padding:20px;box-shadow:0 24px 80px rgba(0,0,0,.45);direction:rtl}
 .dpbBackupBox h2{margin:0 0 14px;font-size:28px}.dpbBackupPanel{border:1px solid #d7dde5;border-radius:20px;padding:16px;background:#fff}.dpbBackupPanel p{color:#707782;line-height:1.7;margin:6px 0 14px}.dpbBackupRow{display:grid;grid-template-columns:1fr 1fr;gap:12px}.dpbBackupBox select,.dpbBackupBox input{width:100%;padding:12px;border:1px solid #ccd5df;border-radius:12px;background:#fff;font-size:16px}.dpbBackupSwitchRow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px;padding:12px 14px;border:1px solid #ccd5df;border-radius:12px;background:#eef1f5;cursor:pointer}.dpbBackupSwitchText{font-weight:900;color:#123}.dpbBackupSwitch{position:relative;display:inline-block;width:50px;height:28px;flex:0 0 auto}.dpbBackupSwitch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1}.dpbBackupSwitchTrack{position:absolute;inset:0;background:#c6cdd6;border-radius:999px;transition:background .18s}.dpbBackupSwitchThumb{position:absolute;top:3px;right:3px;width:22px;height:22px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .18s}.dpbBackupSwitch input:checked+.dpbBackupSwitchTrack{background:#1769c2}.dpbBackupSwitch input:checked+.dpbBackupSwitchTrack .dpbBackupSwitchThumb{transform:translateX(-22px)}.dpbBackupActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.dpbBackupActions button{min-height:58px;border:0;border-radius:13px;font-weight:900;font-size:16px;background:#1769c2;color:#fff}.dpbBackupActions button.secondary{background:#e7eef7;color:#123}.dpbBackupClose{width:100%;margin-top:10px;min-height:50px;border:0;border-radius:13px;background:#e7eef7;font-weight:900}.dpbBackupLast{margin-top:10px;color:#5c6672;font-size:13px}
+
+.dpbMsgBadge{display:inline-block;min-width:18px;padding:1px 6px;margin-inline-start:6px;border-radius:999px;background:#e04452;color:#fff;font-size:11px;font-weight:900;text-align:center}
+.dpbMsgPanel{display:grid;gap:10px}
+.dpbMsgRow{display:flex;gap:8px;align-items:center}
+.dpbMsgRow select{flex:1;background:#07121c;color:#dceafa;border:1px solid #31516d;border-radius:10px;padding:9px}
+.dpbMsgThread{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow:auto;padding:8px;border:1px solid #243b57;border-radius:12px;background:#091827;min-height:90px}
+.dpbMsgBub{max-width:85%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.6;overflow-wrap:anywhere;white-space:pre-wrap}
+.dpbMsgBub small{display:block;font-size:10px;opacity:.7;margin-top:3px}
+.dpbMsgBub.me{align-self:flex-end;background:#116b52;color:#fff}
+.dpbMsgBub.them{align-self:flex-start;background:#1b3550;color:#dceafa}
+.dpbMsgPanel textarea,#dpbSupMsgModal textarea{width:100%;box-sizing:border-box;background:#07121c;color:#dceafa;border:1px solid #31516d;border-radius:10px;padding:9px;font-size:14px;resize:none}
+#dpbSupMsgModal{position:fixed;inset:0;z-index:2147483000;display:none;flex-direction:column;background:#07121c;color:#dceafa;direction:rtl;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px calc(env(safe-area-inset-bottom,0px) + 12px)}
+#dpbSupMsgModal.open{display:flex}
+#dpbSupMsgModal .dpbMsgHead{display:flex;align-items:center;justify-content:space-between;font-weight:900;font-size:16px;padding:6px 2px 10px}
+#dpbSupMsgModal .dpbMsgThread{flex:1;max-height:none}
+#dpbSupMsgModal .dpbMsgBtns{display:flex;gap:8px;margin-top:8px}
+#dpbSupMsgModal button{padding:11px 14px;border-radius:11px;border:1px solid #31516d;background:#12304a;color:#fff;font-weight:800}
+#dpbSupMsgModal button.go{flex:1;background:#116b52;border-color:#1ca878}
+#dpbMsgToast{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:2147483001;background:#116b52;color:#fff;padding:9px 16px;border-radius:999px;font-weight:800;font-size:13px;display:none}
+.dpbRemSection{display:grid;gap:8px}
+.dpbRemCard{display:grid;gap:8px;padding:10px;border:1px solid #31516d;border-radius:12px;background:#0d2233}
+.dpbRemTop{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dpbRemTop input[type=time]{background:#07121c;color:#dceafa;border:1px solid #31516d;border-radius:10px;padding:8px 10px;font-weight:800;font-size:15px}
+.dpbRemTop label{display:flex;gap:6px;align-items:center;font-size:12px;font-weight:800;margin:0}
+.dpbRemDays{display:flex;gap:5px;flex-wrap:wrap}
+.dpbRemDays button{min-width:44px;padding:7px 8px;border-radius:9px;border:1px solid #31516d;background:#07121c;color:#9db2c7;font-weight:800;font-size:12px}
+.dpbRemDays button.on{background:#116b52;border-color:#1ca878;color:#fff}
+.dpbRemCard input[type=text]{width:100%;box-sizing:border-box;background:#07121c;color:#dceafa;border:1px solid #31516d;border-radius:10px;padding:9px 10px;font-size:13px}
+.dpbRemDel{margin-inline-start:auto;background:#7a1f26;color:#ffd9d9;border:0;border-radius:9px;padding:7px 10px;font-weight:800}
+.dpbRemBtns{display:flex;gap:8px;flex-wrap:wrap}
 .dpbAdminProcessPicker{display:grid;gap:8px;max-height:260px;overflow:auto;padding:9px;border:1px solid #29405e;border-radius:12px;background:#091625;overscroll-behavior:contain}
 .dpbAdminProcessOption{display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid #243b57;border-radius:10px;background:#0e1f31;color:#fff;cursor:pointer;font-size:13px}
 .dpbAdminProcessOption:has(input:checked){border-color:#4d8dff;background:#12345a}
@@ -10390,6 +10420,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       <button type="button" class="dpbAdminTabBtn" data-tab="companies">🏢 الشركات والمشغلين</button>
       <button type="button" class="dpbAdminTabBtn" data-tab="production-edits">🛠️ حالات الإنتاج</button>
       <button type="button" class="dpbAdminTabBtn" data-tab="sync">☁️ المزامنة والتشخيص</button>
+      <button type="button" class="dpbAdminTabBtn" data-tab="messages">💬 الرسائل <span id="dpbMsgTabBadge" class="dpbMsgBadge" style="display:none">0</span></button>
     </div>
 
     <div class="dpbAdminTabPanel active" data-tab="supervisors">
@@ -10412,6 +10443,15 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
             </div>
             <div class="full"><label>العمليات المسموح بها لهذا المشرف</label><div id="dpbAdminSupProcesses" class="dpbAdminProcessPicker"></div><span class="dpbAllProcessHint">يمكن اختيار عملية واحدة أو أكثر، أو اختيار <b>كل العمليات</b> لمنحه صلاحية كاملة.</span></div>
             <div class="full"><label>المشاريع المسموح بها لهذا المشرف</label><div id="dpbAdminSupProjects" class="dpbAdminProcessPicker"></div><span class="dpbAllProcessHint">لو اخترت مشروع واحد بس، المشرف بيدخله مباشرة بعد الرقم السري. لو أكتر من مشروع بتظهر له شاشة اختيار المشروع.</span></div>
+            <div class="full dpbRemSection">
+              <label>⏰ تنبيهات المشرف (منبه + رسالة)</label>
+              <div id="dpbAdminSupReminders"></div>
+              <div class="dpbRemBtns">
+                <button type="button" class="dpbAdminBtn" id="dpbAdminAddRem">＋ إضافة تنبيه</button>
+                <button type="button" class="dpbAdminBtn" id="dpbAdminTestRem">🔔 جرّب تنبيه على الجهاز ده</button>
+              </div>
+              <span class="dpbAllProcessHint">التنبيه بيوصل لتليفون المشرف أول ما يفتح التطبيق بعد حفظ الحساب، وبعدها بيشتغل حتى والتطبيق مقفول.</span>
+            </div>
             <div class="full dpbAdminActions">
               <button class="dpbAdminBtn primary" id="dpbAdminSaveSup">حفظ الحساب</button>
               <button class="dpbAdminBtn" id="dpbAdminCancelEdit">إلغاء التعديل</button>
@@ -10436,6 +10476,17 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         </div>
         <div id="dpbAdminProductionEditsPageList" class="dpbAdminSubList"></div>
         <button type="button" class="dpbAdminBtn" id="dpbAdminProdEditsLoadMore" style="display:none;margin-top:10px;width:100%">عرض المزيد</button>
+      </section>
+    </div>
+
+    <div class="dpbAdminTabPanel" data-tab="messages">
+      <section class="dpbAdminCard dpbMsgPanel">
+        <h3>💬 رسائل المشرفين</h3>
+        <div class="dpbMsgRow"><select id="dpbMsgUser"></select><button type="button" class="dpbAdminBtn" id="dpbMsgRefresh">↻ تحديث</button></div>
+        <div id="dpbMsgThread" class="dpbMsgThread"></div>
+        <textarea id="dpbMsgText" maxlength="500" rows="2" placeholder="اكتب رسالة للمشرف…"></textarea>
+        <button type="button" class="dpbAdminBtn primary" id="dpbMsgSend">إرسال</button>
+        <div class="hint">الرسالة بتوصل للمشرف أول ما يفتح التطبيق وفيه نت. علامة ✓✓ يعني اتقرت.</div>
       </section>
     </div>
 
@@ -10797,10 +10848,42 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     };
     if(clr)clr.onclick=()=>setAdminPhoto("");
   })();
-  function resetForm(){editingId=null;q("dpbAdminSupName").value="";q("dpbAdminSupPin").value="";setAdminPhoto("");refreshProcessSelect([]);refreshProjectSelect(["*"]);q("dpbAdminSaveSup").textContent="حفظ الحساب";}
+  let formReminders=[];
+  const REM_DAYS=[[6,"سبت"],[0,"أحد"],[1,"إثنين"],[2,"ثلاثاء"],[3,"أربعاء"],[4,"خميس"],[5,"جمعة"]];
+  function remNew(){return {id:"rem_"+Math.random().toString(36).slice(2,9),time:"09:00",days:[6,0,1,2,3,4],text:"",on:true}}
+  function renderFormReminders(){
+    const box=q("dpbAdminSupReminders");if(!box)return;box.innerHTML="";
+    formReminders.forEach((r,idx)=>{
+      const c=document.createElement("div");c.className="dpbRemCard";
+      c.innerHTML='<div class="dpbRemTop"><input type="time" value="'+esc(r.time)+'" data-k="time"><label><input type="checkbox" data-k="on"'+(r.on!==false?' checked':'')+'> شغال</label><button type="button" class="dpbRemDel" data-k="del">حذف</button></div>'+
+        '<div class="dpbRemDays">'+REM_DAYS.map(d=>'<button type="button" data-day="'+d[0]+'" class="'+((r.days||[]).includes(d[0])?'on':'')+'">'+d[1]+'</button>').join("")+'</div>'+
+        '<input type="text" maxlength="140" placeholder="رسالة التنبيه (اختياري) — مثال: ميعاد إدخال بيانات اليوم" value="'+esc(r.text||"")+'" data-k="text">';
+      c.querySelector('[data-k="time"]').onchange=e=>{r.time=e.target.value||r.time};
+      c.querySelector('[data-k="on"]').onchange=e=>{r.on=e.target.checked};
+      c.querySelector('[data-k="text"]').oninput=e=>{r.text=e.target.value};
+      c.querySelector('[data-k="del"]').onclick=()=>{formReminders.splice(idx,1);renderFormReminders()};
+      c.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{const d=Number(b.dataset.day);const i=(r.days||[]).indexOf(d);r.days=r.days||[];if(i>=0)r.days.splice(i,1);else r.days.push(d);b.classList.toggle("on")});
+      box.appendChild(c);
+    });
+  }
+  function collectReminders(){
+    const out=[];
+    for(const r of formReminders){
+      if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(r.time||""))){alert("وقت التنبيه غير صحيح.");return null}
+      if(!(r.days||[]).length){alert("اختار يوم واحد على الأقل لكل تنبيه.");return null}
+      out.push({id:r.id,time:r.time,days:[...new Set(r.days)].sort(),text:String(r.text||"").trim().slice(0,140),on:r.on!==false});
+    }
+    return out;
+  }
+  document.addEventListener("click",ev=>{
+    const t=ev.target&&ev.target.closest?ev.target.closest("#dpbAdminAddRem,#dpbAdminTestRem"):null;if(!t)return;
+    if(t.id==="dpbAdminAddRem"){formReminders.push(remNew());renderFormReminders();return}
+    if(window.dpbReminders)window.dpbReminders.testNow().then(m=>alert(m));
+  });
+  function resetForm(){editingId=null;formReminders=[];renderFormReminders();q("dpbAdminSupName").value="";q("dpbAdminSupPin").value="";setAdminPhoto("");refreshProcessSelect([]);refreshProjectSelect(["*"]);q("dpbAdminSaveSup").textContent="حفظ الحساب";}
   function editAccount(id){
     const a=accounts().find(x=>x.id===id);if(!a)return;
-    editingId=id;q("dpbAdminSupName").value=a.name;q("dpbAdminSupPin").value=a.pin;setAdminPhoto(a.photo||"");
+    editingId=id;formReminders=(Array.isArray(a.reminders)?a.reminders:[]).map(r=>({id:r.id||remNew().id,time:r.time||"09:00",days:Array.isArray(r.days)?[...r.days]:[],text:r.text||"",on:r.on!==false}));renderFormReminders();q("dpbAdminSupName").value=a.name;q("dpbAdminSupPin").value=a.pin;setAdminPhoto(a.photo||"");
     refreshProcessSelect(accountProcessIds(a));refreshProjectSelect(accountProjectIds(a));
     q("dpbAdminSaveSup").textContent="حفظ التعديل";q("dpbAdminSupName").focus()
   }
@@ -10810,7 +10893,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     // is also visible to anyone editing the Sheet directly. Never blocks
     // the local save — if the Sheet is unreachable this simply no-ops.
     if(!window.DPB_GS||typeof window.DPB_GS.pushUser!=="function"||!a||!a.name)return;
-    window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,projectIds:accountProjectIds(a),active:a.active!==false,photo:a.photo||""});
+    window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,projectIds:accountProjectIds(a),active:a.active!==false,photo:a.photo||"",reminders:Array.isArray(a.reminders)?a.reminders:[]});
   }
   function toggleAccount(id){const a=accounts();const i=a.findIndex(x=>x.id===id);if(i<0)return;a[i].active=a[i].active===false;saveAccounts(a);pushAccountToSheet(a[i])}
   function deleteAccount(id){const a=accounts().find(x=>x.id===id);if(!a)return;if(!confirm(`حذف حساب المشرف ${a.name}؟`))return;saveAccounts(accounts().filter(x=>x.id!==id));if(editingId===id)resetForm();const rm=window.DPB_GS&&window.DPB_GS.removeUserSafe;if(typeof rm==="function"){rm(a.name).then(r=>{if(!(r&&r.ok))alert("اتحذف المشرف "+a.name+" من الجهاز ده. مقدرتش أحذفه من السيرفر دلوقتي (مفيش اتصال أو الاتصال فشل)، وهيتحذف لوحده أول ما النت يرجع.")})}}
@@ -10829,7 +10912,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     const all=processIds.includes("*");
     const projectIds=selectedAdminProjectIds();
     if(!projectIds.length){alert("اختار مشروع واحد على الأقل، أو اختر كل المشاريع.");return}
-    const payload={name,pin,processIds,processId:all?"*":processIds[0],allProcesses:all,projectIds,active:true,photo:adminPhoto||"",updatedAt:new Date().toISOString()};
+    const reminders=collectReminders();if(reminders===null)return;
+    const payload={name,pin,processIds,processId:all?"*":processIds[0],allProcesses:all,projectIds,reminders,active:true,photo:adminPhoto||"",updatedAt:new Date().toISOString()};
     if(editingId){const i=a.findIndex(x=>x.id===editingId);if(i>=0)a[i]={...a[i],...payload}}
     else a.push({id:uid(),...payload,createdAt:new Date().toISOString()});
     saveAccounts(a);pushAccountToSheet(payload);resetForm();alert("تم حفظ حساب المشرف وتحديد صلاحيات العمليات.");
@@ -11982,6 +12066,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       isAdmin,
       active,
       photo:String(u.photo||u.Photo||"").trim(),
+      reminders:Array.isArray(u.reminders)?u.reminders:[],
       source:"sheet"
     };
   }
@@ -12020,6 +12105,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         localStorage.setItem(LAST_SYNC_KEY,String(Date.now()));
         if(typeof window.__dpbMarkDataChanged==="function")window.__dpbMarkDataChanged();
       }catch(_){}
+      try{if(window.dpbReminders)window.dpbReminders.refresh()}catch(_){}
       return true;
     });
   }
@@ -15711,6 +15797,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           <button class="dpbSupNavCard" id="dpbSupGoMyEdits">
             <strong>✎ Records</strong><span>Your own entries · undo any operation</span>
           </button>
+          <button class="dpbSupNavCard" id="dpbSupGoMsgs"><strong>💬 الرسائل <span id="dpbSupMsgBadge" class="dpbMsgBadge" style="display:none">0</span></strong><span>رسائل من الأدمن + رد سريع</span></button>
           <button class="dpbSupNavCard dpbSupMapNavCard" id="dpbSupGoMaps"><strong>🗺️ Project Maps</strong><span>عرض وتحديد وتطبيق وحذف وتحديث الخلايا من نفس الخريطة</span></button>
         </div>
       </section>
@@ -18051,7 +18138,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   function login(){
     const user=q("dpbSupUser").value.trim(),pass=q("dpbSupPass").value.trim(),account=supervisorExists(user,pass);
     if(!account){q("dpbSupLoginErr").textContent="الحساب غير موجود أو غير مفعل. المشرفين يتم إنشاؤهم من لوحة الـAdmin.";q("dpbSupPass").value="";updateSupPinDots();return}
-    state.account=account;state.assignedProcessIds=supervisorAllowedProcessIds(account);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=account.name;
+    state.account=account;state.assignedProcessIds=supervisorAllowedProcessIds(account);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=account.name;try{if(!account.isAdmin&&window.dpbReminders)window.dpbReminders.onLogin(account)}catch(_){}
     q("dpbSupWelcome").textContent=`Welcome, ${account.name}`;q("dpbSupLoginErr").textContent="";showScreen("home");
   }
   function escapeHtml(s){
@@ -18101,7 +18188,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(!account){q("dpbSupLoginErr").textContent="اختار الحساب أولاً.";return}
     const finishLogin=(acc)=>{
       state.account=acc;state.assignedProcessIds=supervisorAllowedProcessIds(acc);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=acc.name;
-      q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";state.autoOpenProject=!acc.isAdmin;showScreen("projects");
+      q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";state.autoOpenProject=!acc.isAdmin;try{if(!acc.isAdmin&&window.dpbReminders)window.dpbReminders.onLogin(acc)}catch(_){}showScreen("projects");
       if(window.DPB_GS&&typeof window.DPB_GS.logHistory==="function")window.DPB_GS.logHistory({user:state.user,action:"login",details:acc.isAdmin?"Admin":"Supervisor"});
     };
     const rejectLogin=()=>{q("dpbSupLoginErr").textContent="الرقم السري غير صحيح لهذا الحساب.";q("dpbSupPass").value="";updateSupPinDots()};
@@ -21337,4 +21424,234 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 })();
 </script>
 
+<script>
+/* v135: supervisor reminders (alarm + message). The admin sets them per supervisor account (Admin Control Center); the supervisor's phone schedules them
+   LOCALLY with the Capacitor LocalNotifications plugin, so they fire even when the app is closed or there is no internet. A change made by the admin reaches
+   the phone the next time the app opens with internet (the accounts list is synced then) and the schedule is replaced. Needs the plugin inside the APK. */
+(function(){
+  var ACC_KEY='DPB_SUPERVISOR_ACCOUNTS_V1', LAST='DPB_REM_LAST_SUP_V1', SIG='DPB_REM_SIG_V1', ASKED='DPB_REM_EXACT_ASKED_V1';
+  var IDBASE=71000000, CHANNEL='dpb-reminders';
+  function LN(){try{return window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.LocalNotifications||null}catch(_){return null}}
+  function lsGet(k){try{return localStorage.getItem(k)}catch(_){return null}}
+  function lsSet(k,v){try{localStorage.setItem(k,v)}catch(_){}}
+  function hash(str){var h=5381;str=String(str);for(var i=0;i<str.length;i++)h=((h<<5)+h+str.charCodeAt(i))|0;return Math.abs(h)}
+  function valid(list){
+    return (Array.isArray(list)?list:[]).filter(function(r){return r&&r.on!==false&&/^([01]\d|2[0-3]):[0-5]\d$/.test(String(r.time||''))&&Array.isArray(r.days)&&r.days.length});
+  }
+  function build(user,list){
+    var out=[];
+    valid(list).forEach(function(r){
+      var hh=Number(r.time.slice(0,2)),mm=Number(r.time.slice(3,5)),base=IDBASE+(hash(user+'|'+r.id)%100000)*10;
+      r.days.forEach(function(d){
+        d=Number(d);if(!(d>=0&&d<=6))return;
+        out.push({id:base+d,title:'تذكير إدخال البيانات',body:String(r.text||'').trim()||'ميعاد إدخال بيانات الإنتاج.',channelId:CHANNEL,
+          schedule:{on:{weekday:d+1,hour:hh,minute:mm},allowWhileIdle:true},extra:{rid:r.id}});
+      });
+    });
+    return out;
+  }
+  async function ensureReady(p,askExact){
+    try{await p.createChannel({id:CHANNEL,name:'تنبيهات المشرف',description:'تذكير بمواعيد إدخال البيانات',importance:5,visibility:1,vibration:true})}catch(_){}
+    var perm=await p.checkPermissions();
+    if(!perm||perm.display!=='granted')perm=await p.requestPermissions();
+    if(!perm||perm.display!=='granted')return {ok:false,why:'denied'};
+    if(askExact&&!lsGet(ASKED)){
+      try{var ex=await p.checkExactNotificationSetting();
+        if(ex&&ex.exact_alarm&&ex.exact_alarm!=='granted'){lsSet(ASKED,'1');await p.changeExactNotificationSetting()}
+      }catch(_){}
+    }
+    return {ok:true};
+  }
+  async function cancelMine(p){
+    try{
+      var pend=await p.getPending();
+      var mine=((pend&&pend.notifications)||[]).filter(function(n){return n.id>=IDBASE&&n.id<IDBASE+1000000&&n.id!==IDBASE+999999}).map(function(n){return {id:n.id}});
+      if(mine.length)await p.cancel({notifications:mine});
+    }catch(_){}
+  }
+  var busy=null;
+  function apply(user,list){
+    var p=LN();if(!p)return Promise.resolve({ok:false,why:'noplugin'});
+    var items=build(user,list),sig=user+'|'+JSON.stringify(items.map(function(n){return [n.id,n.body,n.schedule.on.hour,n.schedule.on.minute]}));
+    if(lsGet(SIG)===sig)return Promise.resolve({ok:true,same:true,count:items.length});
+    var run=async function(){
+      if(!items.length){await cancelMine(p);lsSet(SIG,sig);return {ok:true,count:0}}
+      var r=await ensureReady(p,true);if(!r.ok)return r;
+      await cancelMine(p);
+      await p.schedule({notifications:items});
+      lsSet(SIG,sig);
+      return {ok:true,count:items.length};
+    };
+    busy=(busy||Promise.resolve()).then(run,run).catch(function(e){return {ok:false,why:String(e&&e.message||e)}});
+    return busy;
+  }
+  function accountsList(){try{return JSON.parse(lsGet(ACC_KEY)||'[]')||[]}catch(_){return[]}}
+  window.dpbReminders={
+    onLogin:function(acc){if(!acc||!acc.name||acc.isAdmin)return Promise.resolve(null);lsSet(LAST,acc.name);return apply(acc.name,acc.reminders)},
+    refresh:function(){
+      var u=lsGet(LAST);if(!u)return Promise.resolve(null);
+      var list=accountsList();if(!list.length)return Promise.resolve(null);
+      var a=list.filter(function(x){return String(x.name).toLowerCase()===u.toLowerCase()})[0];
+      if(!a||a.active===false)return apply(u,[]);
+      return apply(u,a.reminders);
+    },
+    build:build,
+    testNow:async function(){
+      var p=LN();
+      if(!p)return 'إضافة الإشعارات مش موجودة في التطبيق ده. لازم نسخة APK جديدة فيها الإضافة (@capacitor/local-notifications).';
+      try{
+        var r=await ensureReady(p,false);if(!r.ok)return 'الإشعارات مش مسموحة للتطبيق. فعّلها من إعدادات الموبايل ثم جرّب تاني.';
+        await p.schedule({notifications:[{id:IDBASE+999999,title:'تجربة التنبيه',body:'لو شفت الرسالة دي يبقى التنبيه شغال على الجهاز ده.',channelId:CHANNEL,schedule:{at:new Date(Date.now()+6000),allowWhileIdle:true}}]});
+        return 'اتجدول تنبيه تجريبي بعد 6 ثواني. اقفل التطبيق أو اقفل الشاشة وانتظر.';
+      }catch(e){return 'فشل: '+String(e&&e.message||e)}
+    }
+  };
+  setTimeout(function(){try{window.dpbReminders.refresh()}catch(_){}},4000);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(function(){try{window.dpbReminders.refresh()}catch(_){}},800)});
+})();
+</script>
+
+<div id="dpbSupMsgModal" role="dialog" aria-label="الرسائل">
+  <div class="dpbMsgHead"><span>💬 الرسائل</span><button type="button" id="dpbSupMsgClose">✕ إغلاق</button></div>
+  <div id="dpbSupMsgThread" class="dpbMsgThread"></div>
+  <textarea id="dpbSupMsgText" maxlength="500" rows="2" placeholder="اكتب ردك…"></textarea>
+  <div class="dpbMsgBtns"><button type="button" class="go" id="dpbSupMsgSend">إرسال الرد</button></div>
+</div>
+<div id="dpbMsgToast"></div>
+<script>
+/* v136: simple admin<->supervisor messages. Two Firestore docs per supervisor, ONE writer each (no overwrite races):
+   msga_<user> = messages written by the admin   {m:[{id,t,x}]}
+   msgs_<user> = written by the supervisor        {r:[{id,t,x}] replies, seenT: time of the newest admin message he has read}
+   Delivery: while the app is open (checked on open, every 45s, and when the screen comes back). Not a push — needs the app open. */
+(function(){
+  var ACC='DPB_SUPERVISOR_ACCOUNTS_V1', MAXN=60;
+  function $(id){return document.getElementById(id)}
+  function post(p){
+    var work=fetch('https://dpb-firebase.local/kv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}).then(function(r){return r.text()}).then(function(t){return JSON.parse(t)}).catch(function(){return null});
+    var to=new Promise(function(res){setTimeout(function(){res(null)},12000)});
+    return Promise.race([work,to]);
+  }
+  function key(pre,u){return pre+String(u||'').trim().toLowerCase().replace(/[^a-z0-9_\-]/g,'_')}
+  async function rd(k){var r=await post({action:'kvGet',key:k});if(!r||!r.ok)return null;try{return JSON.parse(r.json||'{}')||{}}catch(_){return {}}}
+  async function wr(k,o){var r=await post({action:'kvPatch',key:k,set:o,replace:true});return !!(r&&r.ok)}
+  function rid(){return 'm'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+  function nowIso(){return new Date().toISOString()}
+  function fmt(t){try{return new Date(t).toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'})}catch(_){return t}}
+  function toast(m){var e=$('dpbMsgToast');if(!e)return;e.textContent=m;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(function(){e.style.display='none'},4000)}
+  function lsGet(k){try{return localStorage.getItem(k)}catch(_){return null}}
+  function lsSet(k,v){try{localStorage.setItem(k,v)}catch(_){}}
+  function bubble(box,cls,text,meta){var d=document.createElement('div');d.className='dpbMsgBub '+cls;d.appendChild(document.createTextNode(text));var s=document.createElement('small');s.textContent=meta;d.appendChild(s);box.appendChild(d)}
+
+  /* ---------- data ---------- */
+  var api=window.dpbMsg={
+    adminSend:async function(user,text){
+      var k=key('msga_',user),cur=await rd(k);if(cur===null)return {ok:false};
+      var m=Array.isArray(cur.m)?cur.m:[];m.push({id:rid(),t:nowIso(),x:text});if(m.length>MAXN)m=m.slice(-MAXN);
+      return {ok:await wr(k,{m:m})};
+    },
+    thread:async function(user){
+      var a=await rd(key('msga_',user)),s=await rd(key('msgs_',user));
+      if(a===null&&s===null)return null;a=a||{};s=s||{};
+      var seenT=s.seenT||'',items=[];
+      (a.m||[]).forEach(function(m){items.push({from:'admin',t:m.t,x:m.x,read:!!seenT&&m.t<=seenT})});
+      (s.r||[]).forEach(function(m){items.push({from:'sup',t:m.t,x:m.x})});
+      items.sort(function(p,q){return p.t<q.t?-1:p.t>q.t?1:0});
+      return {items:items,seenT:seenT,a:a,s:s};
+    },
+    supReply:async function(user,text){
+      var k=key('msgs_',user),cur=await rd(k);if(cur===null)return {ok:false};
+      var r=Array.isArray(cur.r)?cur.r:[];r.push({id:rid(),t:nowIso(),x:text});if(r.length>MAXN)r=r.slice(-MAXN);
+      cur.r=r;return {ok:await wr(k,cur)};
+    },
+    supMarkSeen:async function(user,thr){
+      var a=thr.a.m||[];if(!a.length)return;var newest=a[a.length-1].t;if(newest<=(thr.seenT||''))return;
+      var s=Object.assign({},thr.s,{seenT:newest,seenAt:nowIso()});
+      if(await wr(key('msgs_',user),s)){thr.seenT=newest;thr.s=s}
+    }
+  };
+
+  /* ---------- supervisor side ---------- */
+  function supName(){try{var st=window.__dpbSupState;if(st&&st.account&&!st.account.isAdmin&&st.user)return String(st.user)}catch(_){}return ''}
+  function unreadCount(thr){var seen=thr.seenT||'';return (thr.a.m||[]).filter(function(m){return m.t>seen}).length}
+  function setSupBadge(n){var b=$('dpbSupMsgBadge');if(!b)return;b.textContent=String(n);b.style.display=n>0?'inline-block':'none'}
+  var lastUnread=0,polling=false;
+  async function pollSup(){
+    var u=supName();if(!u||polling||document.hidden)return;polling=true;
+    try{var thr=await api.thread(u);if(thr){var n=unreadCount(thr);setSupBadge(n);if(n>lastUnread)toast('💬 وصلتك رسالة جديدة من الأدمن');lastUnread=n}}catch(_){}
+    polling=false;
+  }
+  async function openSupModal(){
+    var u=supName();if(!u)return;
+    var m=$('dpbSupMsgModal');m.classList.add('open');
+    var box=$('dpbSupMsgThread');box.textContent='جاري التحميل…';
+    var thr=await api.thread(u);
+    if(!thr){box.textContent='مفيش اتصال دلوقتي — الرسايل هتظهر لما النت يرجع.';return}
+    renderSupThread(thr);
+    await api.supMarkSeen(u,thr);setSupBadge(0);lastUnread=0;
+  }
+  function renderSupThread(thr){
+    var box=$('dpbSupMsgThread');box.textContent='';
+    if(!thr.items.length){box.textContent='مفيش رسايل لسه.';return}
+    thr.items.forEach(function(i){bubble(box,i.from==='sup'?'me':'them',i.x,(i.from==='sup'?'إنت':'الأدمن')+' · '+fmt(i.t))});
+    box.scrollTop=box.scrollHeight;
+  }
+  document.addEventListener('click',async function(ev){
+    var t=ev.target&&ev.target.closest?ev.target.closest('#dpbSupGoMsgs,#dpbSupMsgClose,#dpbSupMsgSend,#dpbMsgSend,#dpbMsgRefresh'):null;if(!t)return;
+    if(t.id==='dpbSupGoMsgs'){openSupModal();return}
+    if(t.id==='dpbSupMsgClose'){$('dpbSupMsgModal').classList.remove('open');return}
+    if(t.id==='dpbSupMsgSend'){
+      var u=supName(),inp=$('dpbSupMsgText'),x=(inp.value||'').trim();if(!u||!x)return;
+      t.disabled=true;var r=await api.supReply(u,x);t.disabled=false;
+      if(!r.ok){toast('الرد ما اتبعتش — اتأكد من النت وجرّب تاني.');return}
+      inp.value='';var thr=await api.thread(u);if(thr)renderSupThread(thr);return;
+    }
+    if(t.id==='dpbMsgRefresh'){await loadAdminThread();return}
+    if(t.id==='dpbMsgSend'){
+      var user=$('dpbMsgUser').value,ta=$('dpbMsgText'),tx=(ta.value||'').trim();if(!user){toast('اختار مشرف الأول.');return}if(!tx)return;
+      t.disabled=true;var rr=await api.adminSend(user,tx);t.disabled=false;
+      if(!rr.ok){toast('الرسالة ما اتبعتتش — اتأكد من النت وجرّب تاني.');return}
+      ta.value='';await loadAdminThread();
+    }
+  });
+
+  /* ---------- admin side ---------- */
+  function sups(){try{return (JSON.parse(lsGet(ACC)||'[]')||[]).filter(function(a){return a&&a.name&&!a.isAdmin&&a.active!==false})}catch(_){return[]}}
+  function seenKey(u){return 'DPB_MSG_ADMIN_SEEN_'+String(u).toLowerCase()}
+  function fillUsers(){
+    var sel=$('dpbMsgUser');if(!sel)return;var cur=sel.value;sel.textContent='';
+    var o0=document.createElement('option');o0.value='';o0.textContent='اختار مشرف';sel.appendChild(o0);
+    sups().forEach(function(a){var o=document.createElement('option');o.value=a.name;o.textContent=a.name;sel.appendChild(o)});
+    if(cur)sel.value=cur;
+  }
+  async function loadAdminThread(){
+    var user=$('dpbMsgUser').value,box=$('dpbMsgThread');box.textContent='';if(!user){box.textContent='اختار مشرف.';return}
+    box.textContent='جاري التحميل…';var thr=await api.thread(user);
+    if(!thr){box.textContent='مفيش اتصال دلوقتي.';return}
+    box.textContent='';
+    if(!thr.items.length)box.textContent='مفيش رسايل لسه.';
+    thr.items.forEach(function(i){bubble(box,i.from==='admin'?'me':'them',i.x,(i.from==='admin'?'إنت'+(i.read?' ✓✓':' ✓'):user)+' · '+fmt(i.t))});
+    box.scrollTop=box.scrollHeight;
+    var last=thr.items.length?thr.items[thr.items.length-1].t:'';
+    var newestReply=''; thr.items.forEach(function(i){if(i.from==='sup'&&i.t>newestReply)newestReply=i.t});
+    if(newestReply)lsSet(seenKey(user),newestReply);
+    adminBadge();
+  }
+  async function adminBadge(){
+    var n=0;
+    for(var a of sups()){
+      var s=await rd(key('msgs_',a.name));if(!s||!Array.isArray(s.r))continue;
+      var seen=lsGet(seenKey(a.name))||'';n+=s.r.filter(function(m){return m.t>seen}).length;
+    }
+    var b=$('dpbMsgTabBadge');if(b){b.textContent=String(n);b.style.display=n>0?'inline-block':'none'}
+  }
+  document.addEventListener('change',function(ev){if(ev.target&&ev.target.id==='dpbMsgUser')loadAdminThread()});
+  document.addEventListener('click',function(ev){
+    var b=ev.target&&ev.target.closest?ev.target.closest('.dpbAdminTabBtn[data-tab="messages"]'):null;if(b){fillUsers();loadAdminThread()}
+  });
+  setInterval(function(){try{pollSup()}catch(_){}},45000);
+  setTimeout(function(){try{pollSup()}catch(_){}},5000);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(function(){try{pollSup()}catch(_){}},600)});
+  setInterval(function(){var p=document.querySelector('.dpbAdminTabPanel[data-tab="messages"].active');if(p&&$('dpbMsgUser')&&$('dpbMsgUser').value&&!document.hidden)loadAdminThread()},60000);
+})();
+</script>
 
