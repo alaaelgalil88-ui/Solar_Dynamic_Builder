@@ -656,10 +656,10 @@
   }
   window.__dpbCutOps = cutOps;
   var KV_CHUNK = 600000;
-  function kvMine(key) { return /^(mapcat|mapsnap_|xlfile_|msga_|msgs_)/.test(String(key || '')) || String(key || '') === 'master'; }   // msga_/msgs_ = admin<->supervisor messages (one writer per doc)
+  function kvMine(key) { return /^(mapcat|mapsnap_|xlfile_|msga_|msgs_|fcm_)/.test(String(key || '')) || String(key || '') === 'master'; }   // msga_/msgs_ = admin<->supervisor messages (one writer per doc)
   function kvDoc(key) {
     var k = String(key).replace(/[^A-Za-z0-9_\-]/g, '_');
-    if (/^msg[as]_/.test(k)) return 'dpb2/' + nsName() + '/kv/' + k;   // messages follow the supervisor account, not the open project
+    if (/^(msg[as]|fcm)_/.test(k)) return 'dpb2/' + nsName() + '/kv/' + k;   // messages follow the supervisor account, not the open project
     if (k === U_KEY || k === P_KEY || k === 'master') return 'dpb2/' + nsName() + '/kv/' + k;   // the users list and the projects list are shared by every project
     var pp = pidS(); if (!pp) throw new Error('لسه مفيش مشروع مفتوح');
     return 'dpb2/' + nsName() + '/kv/p_' + pp + '__' + k;                      // everything else (map catalog, shapes, Excel files, history...) belongs to the open project

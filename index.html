@@ -10211,15 +10211,23 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 .dpbMsgBub small{display:block;font-size:10px;opacity:.7;margin-top:3px}
 .dpbMsgBub.me{align-self:flex-end;background:#116b52;color:#fff}
 .dpbMsgBub.them{align-self:flex-start;background:#1b3550;color:#dceafa}
-.dpbMsgPanel textarea,#dpbSupMsgModal textarea{width:100%;box-sizing:border-box;background:#07121c;color:#dceafa;border:1px solid #31516d;border-radius:10px;padding:9px;font-size:14px;resize:none}
-#dpbSupMsgModal{position:fixed;inset:0;z-index:2147483000;display:none;flex-direction:column;background:#07121c;color:#dceafa;direction:rtl;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px calc(env(safe-area-inset-bottom,0px) + 12px)}
-#dpbSupMsgModal.open{display:flex}
-#dpbSupMsgModal .dpbMsgHead{display:flex;align-items:center;justify-content:space-between;font-weight:900;font-size:16px;padding:6px 2px 10px}
-#dpbSupMsgModal .dpbMsgThread{flex:1;max-height:none}
-#dpbSupMsgModal .dpbMsgBtns{display:flex;gap:8px;margin-top:8px}
-#dpbSupMsgModal button{padding:11px 14px;border-radius:11px;border:1px solid #31516d;background:#12304a;color:#fff;font-weight:800}
-#dpbSupMsgModal button.go{flex:1;background:#116b52;border-color:#1ca878}
+.dpbMsgFull textarea{width:100%;box-sizing:border-box;background:#07121c;color:#dceafa;border:1px solid #31516d;border-radius:10px;padding:9px;font-size:14px;resize:none}
+.dpbMsgFull{position:fixed;inset:0;z-index:2147483000;display:none;flex-direction:column;background:#07121c;color:#dceafa;direction:rtl;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px calc(env(safe-area-inset-bottom,0px) + 12px)}
+.dpbMsgFull.open{display:flex}
+.dpbMsgFull .dpbMsgHead{display:flex;align-items:center;justify-content:space-between;font-weight:900;font-size:16px;padding:6px 2px 10px}
+.dpbMsgFull .dpbMsgThread{flex:1;max-height:none}
+.dpbMsgFull .dpbMsgBtns{display:flex;gap:8px;margin-top:8px}
+.dpbMsgFull button{padding:11px 14px;border-radius:11px;border:1px solid #31516d;background:#12304a;color:#fff;font-weight:800}
+.dpbMsgFull button.go{flex:1;background:#116b52;border-color:#1ca878}
 #dpbMsgToast{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:2147483001;background:#116b52;color:#fff;padding:9px 16px;border-radius:999px;font-weight:800;font-size:13px;display:none}
+
+.dpbMsgDot{position:absolute;top:-5px;right:-5px;margin:0;min-width:17px;padding:0 5px;line-height:17px;font-size:10px;border:2px solid #07121c;box-sizing:content-box}
+.dpbMsgIconBtn{position:absolute;top:12px;right:12px;z-index:2;width:46px;height:46px;border-radius:15px;border:1px solid #31516d;background:rgba(14,36,58,.92);color:#fff;font-size:21px;line-height:1;display:flex;align-items:center;justify-content:center}
+#dpbSupHomeScreen .dpbSupHero{position:relative}
+#dpbSupHomeScreen .dpbSupHero h2{min-height:50px;display:flex;align-items:center;margin-top:0}
+.dpbMsgFull .dpbMsgRow{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.dpbMsgFull .dpbMsgRow select{flex:1;background:#0d2233;color:#dceafa;border:1px solid #31516d;border-radius:11px;padding:11px;font-size:14px;font-weight:700}
+.dpbMsgFull .dpbMsgBub{font-size:15px}
 .dpbRemSection{display:grid;gap:8px}
 .dpbRemCard{display:grid;gap:8px;padding:10px;border:1px solid #31516d;border-radius:12px;background:#0d2233}
 .dpbRemTop{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -10405,7 +10413,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   <div class="dpbAdminWrap">
     <div class="dpbAdminTop">
       <div><h2>Admin Control Center</h2><div class="small">حسابات المشرفين · الصلاحيات · النسخ الاحتياطي</div></div>
-      <div class="dpbAdminActions dpbAdminTopActions"><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminSyncBtn" type="button" title="مزامنة: رفع الحدود والألوان الحقيقية من إكسل الجهاز ده لكل الأجهزة التانية" aria-label="مزامنة">☁️</button><button class="dpbAdminGearBtn dpbAdminGlassBtn" id="dpbAdminChangePinTop" type="button" title="تغيير الرقم السري للأدمن" aria-label="تغيير الرقم السري للأدمن">⚙️</button><button class="dpbAdminIconBtn dpbAdminBackupIcon dpbAdminGlassBtn" id="dpbBackupNow" type="button" title="النسخ الاحتياطي" aria-label="النسخ الاحتياطي">💾</button><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminHardReset" type="button" title="تصفير كامل للبيانات المحلية" aria-label="تصفير كامل للبيانات المحلية">🧹</button><button class="dpbAdminIconBtn dpbAdminBuilderIcon dpbAdminGlassBtn" id="dpbAdminOpenBuilder" type="button" title="فتح Plan Builder" aria-label="فتح Plan Builder">🛠️</button><button class="dpbAdminBtn dpbAdminGlassBtn" id="dpbAdminBack">رجوع</button><button class="dpbAdminBtn danger dpbAdminCloseX dpbAdminGlassBtn dpbAdminGlassClose" id="dpbAdminClose" type="button" title="إغلاق" aria-label="إغلاق">×</button></div>
+      <div class="dpbAdminActions dpbAdminTopActions"><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminSyncBtn" type="button" title="مزامنة: رفع الحدود والألوان الحقيقية من إكسل الجهاز ده لكل الأجهزة التانية" aria-label="مزامنة">☁️</button><button class="dpbAdminGearBtn dpbAdminGlassBtn" id="dpbAdminChangePinTop" type="button" title="تغيير الرقم السري للأدمن" aria-label="تغيير الرقم السري للأدمن">⚙️</button><button class="dpbAdminIconBtn dpbAdminBackupIcon dpbAdminGlassBtn" id="dpbBackupNow" type="button" title="النسخ الاحتياطي" aria-label="النسخ الاحتياطي">💾</button><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminHardReset" type="button" title="تصفير كامل للبيانات المحلية" aria-label="تصفير كامل للبيانات المحلية">🧹</button><button class="dpbAdminIconBtn dpbAdminBuilderIcon dpbAdminGlassBtn" id="dpbAdminOpenBuilder" type="button" title="فتح Plan Builder" aria-label="فتح Plan Builder">🛠️</button><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminMsgBtn" type="button" title="الرسائل" aria-label="الرسائل" style="position:relative">💬<span id="dpbMsgTabBadge" class="dpbMsgBadge dpbMsgDot" style="display:none">0</span></button><button class="dpbAdminBtn dpbAdminGlassBtn" id="dpbAdminBack">رجوع</button><button class="dpbAdminBtn danger dpbAdminCloseX dpbAdminGlassBtn dpbAdminGlassClose" id="dpbAdminClose" type="button" title="إغلاق" aria-label="إغلاق">×</button></div>
     </div>
     <div id="dpbConnectionStatus" class="dpbAdminConnPill" style="margin:10px 12px 0;padding:9px 12px;border-radius:10px;background:rgba(255,255,255,.04);font-size:12px;font-weight:800;text-align:center">⏳ بيتفحص الاتصال...</div>
     <!-- Admin Control Center reorganized into tabs: the page had grown into
@@ -10420,7 +10428,6 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       <button type="button" class="dpbAdminTabBtn" data-tab="companies">🏢 الشركات والمشغلين</button>
       <button type="button" class="dpbAdminTabBtn" data-tab="production-edits">🛠️ حالات الإنتاج</button>
       <button type="button" class="dpbAdminTabBtn" data-tab="sync">☁️ المزامنة والتشخيص</button>
-      <button type="button" class="dpbAdminTabBtn" data-tab="messages">💬 الرسائل <span id="dpbMsgTabBadge" class="dpbMsgBadge" style="display:none">0</span></button>
     </div>
 
     <div class="dpbAdminTabPanel active" data-tab="supervisors">
@@ -10476,17 +10483,6 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         </div>
         <div id="dpbAdminProductionEditsPageList" class="dpbAdminSubList"></div>
         <button type="button" class="dpbAdminBtn" id="dpbAdminProdEditsLoadMore" style="display:none;margin-top:10px;width:100%">عرض المزيد</button>
-      </section>
-    </div>
-
-    <div class="dpbAdminTabPanel" data-tab="messages">
-      <section class="dpbAdminCard dpbMsgPanel">
-        <h3>💬 رسائل المشرفين</h3>
-        <div class="dpbMsgRow"><select id="dpbMsgUser"></select><button type="button" class="dpbAdminBtn" id="dpbMsgRefresh">↻ تحديث</button></div>
-        <div id="dpbMsgThread" class="dpbMsgThread"></div>
-        <textarea id="dpbMsgText" maxlength="500" rows="2" placeholder="اكتب رسالة للمشرف…"></textarea>
-        <button type="button" class="dpbAdminBtn primary" id="dpbMsgSend">إرسال</button>
-        <div class="hint">الرسالة بتوصل للمشرف أول ما يفتح التطبيق وفيه نت. علامة ✓✓ يعني اتقرت.</div>
       </section>
     </div>
 
@@ -15783,6 +15779,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
 
       <section class="dpbSupScreen" id="dpbSupHomeScreen">
         <div class="dpbSupHero">
+          <button type="button" id="dpbSupGoMsgs" class="dpbMsgIconBtn" title="الرسائل" aria-label="الرسائل">💬<span id="dpbSupMsgBadge" class="dpbMsgBadge dpbMsgDot" style="display:none">0</span></button>
           <h2 id="dpbSupWelcome">Production</h2>
           <p>اختار العملية، ابحث عن الـTracker، ثم اختر الخلايا باللمس. الـROW والوحدات تُقرأ من الـBuild الموجود في برنامجك.</p>
         </div>
@@ -15797,7 +15794,6 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           <button class="dpbSupNavCard" id="dpbSupGoMyEdits">
             <strong>✎ Records</strong><span>Your own entries · undo any operation</span>
           </button>
-          <button class="dpbSupNavCard" id="dpbSupGoMsgs"><strong>💬 الرسائل <span id="dpbSupMsgBadge" class="dpbMsgBadge" style="display:none">0</span></strong><span>رسائل من الأدمن + رد سريع</span></button>
           <button class="dpbSupNavCard dpbSupMapNavCard" id="dpbSupGoMaps"><strong>🗺️ Project Maps</strong><span>عرض وتحديد وتطبيق وحذف وتحديث الخلايا من نفس الخريطة</span></button>
         </div>
       </section>
@@ -21487,7 +21483,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   }
   function accountsList(){try{return JSON.parse(lsGet(ACC_KEY)||'[]')||[]}catch(_){return[]}}
   window.dpbReminders={
-    onLogin:function(acc){if(!acc||!acc.name||acc.isAdmin)return Promise.resolve(null);lsSet(LAST,acc.name);return apply(acc.name,acc.reminders)},
+    onLogin:function(acc){if(!acc||!acc.name||acc.isAdmin)return Promise.resolve(null);lsSet(LAST,acc.name);try{if(window.dpbPush)window.dpbPush.register(acc.name)}catch(_){}return apply(acc.name,acc.reminders)},
     refresh:function(){
       var u=lsGet(LAST);if(!u)return Promise.resolve(null);
       var list=accountsList();if(!list.length)return Promise.resolve(null);
@@ -21511,20 +21507,79 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 })();
 </script>
 
-<div id="dpbSupMsgModal" role="dialog" aria-label="الرسائل">
+<script>
+/* v139: real push (Firebase FCM). The phone registers its FCM token under kv key fcm_<supervisor> ({tok,t}); the Cloudflare Worker reads that token and
+   sends the supervisor's reminders (and later chat messages) even when the app is fully closed. Needs @capacitor/push-notifications + google-services.json in the APK. */
+(function(){
+  var TOK='DPB_FCM_TOKEN_SENT_V1', started=false;
+  function PP(){try{return window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.PushNotifications||null}catch(_){return null}}
+  function LN(){try{return window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.LocalNotifications||null}catch(_){return null}}
+  function lsGet(k){try{return localStorage.getItem(k)}catch(_){return null}}
+  function lsSet(k,v){try{localStorage.setItem(k,v)}catch(_){}}
+  function key(u){return 'fcm_'+String(u||'').trim().toLowerCase().replace(/[^a-z0-9_\-]/g,'_')}
+  function post(p){
+    var work=fetch('https://dpb-firebase.local/kv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}).then(function(r){return r.text()}).then(function(t){return JSON.parse(t)}).catch(function(){return null});
+    var to=new Promise(function(res){setTimeout(function(){res(null)},12000)});
+    return Promise.race([work,to]);
+  }
+  async function save(user,tok){
+    var sig=String(user).toLowerCase()+'|'+tok;
+    if(lsGet(TOK)===sig)return true;
+    var r=await post({action:'kvPatch',key:key(user),set:{tok:tok,t:new Date().toISOString()},replace:true});
+    if(r&&r.ok){lsSet(TOK,sig);return true}
+    return false;
+  }
+  var cur='';
+  window.dpbPush={
+    register:async function(user){
+      var p=PP();if(!p||!user)return {ok:false,why:'noplugin'};
+      cur=String(user);
+      try{
+        try{await p.createChannel({id:'dpb-reminders',name:'تنبيهات المشرف',description:'تذكير بمواعيد إدخال البيانات',importance:5,visibility:1,vibration:true})}catch(_){}
+        try{await p.createChannel({id:'dpb-messages',name:'الرسائل',description:'رسائل الأدمن والمشرفين',importance:4,visibility:1,vibration:true})}catch(_){}
+        if(!started){
+          started=true;
+          p.addListener('registration',function(t){if(t&&t.value&&cur)save(cur,t.value)});
+          p.addListener('registrationError',function(e){try{console.warn('push reg error',e)}catch(_){}});
+          p.addListener('pushNotificationReceived',async function(n){
+            /* app is open: Android does not show the system notification, so show it ourselves */
+            try{var l=LN();if(l&&n)await l.schedule({notifications:[{id:73000000+(Date.now()%900000),title:n.title||'DPB',body:n.body||'',channelId:(n.data&&n.data.ch)||'dpb-reminders',schedule:{at:new Date(Date.now()+300)}}]})}catch(_){}
+          });
+        }
+        var perm=await p.checkPermissions();
+        if(!perm||perm.receive!=='granted')perm=await p.requestPermissions();
+        if(!perm||perm.receive!=='granted')return {ok:false,why:'denied'};
+        await p.register();
+        return {ok:true};
+      }catch(e){return {ok:false,why:String(e&&e.message||e)}}
+    }
+  };
+  setTimeout(function(){try{var u=lsGet('DPB_REM_LAST_SUP_V1');if(u&&window.dpbPush)window.dpbPush.register(u)}catch(_){}},6000);
+})();
+</script>
+
+<div id="dpbSupMsgModal" class="dpbMsgFull" role="dialog" aria-label="الرسائل">
   <div class="dpbMsgHead"><span>💬 الرسائل</span><button type="button" id="dpbSupMsgClose">✕ إغلاق</button></div>
   <div id="dpbSupMsgThread" class="dpbMsgThread"></div>
   <textarea id="dpbSupMsgText" maxlength="500" rows="2" placeholder="اكتب ردك…"></textarea>
   <div class="dpbMsgBtns"><button type="button" class="go" id="dpbSupMsgSend">إرسال الرد</button></div>
 </div>
+<div id="dpbAdminMsgModal" class="dpbMsgFull" role="dialog" aria-label="رسائل المشرفين">
+  <div class="dpbMsgHead"><span>💬 رسائل المشرفين</span><button type="button" id="dpbAdminMsgClose">✕ إغلاق</button></div>
+  <div class="dpbMsgRow"><select id="dpbMsgUser"></select><button type="button" id="dpbMsgRefresh">↻ تحديث</button></div>
+  <div id="dpbMsgThread" class="dpbMsgThread"></div>
+  <textarea id="dpbMsgText" maxlength="500" rows="2" placeholder="اكتب رسالة للمشرف…"></textarea>
+  <div class="dpbMsgBtns"><button type="button" class="go" id="dpbMsgSend">إرسال</button></div>
+</div>
 <div id="dpbMsgToast"></div>
 <script>
-/* v136: simple admin<->supervisor messages. Two Firestore docs per supervisor, ONE writer each (no overwrite races):
-   msga_<user> = messages written by the admin   {m:[{id,t,x}]}
-   msgs_<user> = written by the supervisor        {r:[{id,t,x}] replies, seenT: time of the newest admin message he has read}
-   Delivery: while the app is open (checked on open, every 45s, and when the screen comes back). Not a push — needs the app open. */
+/* v137: admin<->supervisor messages. Two Firestore docs per supervisor, ONE writer each (no overwrite races):
+   msga_<user> = written by the admin  {m:[{id,t,x}]}
+   msgs_<user> = written by the supervisor {r:[{id,t,x}] replies, seenT: time of the newest admin message he has read}
+   Arrival is checked while the app runs (on open, every 45s, when the screen comes back). A phone notification is raised when the app is in the background
+   and a new message is found (needs the LocalNotifications plugin in the APK). It is NOT a server push: a fully closed app learns about the message at its next start. */
 (function(){
-  var ACC='DPB_SUPERVISOR_ACCOUNTS_V1', MAXN=60;
+  var ACC='DPB_SUPERVISOR_ACCOUNTS_V1', LASTSUP='DPB_REM_LAST_SUP_V1', MAXN=60, CH='dpb-messages';
   function $(id){return document.getElementById(id)}
   function post(p){
     var work=fetch('https://dpb-firebase.local/kv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}).then(function(r){return r.text()}).then(function(t){return JSON.parse(t)}).catch(function(){return null});
@@ -21541,8 +21596,20 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   function lsGet(k){try{return localStorage.getItem(k)}catch(_){return null}}
   function lsSet(k,v){try{localStorage.setItem(k,v)}catch(_){}}
   function bubble(box,cls,text,meta){var d=document.createElement('div');d.className='dpbMsgBub '+cls;d.appendChild(document.createTextNode(text));var s=document.createElement('small');s.textContent=meta;d.appendChild(s);box.appendChild(d)}
+  function LN(){try{return window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.LocalNotifications||null}catch(_){return null}}
+  /* phone notification (only when the app is in the background; when it is open the small toast is enough) */
+  async function notify(title,body){
+    if(!document.hidden)return false;
+    var p=LN();if(!p)return false;
+    try{
+      try{await p.createChannel({id:CH,name:'الرسائل',description:'رسائل الأدمن والمشرفين',importance:4,visibility:1,vibration:true})}catch(_){}
+      var perm=await p.checkPermissions();if(!perm||perm.display!=='granted')perm=await p.requestPermissions();
+      if(!perm||perm.display!=='granted')return false;
+      await p.schedule({notifications:[{id:72000000+(Date.now()%900000),title:title,body:String(body||'').slice(0,120),channelId:CH,schedule:{at:new Date(Date.now()+700),allowWhileIdle:true}}]});
+      return true;
+    }catch(_){return false}
+  }
 
-  /* ---------- data ---------- */
   var api=window.dpbMsg={
     adminSend:async function(user,text){
       var k=key('msga_',user),cur=await rd(k);if(cur===null)return {ok:false};
@@ -21567,17 +21634,34 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
       var a=thr.a.m||[];if(!a.length)return;var newest=a[a.length-1].t;if(newest<=(thr.seenT||''))return;
       var s=Object.assign({},thr.s,{seenT:newest,seenAt:nowIso()});
       if(await wr(key('msgs_',user),s)){thr.seenT=newest;thr.s=s}
-    }
+    },
+    notify:notify,
+    pollNow:function(){return pollSup()},
+    adminPollNow:function(){return adminBadge()}
   };
 
   /* ---------- supervisor side ---------- */
   function supName(){try{var st=window.__dpbSupState;if(st&&st.account&&!st.account.isAdmin&&st.user)return String(st.user)}catch(_){}return ''}
-  function unreadCount(thr){var seen=thr.seenT||'';return (thr.a.m||[]).filter(function(m){return m.t>seen}).length}
+  function pollName(){return supName()||lsGet(LASTSUP)||''}
+  function unreadList(thr){var seen=thr.seenT||'';return (thr.a.m||[]).filter(function(m){return m.t>seen})}
   function setSupBadge(n){var b=$('dpbSupMsgBadge');if(!b)return;b.textContent=String(n);b.style.display=n>0?'inline-block':'none'}
   var lastUnread=0,polling=false;
   async function pollSup(){
-    var u=supName();if(!u||polling||document.hidden)return;polling=true;
-    try{var thr=await api.thread(u);if(thr){var n=unreadCount(thr);setSupBadge(n);if(n>lastUnread)toast('💬 وصلتك رسالة جديدة من الأدمن');lastUnread=n}}catch(_){}
+    var u=pollName();if(!u||polling)return;polling=true;
+    try{
+      var thr=await api.thread(u);
+      if(thr){
+        var list=unreadList(thr),n=list.length;setSupBadge(n);
+        if(n>0){
+          var newest=list[list.length-1],nk='DPB_MSG_NOTIFIED_'+u.toLowerCase();
+          if(newest.t>(lsGet(nk)||'')){
+            if(document.hidden){if(await notify('رسالة جديدة من الأدمن',newest.x))lsSet(nk,newest.t)}
+            else{toast('💬 وصلتك رسالة جديدة من الأدمن');lsSet(nk,newest.t)}
+          }
+        }
+        lastUnread=n;
+      }
+    }catch(_){}
     polling=false;
   }
   async function openSupModal(){
@@ -21595,10 +21679,51 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
     thr.items.forEach(function(i){bubble(box,i.from==='sup'?'me':'them',i.x,(i.from==='sup'?'إنت':'الأدمن')+' · '+fmt(i.t))});
     box.scrollTop=box.scrollHeight;
   }
+
+  /* ---------- admin side ---------- */
+  function sups(){try{return (JSON.parse(lsGet(ACC)||'[]')||[]).filter(function(a){return a&&a.name&&!a.isAdmin&&a.active!==false})}catch(_){return[]}}
+  function seenKey(u){return 'DPB_MSG_ADMIN_SEEN_'+String(u).toLowerCase()}
+  function fillUsers(){
+    var sel=$('dpbMsgUser');if(!sel)return;var cur=sel.value;sel.textContent='';
+    var o0=document.createElement('option');o0.value='';o0.textContent='اختار مشرف';sel.appendChild(o0);
+    sups().forEach(function(a){var o=document.createElement('option');o.value=a.name;o.textContent=a.name;sel.appendChild(o)});
+    if(cur)sel.value=cur;else if(sel.options.length===2)sel.selectedIndex=1;
+  }
+  async function loadAdminThread(){
+    var user=$('dpbMsgUser').value,box=$('dpbMsgThread');box.textContent='';if(!user){box.textContent='اختار مشرف.';return}
+    box.textContent='جاري التحميل…';var thr=await api.thread(user);
+    if(!thr){box.textContent='مفيش اتصال دلوقتي.';return}
+    box.textContent='';
+    if(!thr.items.length)box.textContent='مفيش رسايل لسه.';
+    thr.items.forEach(function(i){bubble(box,i.from==='admin'?'me':'them',i.x,(i.from==='admin'?'إنت'+(i.read?' ✓✓':' ✓'):user)+' · '+fmt(i.t))});
+    box.scrollTop=box.scrollHeight;
+    var newestReply='';thr.items.forEach(function(i){if(i.from==='sup'&&i.t>newestReply)newestReply=i.t});
+    if(newestReply){lsSet(seenKey(user),newestReply);lsSet('DPB_MSG_ADMIN_NOTIFIED_'+String(user).toLowerCase(),newestReply)}
+    adminBadge();
+  }
+  async function adminBadge(){
+    var n=0;
+    for(var a of sups()){
+      var s=await rd(key('msgs_',a.name));if(!s||!Array.isArray(s.r))continue;
+      var seen=lsGet(seenKey(a.name))||'',fresh=s.r.filter(function(m){return m.t>seen});n+=fresh.length;
+      if(fresh.length){
+        var last=fresh[fresh.length-1],nk='DPB_MSG_ADMIN_NOTIFIED_'+String(a.name).toLowerCase();
+        if(last.t>(lsGet(nk)||'')){
+          if(document.hidden){if(await notify('رد من '+a.name,last.x))lsSet(nk,last.t)}
+          else{toast('💬 رد جديد من '+a.name);lsSet(nk,last.t)}
+        }
+      }
+    }
+    var b=$('dpbMsgTabBadge');if(b){b.textContent=String(n);b.style.display=n>0?'inline-block':'none'}
+  }
+  function adminOpen(){var o=$('dpbAdminOverlay');return !!o&&getComputedStyle(o).display!=='none'}
+
   document.addEventListener('click',async function(ev){
-    var t=ev.target&&ev.target.closest?ev.target.closest('#dpbSupGoMsgs,#dpbSupMsgClose,#dpbSupMsgSend,#dpbMsgSend,#dpbMsgRefresh'):null;if(!t)return;
+    var t=ev.target&&ev.target.closest?ev.target.closest('#dpbSupGoMsgs,#dpbSupMsgClose,#dpbSupMsgSend,#dpbMsgSend,#dpbMsgRefresh,#dpbAdminMsgBtn,#dpbAdminMsgClose'):null;if(!t)return;
     if(t.id==='dpbSupGoMsgs'){openSupModal();return}
     if(t.id==='dpbSupMsgClose'){$('dpbSupMsgModal').classList.remove('open');return}
+    if(t.id==='dpbAdminMsgBtn'){$('dpbAdminMsgModal').classList.add('open');fillUsers();loadAdminThread();return}
+    if(t.id==='dpbAdminMsgClose'){$('dpbAdminMsgModal').classList.remove('open');return}
     if(t.id==='dpbSupMsgSend'){
       var u=supName(),inp=$('dpbSupMsgText'),x=(inp.value||'').trim();if(!u||!x)return;
       t.disabled=true;var r=await api.supReply(u,x);t.disabled=false;
@@ -21613,45 +21738,104 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
       ta.value='';await loadAdminThread();
     }
   });
-
-  /* ---------- admin side ---------- */
-  function sups(){try{return (JSON.parse(lsGet(ACC)||'[]')||[]).filter(function(a){return a&&a.name&&!a.isAdmin&&a.active!==false})}catch(_){return[]}}
-  function seenKey(u){return 'DPB_MSG_ADMIN_SEEN_'+String(u).toLowerCase()}
-  function fillUsers(){
-    var sel=$('dpbMsgUser');if(!sel)return;var cur=sel.value;sel.textContent='';
-    var o0=document.createElement('option');o0.value='';o0.textContent='اختار مشرف';sel.appendChild(o0);
-    sups().forEach(function(a){var o=document.createElement('option');o.value=a.name;o.textContent=a.name;sel.appendChild(o)});
-    if(cur)sel.value=cur;
-  }
-  async function loadAdminThread(){
-    var user=$('dpbMsgUser').value,box=$('dpbMsgThread');box.textContent='';if(!user){box.textContent='اختار مشرف.';return}
-    box.textContent='جاري التحميل…';var thr=await api.thread(user);
-    if(!thr){box.textContent='مفيش اتصال دلوقتي.';return}
-    box.textContent='';
-    if(!thr.items.length)box.textContent='مفيش رسايل لسه.';
-    thr.items.forEach(function(i){bubble(box,i.from==='admin'?'me':'them',i.x,(i.from==='admin'?'إنت'+(i.read?' ✓✓':' ✓'):user)+' · '+fmt(i.t))});
-    box.scrollTop=box.scrollHeight;
-    var last=thr.items.length?thr.items[thr.items.length-1].t:'';
-    var newestReply=''; thr.items.forEach(function(i){if(i.from==='sup'&&i.t>newestReply)newestReply=i.t});
-    if(newestReply)lsSet(seenKey(user),newestReply);
-    adminBadge();
-  }
-  async function adminBadge(){
-    var n=0;
-    for(var a of sups()){
-      var s=await rd(key('msgs_',a.name));if(!s||!Array.isArray(s.r))continue;
-      var seen=lsGet(seenKey(a.name))||'';n+=s.r.filter(function(m){return m.t>seen}).length;
-    }
-    var b=$('dpbMsgTabBadge');if(b){b.textContent=String(n);b.style.display=n>0?'inline-block':'none'}
-  }
   document.addEventListener('change',function(ev){if(ev.target&&ev.target.id==='dpbMsgUser')loadAdminThread()});
-  document.addEventListener('click',function(ev){
-    var b=ev.target&&ev.target.closest?ev.target.closest('.dpbAdminTabBtn[data-tab="messages"]'):null;if(b){fillUsers();loadAdminThread()}
-  });
   setInterval(function(){try{pollSup()}catch(_){}},45000);
   setTimeout(function(){try{pollSup()}catch(_){}},5000);
-  document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(function(){try{pollSup()}catch(_){}},600)});
-  setInterval(function(){var p=document.querySelector('.dpbAdminTabPanel[data-tab="messages"].active');if(p&&$('dpbMsgUser')&&$('dpbMsgUser').value&&!document.hidden)loadAdminThread()},60000);
+  setInterval(function(){try{if(adminOpen())adminBadge()}catch(_){}},60000);
+  setTimeout(function(){try{if(adminOpen())adminBadge()}catch(_){}},6000);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(function(){try{pollSup();if(adminOpen())adminBadge()}catch(_){}},600)});
+  try{var ov=$('dpbAdminOverlay');if(ov){var pend=0;new MutationObserver(function(){if(adminOpen()&&!pend){pend=1;setTimeout(function(){pend=0;try{adminBadge()}catch(_){}},800)}}).observe(ov,{attributes:true,attributeFilter:['style','class']})}}catch(_){}
+})();
+</script>
+<style>
+/* v138 – professional input behaviour + sticky connection/publish bar */
+#dpbAdminStickyBar{position:sticky;top:var(--dpbAdminTopH,0px);z-index:95;display:flex;gap:8px;align-items:stretch;padding:6px 12px;background:rgba(7,17,29,.97);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+#dpbAdminStickyBar #dpbConnectionStatus{display:flex!important;align-items:center;justify-content:center;flex:0 1 40%;margin:0!important;padding:8px 10px!important;font-size:12px!important;line-height:1.4}
+#dpbAdminStickyBar #dpbPublishBuildBtn{flex:1 1 55%;margin:0!important;width:auto!important;padding:10px 8px!important;font-size:14px!important}
+input:focus,select:focus,textarea:focus,.dpbKeepFocus{outline:2px solid #2dd4a3!important;outline-offset:2px;box-shadow:0 0 0 5px rgba(45,212,163,.2)!important}
+</style>
+<script>
+(function(){
+  /* ---------- 1) keep the connection status + publish button pinned under the admin header ---------- */
+  function wrapSticky(){
+    try{
+      var st=document.getElementById('dpbConnectionStatus'),bt=document.getElementById('dpbPublishBuildBtn');
+      if(!st||!bt||!st.parentNode)return;
+      var bar=document.getElementById('dpbAdminStickyBar');
+      if(bar&&st.parentNode===bar&&bt.parentNode===bar)return;
+      if(!bar){bar=document.createElement('div');bar.id='dpbAdminStickyBar';st.parentNode.insertBefore(bar,st)}
+      bar.appendChild(st);bar.appendChild(bt);
+      if(typeof window.dpbSyncAdminTopOffset==='function')window.dpbSyncAdminTopOffset();
+    }catch(_){}
+  }
+  var wt=0;function sched(){if(wt)return;wt=setTimeout(function(){wt=0;wrapSticky()},200)}
+  try{var ov=document.getElementById('dpbAdminOverlay');if(ov)new MutationObserver(sched).observe(ov,{childList:true,subtree:true})}catch(_){}
+  setInterval(wrapSticky,2500);setTimeout(wrapSticky,800);
+
+  /* ---------- 2) Enter = next field, last field = close keyboard (focus ring stays), keyboard shows Next/Done ---------- */
+  var FIELD='input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=reset]):not([type=file]):not([type=range]):not([type=color]):not([type=image]),select,textarea';
+  var PAGE='.dpbMsgFull,[role=dialog],dialog,.dpbAdminTabPanel,.dpbSupScreen,#dpbAdminOverlay,.modal';
+  function visible(el){
+    try{if(el.disabled||el.readOnly||el.tabIndex<0)return false;var cs=getComputedStyle(el);
+      if(cs.visibility==='hidden'||cs.display==='none')return false;var r=el.getBoundingClientRect();return r.width>0&&r.height>0}catch(_){return false}
+  }
+  function pageOf(el){return (el.closest&&el.closest(PAGE))||document.body}
+  function nextField(el){
+    var f=Array.prototype.filter.call(pageOf(el).querySelectorAll(FIELD),visible),i=f.indexOf(el);
+    return i>=0&&i<f.length-1?f[i+1]:null;
+  }
+  function skipEl(el){
+    if(!el||el.tagName==='TEXTAREA'||el.tagName==='SELECT')return true;
+    if(el.type==='search'||(el.closest&&el.closest('[data-enter-skip]')))return true;
+    if(/search|jump/i.test(el.id||''))return true;
+    return false;
+  }
+  var kept=null;
+  function clearKept(){if(kept){kept.classList.remove('dpbKeepFocus');kept=null}}
+  function keyboardOpen(){
+    try{var h=(window.visualViewport&&window.visualViewport.height)||window.innerHeight;return h<(keyboardOpen.max||window.innerHeight)-120}catch(_){return false}
+  }
+  window.addEventListener('resize',function(){keyboardOpen.max=Math.max(keyboardOpen.max||0,window.innerHeight)});
+  keyboardOpen.max=window.innerHeight;
+  function reveal(el){
+    setTimeout(function(){try{
+      var vh=(window.visualViewport&&window.visualViewport.height)||window.innerHeight,r=el.getBoundingClientRect();
+      if(r.bottom>vh-24||r.top<80)el.scrollIntoView({block:'center',behavior:'smooth'});
+    }catch(_){}},320);
+  }
+  document.addEventListener('keydown',function(ev){
+    if(ev.key!=='Enter'||ev.defaultPrevented||ev.isComposing||ev.shiftKey||ev.ctrlKey||ev.altKey||ev.metaKey)return;
+    var el=ev.target;if(skipEl(el)||!el.matches||!el.matches(FIELD))return;
+    ev.preventDefault();
+    var nx=nextField(el);
+    if(nx){
+      clearKept();nx.focus();
+      if(nx.tagName==='SELECT'){nx.__dpbViaEnter=true;try{if(nx.showPicker)nx.showPicker()}catch(_){}}   // a dropdown reached with Enter opens by itself; picking a value moves on
+      try{if(nx.setSelectionRange&&/^(text|tel|number|email|url|password|search)$/.test(nx.type||'text')){var n=(nx.value||'').length;nx.setSelectionRange(n,n)}}catch(_){}
+      reveal(nx);
+    }else{
+      el.blur();clearKept();kept=el;el.classList.add('dpbKeepFocus');
+    }
+  },false);
+  document.addEventListener('change',function(ev){
+    var el=ev.target;if(!el||el.tagName!=='SELECT'||!el.__dpbViaEnter)return;
+    el.__dpbViaEnter=false;var nx=nextField(el);if(nx){setTimeout(function(){try{nx.focus();reveal(nx)}catch(_){}},60)}
+  },true);
+  document.addEventListener('focusin',function(ev){
+    var el=ev.target;if(!el||!el.matches||!el.matches(FIELD))return;
+    if(kept&&kept!==el)clearKept();
+    if(el.tagName!=='TEXTAREA'&&el.tagName!=='SELECT'&&!el.hasAttribute('data-enterhint-fixed')){
+      el.setAttribute('enterkeyhint',nextField(el)?'next':'done');
+    }
+    reveal(el);
+  });
+  /* a field that is still focused but whose keyboard was hidden (Android back button): a tap brings the keyboard back */
+  document.addEventListener('pointerdown',function(ev){
+    var el=ev.target;
+    if(kept&&el!==kept)clearKept();
+    if(!el||!el.matches||!el.matches(FIELD)||el.tagName==='SELECT')return;
+    if(document.activeElement===el&&!keyboardOpen()){el.blur();setTimeout(function(){try{el.focus()}catch(_){}},30)}
+  },true);
 })();
 </script>
 
