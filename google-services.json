@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "578093863",
+    "project_id": "solar-productivity",
+    "storage_bucket": "solar-productivity.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:578093863:android:65bcd51fa5470bef0d1f02",
+        "android_client_info": {
+          "package_name": "com.dpb.map.v2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCq98lf6gLb6HQj46LkJ3wL0n53O79fsXs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
