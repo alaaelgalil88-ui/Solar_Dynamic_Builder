@@ -33,10 +33,15 @@ jobs:
           test -s www/vendor/firebase-bundle.js
 
       - name: Install Capacitor
-        run: npm i @capacitor/core @capacitor/cli @capacitor/android @capacitor/filesystem @capacitor/share @capacitor/local-notifications
+        run: npm i @capacitor/core @capacitor/cli @capacitor/android @capacitor/filesystem @capacitor/share @capacitor/local-notifications @capacitor/push-notifications
 
       - name: Create Android project
         run: npx cap add android
+
+      - name: Add Firebase config (push)
+        run: |
+          test -s google-services.json
+          cp google-services.json android/app/google-services.json
 
       - name: Add notification permissions to AndroidManifest
         run: |
