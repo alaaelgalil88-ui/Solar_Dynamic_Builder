@@ -456,7 +456,7 @@
   function permHint(e) { var m = String(e && e.message || e || ''); return /permission|insufficient/i.test(m) ? m + ' — قواعد Firebase لازم تسمح بالمسار dpb2/**' : m; }
   // a full records pull (every cell of every process) is expensive on a phone: while changes keep arriving (an Excel upload = dozens of snapshots)
   // run at most ONE pull per 15 s, always with the latest state (the trailing pull still happens)
-  var lastPullAt = 0, PULL_GAP = 15000, lastPullSig = '';
+  var lastPullAt = 0, PULL_GAP = 3000, lastPullSig = '';   // v149: was 15000 (a change could wait up to 15 s); now 3 s, first change after a quiet period goes out in ~0.4 s
   function schedPull(ms) {
     clearTimeout(pullT);
     var wait = Math.max(ms, lastPullAt + PULL_GAP - Date.now());
@@ -594,7 +594,7 @@
         if (store !== s) return;
         lastErr = permHint(e); dlog('listener-dead', (e && e.code ? e.code + ' ' : '') + lastErr); dropStore(); failedAt = 0; paintState(); warnNow(); rebuildLater();
       } });
-      s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); schedPull(1500); });
+      s.onChange(function () { version++; clearTimeout(notifyT); notifyT = setTimeout(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} paintState(); }, 300); schedPull(400); });
       return s.ready.then(function () { if (forPid !== pidS()) { s.destroy(); creating = null; return startCreate(); } store = s; storePid = forPid; failedAt = 0; lastErr = ''; retryN = 0; dlog('store-up', forPid); s.ensureEpoch(); paintState(); syncClock(a); try { loadBase(s); } catch (e) {} return s; });
     }).catch(function (e) { creating = null; failedAt = Date.now(); lastErr = permHint(e); dlog('store-failed', (e && e.code ? e.code + ' ' : '') + lastErr); paintState(); scheduleRetry(e); throw e; });
     return creating;

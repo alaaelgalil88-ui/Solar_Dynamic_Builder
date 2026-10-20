@@ -7330,7 +7330,7 @@ async function onPlanFile(e){
   const up=document.getElementById('planUploadSetupBtn'); if(up) up.disabled=true;
   try{
     project.wb=await XLSX.read(await f.arrayBuffer(),{type:'array',cellStyles:true});
-    project.planFileName=f.name;project.planFile=f;
+    project.planFileName=f.name;project.planFile=f;try{localStorage.setItem('DPB_ADMIN_DEVICE_V1','1')}catch(_){}
     project.planPreview=true; project.planApplied=false;
     cacheTestFile('plan',f);
     autoConfigureFromWorkbook();
@@ -18198,7 +18198,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   function login(){
     const user=q("dpbSupUser").value.trim(),pass=q("dpbSupPass").value.trim(),account=supervisorExists(user,pass);
     if(!account){q("dpbSupLoginErr").textContent="الحساب غير موجود أو غير مفعل. المشرفين يتم إنشاؤهم من لوحة الـAdmin.";q("dpbSupPass").value="";updateSupPinDots();return}
-    state.account=account;state.assignedProcessIds=supervisorAllowedProcessIds(account);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=account.name;try{if(!account.isAdmin&&window.dpbReminders)window.dpbReminders.onLogin(account)}catch(_){}
+    state.account=account;state.assignedProcessIds=supervisorAllowedProcessIds(account);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=account.name;try{if(window.dpbReminders)window.dpbReminders.onLogin(account)}catch(_){}
     q("dpbSupWelcome").textContent=`Welcome, ${account.name}`;q("dpbSupLoginErr").textContent="";showScreen("home");
   }
   function escapeHtml(s){
@@ -18248,7 +18248,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     if(!account){q("dpbSupLoginErr").textContent="اختار الحساب أولاً.";return}
     const finishLogin=(acc)=>{
       state.account=acc;state.assignedProcessIds=supervisorAllowedProcessIds(acc);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=acc.name;
-      q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";state.autoOpenProject=!acc.isAdmin;try{if(!acc.isAdmin&&window.dpbReminders)window.dpbReminders.onLogin(acc)}catch(_){}showScreen("projects");
+      q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";state.autoOpenProject=!acc.isAdmin;try{if(window.dpbReminders)window.dpbReminders.onLogin(acc)}catch(_){}showScreen("projects");
       if(window.DPB_GS&&typeof window.DPB_GS.logHistory==="function")window.DPB_GS.logHistory({user:state.user,action:"login",details:acc.isAdmin?"Admin":"Supervisor"});
     };
     const rejectLogin=()=>{q("dpbSupLoginErr").textContent="الرقم السري غير صحيح لهذا الحساب.";q("dpbSupPass").value="";updateSupPinDots()};
@@ -21490,6 +21490,9 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 </script>
 
 <script>
+/* v149: the device the Excel was uploaded from (or an admin logged in on) is the ADMIN device: it never gets supervisor alarms or admin-to-supervisor alerts */
+window.dpbAdminDev=function(){try{return localStorage.getItem('DPB_ADMIN_DEVICE_V1')==='1'}catch(_){return false}};
+window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1','1')}catch(_){}};
 /* v135: supervisor reminders (alarm + message). The admin sets them per supervisor account (Admin Control Center); the supervisor's phone schedules them
    LOCALLY with the Capacitor LocalNotifications plugin, so they fire even when the app is closed or there is no internet. A change made by the admin reaches
    the phone the next time the app opens with internet (the accounts list is synced then) and the schedule is replaced. Needs the plugin inside the APK. */
@@ -21537,6 +21540,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   var busy=null;
   function apply(user,list){
     var p=LN();if(!p)return Promise.resolve({ok:false,why:'noplugin'});
+    if(window.dpbAdminDev()){lsSet(SIG,'');return cancelMine(p).then(function(){return {ok:false,why:'admin-device'}})}
     var items=build(user,list),sig=user+'|'+JSON.stringify(items.map(function(n){return [n.id,n.body,n.schedule.on.hour,n.schedule.on.minute]}));
     if(lsGet(SIG)===sig)return Promise.resolve({ok:true,same:true,count:items.length});
     var run=async function(){
@@ -21552,7 +21556,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   }
   function accountsList(){try{return JSON.parse(lsGet(ACC_KEY)||'[]')||[]}catch(_){return[]}}
   window.dpbReminders={
-    onLogin:function(acc){if(!acc||!acc.name||acc.isAdmin)return Promise.resolve(null);lsSet(LAST,acc.name);try{if(window.dpbPush)window.dpbPush.register(acc.name)}catch(_){}return apply(acc.name,acc.reminders)},
+    onLogin:function(acc){if(!acc||!acc.name)return Promise.resolve(null);if(acc.isAdmin){window.dpbMarkAdminDev();var pp=LN();return pp?cancelMine(pp).then(function(){lsSet(SIG,'')}):Promise.resolve(null)}if(window.dpbAdminDev())return Promise.resolve({ok:false,why:'admin-device'});lsSet(LAST,acc.name);try{if(window.dpbPush)window.dpbPush.register(acc.name)}catch(_){}return apply(acc.name,acc.reminders)},
     refresh:function(){
       var u=lsGet(LAST);if(!u)return Promise.resolve(null);
       var list=accountsList();if(!list.length)return Promise.resolve(null);
@@ -21567,7 +21571,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
       try{
         var r=await ensureReady(p,false);if(!r.ok)return 'الإشعارات مش مسموحة للتطبيق. فعّلها من إعدادات الموبايل ثم جرّب تاني.';
         await p.schedule({notifications:[{id:IDBASE+999999,title:'تجربة التنبيه',body:'لو شفت الرسالة دي يبقى التنبيه شغال على الجهاز ده.',channelId:CHANNEL,schedule:{at:new Date(Date.now()+6000),allowWhileIdle:true}}]});
-        return 'اتجدول تنبيه تجريبي بعد 6 ثواني. اقفل التطبيق أو اقفل الشاشة وانتظر.';
+        return 'اتجدول تنبيه تجريبي بعد 6 ثواني على الجهاز ده فقط (مش على جهاز المشرف). اقفل التطبيق أو اقفل الشاشة وانتظر.';
       }catch(e){return 'فشل: '+String(e&&e.message||e)}
     }
   };
@@ -21602,6 +21606,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   window.dpbPush={
     register:async function(user){
       var p=PP();if(!p||!user)return {ok:false,why:'noplugin'};
+      if(window.dpbAdminDev&&window.dpbAdminDev()&&String(user).toLowerCase()!=='admin')return {ok:false,why:'admin-device'};
       cur=String(user);
       try{
         try{await p.createChannel({id:'dpb-reminders',name:'تنبيهات المشرف',description:'تذكير بمواعيد إدخال البيانات',importance:5,visibility:1,vibration:true})}catch(_){}
@@ -21612,7 +21617,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
           p.addListener('registrationError',function(e){try{console.warn('push reg error',e)}catch(_){}});
           p.addListener('pushNotificationReceived',async function(n){
             /* app is open: Android does not show the system notification, so show it ourselves */
-            try{var l=LN();if(l&&n&&!(n.data&&n.data.ch==='dpb-messages'&&!document.hidden))await l.schedule({notifications:[{id:73000000+(Date.now()%900000),title:n.title||'DPB',body:n.body||'',channelId:(n.data&&n.data.ch)||'dpb-reminders',schedule:{at:new Date(Date.now()+300)}}]})}catch(_){}
+            try{if(window.dpbAdminDev&&window.dpbAdminDev()&&n&&((n.data&&n.data.ch==='dpb-reminders')||/من الأدمن/.test(String(n.title||''))))return;var l=LN();if(l&&n&&!(n.data&&n.data.ch==='dpb-messages'&&!document.hidden))await l.schedule({notifications:[{id:73000000+(Date.now()%900000),title:n.title||'DPB',body:n.body||'',channelId:(n.data&&n.data.ch)||'dpb-reminders',schedule:{at:new Date(Date.now()+300)}}]})}catch(_){}
           });
         }
         var perm=await p.checkPermissions();
@@ -21626,7 +21631,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   setTimeout(function(){try{var u=lsGet('DPB_REM_LAST_SUP_V1');if(u&&window.dpbPush)window.dpbPush.register(u)}catch(_){}},6000);
 
   /* v141: the admin phone registers too (token under fcm_admin) so supervisor replies reach the admin while the app is closed */
-  setInterval(function(){try{var st=window.__dpbSupState;if(st&&st.account&&st.account.isAdmin&&cur!=='admin'&&window.dpbPush)window.dpbPush.register('admin')}catch(_){}},8000);
+  setInterval(function(){try{var st=window.__dpbSupState;if(st&&st.account&&st.account.isAdmin&&cur!=='admin'&&window.dpbPush){window.dpbMarkAdminDev();window.dpbPush.register('admin')}}catch(_){}},8000);
 })();
 </script>
 
@@ -21796,7 +21801,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 
   /* ---------- supervisor side ---------- */
   function supName(){try{var st=window.__dpbSupState;if(st&&st.account&&!st.account.isAdmin&&st.user)return String(st.user)}catch(_){}return ''}
-  function pollName(){return supName()||lsGet(LASTSUP)||''}
+  function pollName(){if(window.dpbAdminDev&&window.dpbAdminDev())return '';return supName()||lsGet(LASTSUP)||''}
   function unreadList(thr){var seen=thr.seenT||'',h=thr.s.hid||[];return (thr.a.m||[]).filter(function(m){return m.t>seen&&h.indexOf(m.id)<0})}
   function setSupBadge(n){var b=$('dpbSupMsgBadge');if(!b)return;b.textContent=String(n);b.style.display=n>0?'inline-block':'none'}
   var lastUnread=0,polling=false;
