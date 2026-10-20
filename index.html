@@ -10349,12 +10349,12 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         <div class="dpbBackupState"><b>النسخة السابقة</b><span id="dpbBackupPreviousInfo">لا توجد</span></div>
       </div>
       <div class="dpbBackupActions">
-        <button id="dpbBackupModalNow">نسخ احتياطي الآن 📦</button>
-        <button id="dpbRestoreModal" class="secondary">استعادة النسخة 📥</button>
+        <button id="dpbBackupModalNow">Backup Now 📦</button>
+        <button id="dpbRestoreModal" class="secondary">Restore 📥</button>
       </div>
       <div class="dpbBackupActions" style="margin-top:8px">
-        <button id="dpbBackupChooseFolder" class="secondary">اختيار مكان الحفظ على الهاتف 📁</button>
-        <button id="dpbBackupShareFile" class="secondary">مشاركة/حفظ في مكان مخصص 📤</button>
+        <button id="dpbBackupChooseFolder" class="secondary">Location 📁</button>
+        <button id="dpbBackupShareFile" class="secondary">Export 📤</button>
       </div>
       <label class="dpbBackupSwitchRow">
         <span id="dpbBackupDriveToggleLabel" class="dpbBackupSwitchText">☁️ رفع نسخة على Google Drive: تشغيل</span>
@@ -17709,7 +17709,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
      - الخلايا مش أصغر من حد مقروء. */
   const DPB_MM=3.7795;                       // px لكل mm
   const DPB_PG={A0:[841,1189],A1:[594,841],A2:[420,594],A3:[297,420],A4:[210,297]};   // mm (طولي)
-  const DPB_MARGIN=8, DPB_HEAD=13, DPB_FOOT=6, DPB_GAP=3;   // mm
+  const DPB_MARGIN=8, DPB_HEAD=13, DPB_FOOT=6, DPB_GAP=3, DPB_SAFE=4;   // mm (DPB_SAFE = هامش أمان علشان المحتوى ما يتقصش)
   const DPB_MIN_PREF=3.0, DPB_MIN_ABS=2.2;    // أقل مقاس خلية بالمليمتر (مفضّل / مطلق)
   function dpbMeasureBands(table,keep){
     const d=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null;
@@ -17721,34 +17721,63 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       if(keep&&!keep(row))return;
       const a=Math.max(0,start-d.top),b=Math.min(all.length-1,end-d.top);if(a>b)return;
       const r0=all[a].getBoundingClientRect(),r1=all[b].getBoundingClientRect();
-      bands.push({a,b,label:row.label,h:Math.max(1,r1.bottom-r0.top)+3});
+      bands.push({a,b,R:b-a+1,label:row.label,h:Math.max(1,r1.bottom-r0.top)+3});
     });
     const tw=table.getBoundingClientRect().width;
     const td=table.querySelector('td.me-u');
     const cell=td?td.getBoundingClientRect().width:27;
+    const cellH0=td?td.getBoundingClientRect().height:cell;
+    let meH=parseFloat(table.style.getPropertyValue('--me-h'));if(!(meH>0))meH=cellH0>0?cellH0:27;
     if(!bands.length||!(tw>0))return null;
-    return {bands,all,w:tw,cell:cell>0?cell:27};
+    return {bands,all,table,w:tw,cell:cell>0?cell:27,cellH:cellH0>0?cellH0:(cell>0?cell:27),meH};
+  }
+  /* v148: معايرة ارتفاع البلوك فعليًا. المتصفح بيقرّب border-spacing لما الـ zoom بيبقى صغير، فالارتفاع مش بيتحسب نظريًا بدقة.
+     بنقيس البلوك الأطول مرتين بارتفاع خلية مختلف عند نفس الـ zoom (H = A + B*ارتفاع_الخلية) وبنحل المعادلة لأي ارتفاع مطلوب. */
+  function dpbCalib(m,sc){
+    const key=sc.toFixed(5);m._cal=m._cal||{};if(m._cal[key])return m._cal[key];
+    const b=m.hb,host=document.createElement('div');
+    host.style.cssText='position:absolute;left:-99999px;top:0;visibility:hidden;pointer-events:none;width:'+Math.ceil(m.w)+'px;zoom:'+sc.toFixed(4);
+    let res={A:b.h*sc,B:b.R*sc};   // تقدير نظري لو القياس فشل
+    try{
+      document.body.appendChild(host);
+      const meas=meh=>{
+        host.innerHTML='';
+        const t=document.createElement('table');t.className=m.table.className;t.style.cssText=m.table.style.cssText;t.style.setProperty('--me-h',meh+'px');
+        const tb=document.createElement('tbody');for(let i=b.a;i<=b.b;i++)tb.appendChild(m.all[i].cloneNode(true));
+        t.appendChild(tb);host.appendChild(t);return t.getBoundingClientRect().height;
+      };
+      const x1=Math.max(4,m.meH),x2=x1+20,h1=meas(x1),h2=meas(x2),B=(h2-h1)/(x2-x1);
+      if(B>0&&isFinite(B))res={A:h1-B*x1,B};
+    }catch(_){}
+    finally{host.remove();}
+    return (m._cal[key]=res);
   }
   function dpbPlanPrint(m,size,orient,rowsFixed){
-    const N=m.bands.length,hMax=Math.max.apply(null,m.bands.map(b=>b.h));
+    /* v148: العرض دايمًا بيتملي بالكامل، والارتفاع بيتمدّد (أو بينكمش) علشان البلوكات تملا الصفحة من فوق لتحت من غير فراغ.
+       يعني الخلية ممكن تبقى مستطيلة. في الوضع التلقائي بنفضّل الاتجاه اللي الخلية فيه أقرب للمربع. */
+    const N=m.bands.length;
+    if(!m.hb)m.hb=m.bands.reduce((x,y)=>y.h>x.h?y:x,m.bands[0]);
     const cands=[];
     ['portrait','landscape'].forEach(o=>{
       if(orient!=='auto'&&orient!==o)return;
       const pw=DPB_PG[size][o==='portrait'?0:1],ph=DPB_PG[size][o==='portrait'?1:0];
-      const aw=(pw-2*DPB_MARGIN)*DPB_MM, ah=(ph-2*DPB_MARGIN-DPB_HEAD-DPB_FOOT)*DPB_MM, gap=DPB_GAP*DPB_MM;
-      const sw=aw/m.w;                                   // أكبر مقياس يسمح بيه العرض (بيملا عرض الصفحة)
+      const aw=(pw-2*DPB_MARGIN)*DPB_MM, ah=(ph-2*DPB_MARGIN-DPB_HEAD-DPB_FOOT-DPB_SAFE)*DPB_MM, gap=DPB_GAP*DPB_MM;
+      const sc=aw/m.w;                                   // مقياس العرض: بيملا عرض الصفحة
+      const cal=dpbCalib(m,sc);
       for(let k=1;k<=N;k++){
         if(rowsFixed&&k!==Math.min(rowsFixed,N))continue;
-        const sh=(ah-(k-1)*gap)/(k*hMax);               // أكبر مقياس يسمح بيه الارتفاع لـ k بلوك
-        const sc=Math.min(sw,sh);
-        const mm=m.cell*sc/DPB_MM;
+        const avail=(ah-(k-1)*gap)/k;                    // ارتفاع كل بلوك علشان k بلوك يملوا الصفحة
+        const meh=Math.max(0.5,(avail-cal.A)/cal.B);     // ارتفاع الخلية (قبل الـ zoom) المطلوب
+        const wMm=m.cell*sc/DPB_MM,hMm=meh*sc/DPB_MM;
+        const mm=Math.min(wMm,hMm),ratio=hMm/wMm;
         const pages=Math.ceil(N/k);
-        cands.push({o,k,sc,mm,pages,pw,ph});
+        cands.push({o,k,sc,mm,wMm,hMm,ratio,pages,pw,ph,ah,gap,cal});
       }
     });
-    const pick=(minMm)=>{
+    const okShape=c=>c.ratio>=0.55&&c.ratio<=1.8;
+    const pickFrom=(list,minMm)=>{
       let best=null;
-      cands.filter(c=>c.mm>=minMm).forEach(c=>{
+      list.filter(c=>c.mm>=minMm).forEach(c=>{
         // أقل عدد صفحات، وبعدين مقاس خلية أكبر، وبعدين توزيع متساوي
         const bal=(N%c.pages===0)?0:1;
         const key=[c.pages,-Math.round(c.mm*10),bal];
@@ -17756,29 +17785,34 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       });
       return best;
     };
+    const pick=(minMm)=>pickFrom(cands.filter(okShape),minMm)||pickFrom(cands,minMm);
     let c=pick(DPB_MIN_PREF),small=false;
     if(!c){c=pick(DPB_MIN_ABS);small=!!c;}
     if(!c){c=cands.slice().sort((a,b)=>b.mm-a.mm)[0];small=true;}
     // اتوزع بالتساوي: pages صفحات، كل صفحة ≤ k بلوك، الفرق بين أي صفحتين بلوك واحد على الأكثر
     const base=Math.floor(N/c.pages),extra=N%c.pages,counts=[];
     for(let p=0;p<c.pages;p++)counts.push(base+(p<extra?1:0));
-    return {N,size,orient:c.o,pages:c.pages,counts,sc:c.sc,mm:c.mm,small,pw:c.pw,ph:c.ph};
+    // كل صفحة ليها ارتفاع خلية يملاها بالكامل على حسب عدد البلوكات اللي فيها
+    const meh=counts.map(n=>Math.max(0.5,((c.ah-(n-1)*c.gap)/n-c.cal.A)/c.cal.B));
+    return {N,size,orient:c.o,pages:c.pages,counts,sc:c.sc,meh,mm:c.mm,wMm:c.wMm,hMm:c.hMm,ratio:c.ratio,small,pw:c.pw,ph:c.ph};
   }
   function dpbPlanPrintHtml(table,m,pl,title,legendHtml){
     const aw=(pl.pw-2*DPB_MARGIN),ah=(pl.ph-2*DPB_MARGIN-2);
-    const bands=m.bands.map(b=>{
+    const bandHtml=(b,meh)=>{
       const t=document.createElement("table");t.className=table.className;t.style.cssText=table.style.cssText;
+      // تمدد/انكماش رأسي: بنغيّر ارتفاع الخلية بس (عرضها زي ما هو) علشان البلوكات تملا الصفحة
+      if(meh>0)t.style.setProperty('--me-h',meh.toFixed(2)+'px');
       const tb=document.createElement("tbody");
       for(let i=b.a;i<=b.b;i++)tb.appendChild(m.all[i].cloneNode(true));
       t.appendChild(tb);
       return '<div class="dpbBnd" style="zoom:'+pl.sc.toFixed(4)+';width:'+Math.ceil(m.w)+'px">'+t.outerHTML+'</div>';
-    });
+    };
     let out='',i=0;
     for(let p=0;p<pl.pages;p++){
-      const last=p===pl.pages-1,n=pl.counts[p];
+      const last=p===pl.pages-1,n=pl.counts[p],meh=(pl.meh&&pl.meh[p])||0;
       out+='<div class="dpbPg" style="width:'+aw+'mm;height:'+ah+'mm;'+(last?'':'break-after:page;page-break-after:always;')+'">'+
         '<div class="dpbPgH"><b>'+title+'</b><span>'+esc(legendHtml)+'</span></div>'+
-        '<div class="dpbPgB">'+bands.slice(i,i+n).join('')+'</div>'+
+        '<div class="dpbPgB">'+m.bands.slice(i,i+n).map(b=>bandHtml(b,meh)).join('')+'</div>'+
         '<div class="dpbPgF">'+(p+1)+' / '+pl.pages+'</div></div>';
       i+=n;
     }
@@ -17806,7 +17840,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const refresh=()=>{
       const pl=dpbPlanPrint(m,size,orient,rows);o._pl=pl;
       const ori=pl.orient==='portrait'?'طولي':'عرضي';
-      o.querySelector('#dpbPdSum').innerHTML=pl.N+' ROW · <b>'+pl.pages+' صفحة</b> '+size+' '+ori+'<br>البلوكات في الصفحة: '+pl.counts.join(' + ')+'<br>مقاس الخلية على الورق ≈ '+pl.mm.toFixed(1)+' مم'+
+      o.querySelector('#dpbPdSum').innerHTML=pl.N+' ROW · <b>'+pl.pages+' صفحة</b> '+size+' '+ori+'<br>البلوكات في الصفحة: '+pl.counts.join(' + ')+'<br>مقاس الخلية على الورق ≈ '+pl.wMm.toFixed(1)+' × '+pl.hMm.toFixed(1)+' مم (عرض × ارتفاع)'+(pl.ratio>1.8||pl.ratio<0.55?'<br><span style="color:#f6c86b">الخلايا متمددة؛ جرّب الاتجاه التاني أو عدد ROW مختلف في الصفحة.</span>':'')+
         (pl.small?'<br><span style="color:#f6c86b">الخلايا صغيرة؛ جرّب ورق أكبر أو الاتجاه التاني أو عدد ROW أقل في الصفحة.</span>':'');
       if(!native)o.querySelector('#dpbPdSum').innerHTML+='<br><span style="color:#f6c86b">⚠ في المتصفح كروم هو اللي بيحدد الورق: من نافذة الطباعة اللي هتظهر اختار <b>'+pl.size+' '+ori+'</b> (نفس اللي فوق) وإلا الصفحة هتتصغّر وتفضل فاضية من تحت. الـ APK بيظبط الورق لوحده.</span>';
       {const big=native&&!bigOk&&['A0','A1','A2'].indexOf(size)>=0;const go=o.querySelector('#dpbPdGo');go.disabled=big;go.style.opacity=big?'.45':'1';
@@ -17862,7 +17896,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       '@page{size:'+(plan?plan.pl.pw+'mm '+plan.pl.ph+'mm':'landscape')+';margin:'+DPB_MARGIN+'mm}'+
       (plan?'html,body{margin:0!important;padding:0!important}.dpbPg{display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;margin:0 auto}'+
         '.dpbPgH{display:flex;flex-direction:column;gap:1px;height:'+DPB_HEAD+'mm;overflow:hidden;font-size:11pt}.dpbPgH span{font-size:6.5pt;color:#555;line-height:1.25;max-height:7mm;overflow:hidden}'+
-        '.dpbPgB{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;align-items:center;min-height:0}'+
+        '.dpbPgB{flex:1;display:flex;flex-direction:column;justify-content:space-between;align-items:center;min-height:0}'+
         '.dpbPgF{height:'+DPB_FOOT+'mm;text-align:center;font-size:8pt;color:#555}'+
         '.dpbBnd{margin:0!important}':'')+
       '</style></head><body>'+
@@ -21360,6 +21394,11 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
     var fld=function(label,input){var f=mk('div','fs2Fld');f.appendChild(mk('div','fs2Lbl',label));input.removeAttribute('style');f.appendChild(input);return f;};
     var box=function(title,node){var b=mk('div','fs2Box');b.appendChild(mk('div','fs2BoxT',title));b.appendChild(node);node.removeAttribute('style');return b;};
     var btns=mk('div','fs2Btns');['dpbFs2Backup','dpbFs2Ext','dpbFs2Dir'].forEach(function(id){el[id].removeAttribute('style');if(id==='dpbFs2Dir')el[id].style.display='none';btns.appendChild(el[id]);});
+    /* v148: أسماء مختصرة للأزرار التلاتة (لو الكود التاني رجّع النص القديم بنرجّع الاسم الجديد) */
+    [['dpbFs2Backup','Backup Now'],['dpbFs2Ext','Export'],['dpbFs2Dir','Location']].forEach(function(p){
+      var b=el[p[0]],old=(b.textContent||'').trim();b.textContent=p[1];b.title=old||p[1];
+      try{new MutationObserver(function(){var x=(b.textContent||'').trim();if(old&&x===old){b.textContent=p[1];}}).observe(b,{childList:true,characterData:true,subtree:true});}catch(_){}
+    });
     var intSub=mk('div');intSub.appendChild(document.createTextNode('كل '));intSub.appendChild(el.dpbFs2AutoMin);intSub.appendChild(document.createTextNode(' دقيقة'));var nt=mk('div',null,'لو في تغيير فقط، وعلى جهاز الأدمن بس');nt.style.cssText='font-size:11px;opacity:.85';intSub.appendChild(nt);
     var kids=[];
     kids.push(h3);if(hint)kids.push(hint);
@@ -21985,6 +22024,11 @@ input:focus,select:focus,textarea:focus,.dpbKeepFocus{outline:2px solid #2dd4a3!
 <style id="dpbV145Style">
 /* v146: الضغط على زر جوه مجموعة أزرار كان بيصغّر المجموعة كلها (لأن اسم الكلاس فيه Btn والـ :active بيطلع للأب): الحاويات ما بتتأثرش، الزر المضغوط بس */
 div[class*="Btn"]:not([role="button"]):not(:disabled):active,div[class*="btn"]:not([role="button"]):not(:disabled):active,section[class*="Btn"]:active,section[class*="btn"]:active{transform:none!important;filter:none!important}
+/* v148: نفس الحماية لباقي الحاويات (label/li/ul/details/span) اللي اسمها فيه Btn، ولكل حاويات تاب المزامنة ونافذة النسخ الاحتياطي (صفوف النسخ التلقائي ورفع Drive): الزر نفسه بس هو اللي بيتأثر بالضغط */
+label[class*="Btn"]:not(:disabled):active,label[class*="btn"]:not(:disabled):active,ul[class*="Btn"]:active,ul[class*="btn"]:active,li[class*="Btn"]:active,li[class*="btn"]:active,details[class*="Btn"]:active,details[class*="btn"]:active,
+#dpbFs2Card:active,#dpbFs2Card :is(div,section,label,form,ul,li,details):active,
+#dpbBackupModal:active,#dpbBackupModal :is(div,section,label,form,ul,li,details):active,
+:is(div,section,form,main,article,details):has(#dpbFs2Card,#dpbBackupModal):active{transform:none!important;filter:none!important;animation:none!important}
 /* v145: ضغطة مطوّلة = مفيش تحديد نص ولا قائمة نسخ على الأزرار والكروت (شكل فقط، الوظيفة زي ما هي) */
 button,button *,[role=button],[role=button] *,.btn,.dpbAdminBtn,.dpbQuickBtn,.dpbSupTracker,.dpbSupTracker *,.dpbSupUnit,.dpbSupUnit *,summary,label,select{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 input,textarea,[contenteditable="true"]{-webkit-user-select:text;user-select:text}
