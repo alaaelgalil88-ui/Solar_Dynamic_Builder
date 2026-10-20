@@ -17,6 +17,24 @@ public class DpbPrintPlugin extends Plugin {
     // نحتفظ بالـWebView المستقل لحد ما الطباعة تخلص عشان الـGC ما يشيلوش
     private WebView printWebView;
 
+    /** مقاسات الورق المدعومة: A0 لـ A5 (الافتراضي A4). */
+    private static PrintAttributes.MediaSize mediaFor(String n) {
+        if ("A0".equals(n)) return PrintAttributes.MediaSize.ISO_A0;
+        if ("A1".equals(n)) return PrintAttributes.MediaSize.ISO_A1;
+        if ("A2".equals(n)) return PrintAttributes.MediaSize.ISO_A2;
+        if ("A3".equals(n)) return PrintAttributes.MediaSize.ISO_A3;
+        if ("A5".equals(n)) return PrintAttributes.MediaSize.ISO_A5;
+        return PrintAttributes.MediaSize.ISO_A4;
+    }
+
+    /** الصفحة بتسأل بيها: لو الإضافة دي موجودة يبقى A0–A5 مدعومين. */
+    @PluginMethod
+    public void info(final PluginCall call) {
+        com.getcapacitor.JSObject r = new com.getcapacitor.JSObject();
+        r.put("sizes", "A0,A1,A2,A3,A4,A5");
+        call.resolve(r);
+    }
+
     /** الطريقة القديمة: بتطبع صفحة التطبيق نفسها. محتفظ بيها للتوافق. */
     @PluginMethod
     public void print(final PluginCall call) {
@@ -69,9 +87,7 @@ public class DpbPrintPlugin extends Plugin {
                             try {
                                 PrintManager pm = (PrintManager) getActivity().getSystemService(Context.PRINT_SERVICE);
                                 PrintDocumentAdapter adapter = view.createPrintDocumentAdapter(name);
-                                PrintAttributes.MediaSize base = "A3".equals(sizeName)
-                                    ? PrintAttributes.MediaSize.ISO_A3
-                                    : PrintAttributes.MediaSize.ISO_A4;
+                                PrintAttributes.MediaSize base = mediaFor(sizeName);
                                 PrintAttributes.MediaSize size = landscape ? base.asLandscape() : base.asPortrait();
                                 PrintAttributes attrs = new PrintAttributes.Builder()
                                     .setMediaSize(size)
