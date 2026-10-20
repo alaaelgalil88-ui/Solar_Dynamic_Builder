@@ -16689,7 +16689,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       const pst=progState(t);let done=0,total=(t.units||[]).length,pct=0;
       if(pst){done=pst.done;total=pst.total;pct=pst.pct;}
       else{(t.units||[]).forEach((u,i)=>{if(existingDone(state.process.code,t,u,i).done)done++});pct=total?Math.round(done*100/total):0;}
-      btn.innerHTML=`<div class="dpbSupTrackerTop"><div><div class="dpbSupTrackerName">${escapeHtml(t.label)}</div><div class="dpbSupTrackerRow">${escapeHtml(t.row||"ROW —")}</div></div><div>${done}/${total}${pst?' · '+pct+'%':''}</div></div><div class="dpbSupProgress"><i style="width:${pct}%"></i></div><div class="dpbSupMeta">${selected?"محدّد":"اضغط للتحديد"}</div>`;
+      btn.innerHTML=`<div class="dpbSupTrackerTop"><div><div class="dpbSupTrackerName">${escapeHtml(t.label)}</div><div class="dpbSupTrackerRow">${escapeHtml(t.row||"ROW —")}</div></div><div>${done}/${total}${pst?' · '+pct+'%':''}</div></div><div class="dpbSupProgress"><i style="width:${pct}%"></i></div><div class="dpbSupMeta">${selected?"محدّد":""}</div>`;
       btn.onclick=()=>{
         hideSupKeyboard(); if(state.selectedTrackers.has(key))state.selectedTrackers.delete(key);else state.selectedTrackers.add(key);renderTrackers();
       };
@@ -17808,6 +17808,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       const ori=pl.orient==='portrait'?'طولي':'عرضي';
       o.querySelector('#dpbPdSum').innerHTML=pl.N+' ROW · <b>'+pl.pages+' صفحة</b> '+size+' '+ori+'<br>البلوكات في الصفحة: '+pl.counts.join(' + ')+'<br>مقاس الخلية على الورق ≈ '+pl.mm.toFixed(1)+' مم'+
         (pl.small?'<br><span style="color:#f6c86b">الخلايا صغيرة؛ جرّب ورق أكبر أو الاتجاه التاني أو عدد ROW أقل في الصفحة.</span>':'');
+      if(!native)o.querySelector('#dpbPdSum').innerHTML+='<br><span style="color:#f6c86b">⚠ في المتصفح كروم هو اللي بيحدد الورق: من نافذة الطباعة اللي هتظهر اختار <b>'+pl.size+' '+ori+'</b> (نفس اللي فوق) وإلا الصفحة هتتصغّر وتفضل فاضية من تحت. الـ APK بيظبط الورق لوحده.</span>';
       {const big=native&&!bigOk&&['A0','A1','A2'].indexOf(size)>=0;const go=o.querySelector('#dpbPdGo');go.disabled=big;go.style.opacity=big?'.45':'1';
        if(big)o.querySelector('#dpbPdSum').innerHTML+='<br><span style="color:#f6c86b">⚠ الـ APK ده قديم وبيطبع A3 وA4 بس. ثبّت الـ APK الجديد عشان A0 وA1 وA2.</span>';}
       o.querySelector('#dpbPdPrev').innerHTML=pl.counts.map((n,i)=>'<div style="flex:0 0 auto;width:'+(pl.orient==='portrait'?44:62)+'px;height:'+(pl.orient==='portrait'?62:44)+'px;border:1px solid #4d8dff;border-radius:4px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:3px;box-sizing:border-box">'+Array(n).fill('<i style="display:block;flex:1;background:#2b4a70;border-radius:2px"></i>').join('')+'</div>').join('');
@@ -21982,6 +21983,8 @@ input:focus,select:focus,textarea:focus,.dpbKeepFocus{outline:2px solid #2dd4a3!
 </script>
 
 <style id="dpbV145Style">
+/* v146: الضغط على زر جوه مجموعة أزرار كان بيصغّر المجموعة كلها (لأن اسم الكلاس فيه Btn والـ :active بيطلع للأب): الحاويات ما بتتأثرش، الزر المضغوط بس */
+div[class*="Btn"]:not([role="button"]):not(:disabled):active,div[class*="btn"]:not([role="button"]):not(:disabled):active,section[class*="Btn"]:active,section[class*="btn"]:active{transform:none!important;filter:none!important}
 /* v145: ضغطة مطوّلة = مفيش تحديد نص ولا قائمة نسخ على الأزرار والكروت (شكل فقط، الوظيفة زي ما هي) */
 button,button *,[role=button],[role=button] *,.btn,.dpbAdminBtn,.dpbQuickBtn,.dpbSupTracker,.dpbSupTracker *,.dpbSupUnit,.dpbSupUnit *,summary,label,select{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 input,textarea,[contenteditable="true"]{-webkit-user-select:text;user-select:text}
