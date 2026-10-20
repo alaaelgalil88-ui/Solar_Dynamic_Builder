@@ -10387,9 +10387,100 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       <button type="button" data-k="back">⌫</button><button type="button" data-k="0">0</button><button type="button" data-k="enter">✓</button>
     </div>
     <div id="dpbAdminPinErr" class="dpbSupError"></div>
+    <div id="dpbSyncSetup" class="dpbSyncSetup" hidden>
+      <div class="dpbSyncIcon">🔗</div>
+      <h3>ربط الجهاز بالمزامنة</h3>
+      <p class="dpbSyncSub">الجهاز ده لسه مش متربط بحساب المزامنة. اكتب بيانات الحساب مرة واحدة وهيفتكرها.</p>
+      <label class="dpbSyncLbl" for="dpbSyncEmail">يوزر المزامنة</label>
+      <input id="dpbSyncEmail" type="email" dir="ltr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@example.com">
+      <label class="dpbSyncLbl" for="dpbSyncPass">باسورد المزامنة</label>
+      <div class="dpbSyncPassRow">
+        <input id="dpbSyncPass" type="password" dir="ltr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="••••••••">
+        <button id="dpbSyncEye" type="button" aria-label="إظهار الباسورد">👁</button>
+      </div>
+      <div id="dpbSyncMsg" class="dpbSyncMsg" role="status" aria-live="polite"></div>
+      <button id="dpbSyncGo" class="dpbSyncGo" type="button">حفظ واتصال</button>
+      <button id="dpbSyncBack" class="dpbSyncBack" type="button">رجوع</button>
+    </div>
     <button id="dpbAdminPinClose" class="dpbBackupClose master-cancel" type="button">إلغاء</button>
   </div>
 </div>
+<style>
+#dpbAdminPinModal .dpbBackupBox{max-height:96vh;overflow-y:auto}
+#dpbAdminPinModal .dpbBackupBox.syncMode .master-dots,#dpbAdminPinModal .dpbBackupBox.syncMode .master-keypad,#dpbAdminPinModal .dpbBackupBox.syncMode>h2,#dpbAdminPinModal .dpbBackupBox.syncMode>p,#dpbAdminPinModal .dpbBackupBox.syncMode #dpbAdminPinErr{display:none!important}
+.dpbSyncSetup{margin-top:10px;text-align:center}
+.dpbSyncSetup[hidden]{display:none!important}
+.dpbSyncIcon{font-size:34px;line-height:1;margin-bottom:6px}
+.dpbSyncSetup h3{margin:0 0 6px;font-size:20px;color:#fff}
+.dpbSyncSub{margin:0 0 14px;font-size:13px;line-height:1.6;color:rgba(200,225,255,.78)}
+.dpbSyncLbl{display:block;text-align:right;margin:10px 4px 5px;font-size:13px;color:rgba(200,225,255,.85)}
+.dpbSyncSetup input{width:100%;box-sizing:border-box;height:48px;padding:0 14px;border-radius:14px;border:1px solid rgba(65,188,255,.55);background:rgba(2,16,38,.72);color:#fff;font-size:16px;outline:none;text-align:left}
+.dpbSyncSetup input:focus{border-color:#41bcff;box-shadow:0 0 0 3px rgba(65,188,255,.22)}
+.dpbSyncPassRow{position:relative}
+.dpbSyncPassRow input{padding-right:48px}
+#dpbSyncEye{position:absolute;right:4px;top:4px;width:40px;height:40px;border:0;border-radius:10px;background:transparent;color:#cfe8ff;font-size:18px;cursor:pointer}
+.dpbSyncMsg{min-height:20px;margin:12px 2px 4px;font-size:13px;line-height:1.55;color:#cfe8ff;white-space:pre-line}
+.dpbSyncMsg.err{color:#ff9aa8}.dpbSyncMsg.ok{color:#7dffb4}
+.dpbSyncGo{width:100%;height:50px;margin-top:6px;border:0;border-radius:14px;font-size:17px;font-weight:700;color:#04162e;background:linear-gradient(135deg,#41bcff,#7be0ff);cursor:pointer}
+.dpbSyncGo[disabled]{opacity:.6;cursor:default}
+.dpbSyncBack{width:100%;height:44px;margin-top:8px;border:1px solid rgba(65,188,255,.4);border-radius:14px;background:transparent;color:#cfe8ff;font-size:15px;cursor:pointer}
+</style>
+<script>
+/* ربط الجهاز بحساب المزامنة من شاشة كود الأدمن (موبايل جديد مالوش يوزر/باسورد محفوظين). الباسورد بيتحفظ على الجهاز بس، مش في أي ملف. */
+(function(){
+  var AUTH='dpb_fs_auth', busy=false;
+  function $(i){return document.getElementById(i)}
+  function box(){var m=$('dpbAdminPinModal');return m&&m.querySelector('.dpbBackupBox')}
+  function msg(t,k){var e=$('dpbSyncMsg');if(!e)return;e.textContent=t||'';e.className='dpbSyncMsg'+(k?' '+k:'')}
+  function saved(){try{return JSON.parse(localStorage.getItem(AUTH)||'null')}catch(_){return null}}
+  function withTimeout(p,ms){return Promise.race([p,new Promise(function(_,rej){setTimeout(function(){rej(new Error('timeout'))},ms)})])}
+  function show(){
+    var b=box(),p=$('dpbSyncSetup');if(!b||!p)return;
+    var a=saved();$('dpbSyncEmail').value=(a&&a.email)||'';$('dpbSyncPass').value='';$('dpbSyncPass').type='password';
+    msg('');b.classList.add('syncMode');p.hidden=false;
+    setTimeout(function(){try{(a&&a.email?$('dpbSyncPass'):$('dpbSyncEmail')).focus()}catch(_){}},60);
+  }
+  function hide(note){
+    var b=box(),p=$('dpbSyncSetup');if(b)b.classList.remove('syncMode');if(p)p.hidden=true;
+    if(note&&$('dpbAdminPinErr'))$('dpbAdminPinErr').textContent=note;
+  }
+  function fail(prev,text){
+    try{if(prev)localStorage.setItem(AUTH,JSON.stringify(prev));else localStorage.removeItem(AUTH)}catch(_){}
+    msg(text,'err');
+  }
+  async function go(){
+    if(busy)return;
+    var em=($('dpbSyncEmail').value||'').trim(),pw=$('dpbSyncPass').value||'',prev=saved();
+    if(!em||em.indexOf('@')<1){msg('اكتب اليوزر بشكل صحيح (زي name@example.com).','err');return}
+    if(!pw){msg('اكتب الباسورد.','err');return}
+    if(navigator.onLine===false){msg('مفيش إنترنت دلوقتي. اتصل بالنت وجرّب تاني.','err');return}
+    var F=window.DPB_FS2;if(!F||!F.testConnection||!F.usersCount){msg('طبقة المزامنة مش محمّلة على الجهاز ده. اقفل التطبيق وافتحه تاني.','err');return}
+    busy=true;$('dpbSyncGo').disabled=true;$('dpbSyncGo').textContent='جاري الاتصال...';msg('بنتأكد من البيانات...');
+    try{
+      localStorage.setItem(AUTH,JSON.stringify({email:em,password:pw}));
+      await withTimeout(F.testConnection(),25000);
+      await withTimeout(F.usersCount(),20000);   /* قراءة حقيقية من السيرفر: لو الدخول مرفوض هتفشل هنا */
+      $('dpbSyncPass').value='';
+      hide('✅ الجهاز اتربط بالمزامنة. اكتب كود الأدمن.');
+      var e=$('dpbAdminPinErr');if(e)e.style.color='#7dffb4';setTimeout(function(){if(e)e.style.color=''},4000);
+    }catch(err){
+      var c=String(err&&(err.code||err.message)||err);
+      if(/timeout/i.test(c))fail(prev,'الاتصال اتأخر. اتأكد من النت وجرّب تاني.');
+      else if(/network/i.test(c))fail(prev,'مفيش اتصال بالسيرفر. اتأكد من النت وجرّب تاني.');
+      else if(/too-many/i.test(c))fail(prev,'محاولات كتير. استنى شوية وجرّب تاني.');
+      else fail(prev,'اليوزر أو الباسورد غلط، أو الحساب مش مسموح له.\nراجعهم وجرّب تاني.');
+    }finally{busy=false;$('dpbSyncGo').disabled=false;$('dpbSyncGo').textContent='حفظ واتصال'}
+  }
+  document.addEventListener('click',function(ev){
+    var t=ev.target&&ev.target.closest?ev.target.closest('#dpbSyncGo,#dpbSyncBack,#dpbSyncEye'):null;if(!t)return;
+    if(t.id==='dpbSyncGo')go();
+    else if(t.id==='dpbSyncBack'){if(!busy)hide('')}
+    else{var i=$('dpbSyncPass');i.type=i.type==='password'?'text':'password'}
+  });
+  document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target&&(ev.target.id==='dpbSyncPass'||ev.target.id==='dpbSyncEmail'))go()});
+  window.dpbAdminSyncSetup={show:show,hide:hide};
+})();
+</script>
 
 <div id="dpbAdminChangePinModal" class="dpbBackupModal" aria-hidden="true">
   <div class="dpbBackupBox dpbAdminChangePinBox" role="dialog" aria-modal="true" aria-labelledby="dpbAdminChangePinTitle">
@@ -11598,6 +11689,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     if(!modal||!input){ showAdminAfterPin(); return; }
     input.value="";
     q("dpbAdminPinErr").textContent="";
+    try{if(window.dpbAdminSyncSetup)window.dpbAdminSyncSetup.hide("")}catch(_){}
     q("dpbAdminPinDots").querySelectorAll("i").forEach(d=>d.classList.remove("filled"));
     modal.style.display="flex";
     modal.setAttribute("aria-hidden","false");
@@ -11645,7 +11737,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         // Sheet unreachable (offline / no network) -> fall back to the
         // last Sheet-verified PIN cached on this device.
         const storedPin=localStorage.getItem("DPB_ADMIN_PIN_V1")||"";
-        if(storedPin&&v===storedPin){showAdminAfterPin()}else{adminPinReject();if(!storedPin)q("dpbAdminPinErr").textContent="مفيش اتصال، ورقم الأدمن لسه متفعّلش على الجهاز ده. اتصل بالنت مرة واحدة.";}
+        if(storedPin&&v===storedPin){showAdminAfterPin()}else{adminPinReject();if(!storedPin){q("dpbAdminPinErr").textContent="مفيش اتصال، ورقم الأدمن لسه متفعّلش على الجهاز ده.";try{if(window.dpbAdminSyncSetup)window.dpbAdminSyncSetup.show()}catch(_){}}}
       });
     }else{
       const storedPin=localStorage.getItem("DPB_ADMIN_PIN_V1")||"";
