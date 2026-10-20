@@ -3746,7 +3746,7 @@ if ("serviceWorker" in navigator && !window.__DPB_NATIVE) {
         <div><label>إلى TRACKER</label><select id="printToTracker" onchange="setPrintRange('toTracker',this.value)"><option value="">اختر Tracker</option></select></div>
       </div>
       <div class="print-actions">
-        <button class="btn primary" id="printPdfBtn" onclick="printPlanRange()" disabled>🖨️ طباعة / حفظ PDF</button>
+        <button class="btn primary" id="printPdfBtn" onclick="printPlanRange()">🖨️ طباعة / حفظ PDF</button>
         <button class="btn ghost" onclick="clearPrintRange()">مسح النطاق</button>
       </div>
     </div>
@@ -8042,7 +8042,7 @@ function setPrintRange(key,value){
 function updatePrintButtonState(){
   const btn=document.getElementById('printPdfBtn'); if(!btn) return;
   const a=printEndpointIndex('from'), b=printEndpointIndex('to');
-  btn.disabled=!(a!==null && b!==null && a<=b);
+  btn.disabled=(a!==null && b!==null && a>b);
 }
 function trackerGlobalIndex(t){
   if(t&&typeof t.index==='number')return t.index;
@@ -8073,11 +8073,21 @@ function printPlanRange(){
   const a=printEndpointIndex('from'),b=printEndpointIndex('to');
   if(a!==null&&b!==null&&a>b){alert('نطاق الطباعة غير صحيح: "من" يجب أن يسبق "إلى".');return;}
   refreshPrintRangeClasses();
-  buildPlanPrintPages();
-  document.body.classList.add('print-plan');
-  const cleanupPrint=()=>{document.body.classList.remove('print-plan');window.removeEventListener('afterprint',cleanupPrint);};
-  window.addEventListener('afterprint',cleanupPrint);
-  setTimeout(()=>window.print(),40);
+  /* الطريقة القديمة (A3 عرضي، ROW اتنين في الصفحة): بتفضل احتياطي لو نظام المعاينة مش متاح */
+  const legacy=function(){
+    buildPlanPrintPages();
+    document.body.classList.add('print-plan');
+    const cleanupPrint=()=>{document.body.classList.remove('print-plan');window.removeEventListener('afterprint',cleanupPrint);};
+    window.addEventListener('afterprint',cleanupPrint);
+    setTimeout(()=>window.print(),40);
+  };
+  /* v143: نفس نظام طباعة المشرف: معاينة + الورق + الاتجاه + عدد الـ ROW + توزيع متساوي. النطاق من/إلى بيحدد الـ ROW اللي تدخل */
+  if(typeof window.dpbBuilderMapPdf==='function'){
+    const hasRange=a!==null||b!==null;
+    const keep=function(row){return !hasRange||row.trackers.some(t=>trackerIndexInRange(t.index));};
+    try{window.dpbBuilderMapPdf(keep,legacy);return;}catch(e){console.warn('builder print engine failed',e);}
+  }
+  legacy();
 }
 
 // Print the currently selected MAP operation with the exact colors already
@@ -16679,7 +16689,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       const pst=progState(t);let done=0,total=(t.units||[]).length,pct=0;
       if(pst){done=pst.done;total=pst.total;pct=pst.pct;}
       else{(t.units||[]).forEach((u,i)=>{if(existingDone(state.process.code,t,u,i).done)done++});pct=total?Math.round(done*100/total):0;}
-      btn.innerHTML=`<div class="dpbSupTrackerTop"><div><div class="dpbSupTrackerName">${escapeHtml(t.label)}</div><div class="dpbSupTrackerRow">${escapeHtml(t.row||"ROW —")}</div></div><div>${done}/${total}${pst?' · '+pct+'%':''}</div></div><div class="dpbSupProgress"><i style="width:${pct}%"></i></div><div class="dpbSupMeta">${selected?"✓ Selected — اضغط لإلغاء الاختيار":"اضغط لتحديد Tracker"}</div>`;
+      btn.innerHTML=`<div class="dpbSupTrackerTop"><div><div class="dpbSupTrackerName">${escapeHtml(t.label)}</div><div class="dpbSupTrackerRow">${escapeHtml(t.row||"ROW —")}</div></div><div>${done}/${total}${pst?' · '+pct+'%':''}</div></div><div class="dpbSupProgress"><i style="width:${pct}%"></i></div><div class="dpbSupMeta">${selected?"محدّد":"اضغط للتحديد"}</div>`;
       btn.onclick=()=>{
         hideSupKeyboard(); if(state.selectedTrackers.has(key))state.selectedTrackers.delete(key);else state.selectedTrackers.add(key);renderTrackers();
       };
@@ -17701,13 +17711,14 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   const DPB_PG={A0:[841,1189],A1:[594,841],A2:[420,594],A3:[297,420],A4:[210,297]};   // mm (طولي)
   const DPB_MARGIN=8, DPB_HEAD=13, DPB_FOOT=6, DPB_GAP=3;   // mm
   const DPB_MIN_PREF=3.0, DPB_MIN_ABS=2.2;    // أقل مقاس خلية بالمليمتر (مفضّل / مطلق)
-  function dpbMeasureBands(table){
+  function dpbMeasureBands(table,keep){
     const d=(window.DPBMap&&DPBMap.printData)?DPBMap.printData():null;
     if(!d||!d.rows||!d.rows.length)return null;
     const all=[...(table.tBodies[0]?table.tBodies[0].rows:[])];if(!all.length)return null;
     const bands=[];let prevEnd=d.top-1;
     d.rows.forEach(row=>{
       const start=prevEnd+1,end=row.r2;prevEnd=Math.max(prevEnd,end);
+      if(keep&&!keep(row))return;
       const a=Math.max(0,start-d.top),b=Math.min(all.length-1,end-d.top);if(a>b)return;
       const r0=all[a].getBoundingClientRect(),r1=all[b].getBoundingClientRect();
       bands.push({a,b,label:row.label,h:Math.max(1,r1.bottom-r0.top)+3});
@@ -17773,12 +17784,13 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     }
     return out;
   }
-  function dpbPrintDialog(table,onGo){
-    const m=dpbMeasureBands(table);
+  function dpbPrintDialog(table,onGo,keep){
+    const m=dpbMeasureBands(table,keep);
     if(!m){onGo(null);return;}
     let size='A4',orient='auto',rows=0;
     try{const pf=JSON.parse(localStorage.getItem('DPB_PRINT_PREF')||'{}');if(DPB_PG[pf.size])size=pf.size;if(['auto','portrait','landscape'].indexOf(pf.orient)>=0)orient=pf.orient;if(pf.rows>0)rows=pf.rows;}catch(_){}
     const native=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()&&Capacitor.Plugins&&Capacitor.Plugins.DpbPrint);
+    let bigOk=false;/* الـ APK الجديد بس فيه info() وبيدعم A0–A5 */
     const old=document.getElementById('dpbPrintDlg');if(old)old.remove();
     const o=document.createElement('div');o.id='dpbPrintDlg';
     o.style.cssText='position:fixed;inset:0;z-index:2147482000;background:rgba(3,10,20,.72);display:flex;align-items:center;justify-content:center;padding:14px';
@@ -17796,8 +17808,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       const ori=pl.orient==='portrait'?'طولي':'عرضي';
       o.querySelector('#dpbPdSum').innerHTML=pl.N+' ROW · <b>'+pl.pages+' صفحة</b> '+size+' '+ori+'<br>البلوكات في الصفحة: '+pl.counts.join(' + ')+'<br>مقاس الخلية على الورق ≈ '+pl.mm.toFixed(1)+' مم'+
         (pl.small?'<br><span style="color:#f6c86b">الخلايا صغيرة؛ جرّب ورق أكبر أو الاتجاه التاني أو عدد ROW أقل في الصفحة.</span>':'');
-      {const big=native&&['A0','A1','A2'].indexOf(size)>=0;const go=o.querySelector('#dpbPdGo');go.disabled=big;go.style.opacity=big?'.45':'1';
-       if(big)o.querySelector('#dpbPdSum').innerHTML+='<br><span style="color:#f6c86b">⚠ إضافة الطباعة في الـ APK الحالي بتدعم A3 وA4 بس. A0 وA1 وA2 شغالين من المتصفح، وفي الـ APK محتاجين تحديث الإضافة.</span>';}
+      {const big=native&&!bigOk&&['A0','A1','A2'].indexOf(size)>=0;const go=o.querySelector('#dpbPdGo');go.disabled=big;go.style.opacity=big?'.45':'1';
+       if(big)o.querySelector('#dpbPdSum').innerHTML+='<br><span style="color:#f6c86b">⚠ الـ APK ده قديم وبيطبع A3 وA4 بس. ثبّت الـ APK الجديد عشان A0 وA1 وA2.</span>';}
       o.querySelector('#dpbPdPrev').innerHTML=pl.counts.map((n,i)=>'<div style="flex:0 0 auto;width:'+(pl.orient==='portrait'?44:62)+'px;height:'+(pl.orient==='portrait'?62:44)+'px;border:1px solid #4d8dff;border-radius:4px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:3px;box-sizing:border-box">'+Array(n).fill('<i style="display:block;flex:1;background:#2b4a70;border-radius:2px"></i>').join('')+'</div>').join('');
     };
     const savePref=()=>{try{localStorage.setItem('DPB_PRINT_PREF',JSON.stringify({size,orient,rows}));}catch(_){}};
@@ -17808,8 +17820,12 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     o.querySelector('#dpbPdNo').onclick=()=>o.remove();
     o.querySelector('#dpbPdGo').onclick=()=>{const pl=o._pl;o.remove();onGo({m,pl});};
     refresh();
+    if(native){try{const P=Capacitor.Plugins.DpbPrint;if(P&&typeof P.info==='function')P.info().then(()=>{bigOk=true;refresh();}).catch(()=>{});}catch(_){}}
   }
-  function exportSupervisorMapPdf(){
+  function exportSupervisorMapPdf(){return dpbMapPdfCore(null,null);}
+  /* v143: طباعة الخرايط عند البيلدر بنفس نظام المشرف (معاينة + ورق + اتجاه + ROW في الصفحة + توزيع متساوي). keep = فلتر النطاق (من/إلى)، fallback = الطريقة القديمة لو القياس فشل */
+  window.dpbBuilderMapPdf=function(keep,fallback){return dpbMapPdfCore(keep,fallback);};
+  function dpbMapPdfCore(keep,fallback){
     const s=DPBMap.state.last;
     if(!s){showToast("محدش عارض خريطة دلوقتي.");return;}
     const shell=document.getElementById("excelMapShell");
@@ -17825,6 +17841,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const liveCss=document.getElementById("dpbMapEngineCss");
     const liveCssText=liveCss?liveCss.textContent:"";
     dpbPrintDialog(table,function(plan){
+    if(!plan&&keep&&typeof fallback==='function'){fallback();return;}
     window.__dpbPrintOpts=plan?{landscape:plan.pl.orient==='landscape',size:plan.pl.size}:null;
     const w=window.open("","_blank");
     if(!w){showToast("المتصفح منع فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة وحاول تاني.");return;}
@@ -17854,7 +17871,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const doPrint=()=>{try{w.focus();w.print();}catch(_){}};
     w.onload=doPrint;
     setTimeout(doPrint,400);
-    });
+    },keep);
   }
   /* v97: Project Maps (supervisor) رجعت للخرايط الرسومية: Fixed Maps كاملة + Operations الديناميك للعمليات المسموحة للمشرف بس (supervisorFilterOps).
      جدول حالة التراكرات (openSupervisorMaps) لسه موجود في الكود بس مش بيتفتح من الزر. */
@@ -21673,13 +21690,13 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
   function selBar(box){
     var b=box.previousElementSibling;if(b&&b.classList&&b.classList.contains('dpbSelBar'))return b;
     b=document.createElement('div');b.className='dpbSelBar';
-    b.innerHTML='<label><input type="checkbox" class="dpbSelAll"><span>تحديد الكل</span></label><button type="button" class="del">🗑 حذف (0)</button><button type="button" class="cancel">إلغاء</button>';
+    b.innerHTML='<label><input type="checkbox" class="dpbSelAll"><span>تحديد الكل</span></label><button type="button" class="del" data-n="0" aria-label="حذف المحدد" title="حذف">🗑</button><button type="button" class="cancel" aria-label="إلغاء" title="إلغاء">✕</button>';
     box.parentNode.insertBefore(b,box);return b;
   }
   function selUpdate(box){
     var st=SEL[box.id];if(!st)return;var bar=selBar(box),all=box.querySelectorAll('.dpbMsgBub'),n=st.set.size;
     all.forEach(function(d){d.classList.toggle('sel',st.set.has(d.getAttribute('data-id')))});
-    bar.querySelector('.del').textContent='🗑 حذف ('+n+')';
+    bar.querySelector('.del').setAttribute('data-n',String(n));
     bar.querySelector('.dpbSelAll').checked=all.length>0&&n===all.length;
   }
   function selEnter(box,first){
@@ -21964,3 +21981,41 @@ input:focus,select:focus,textarea:focus,.dpbKeepFocus{outline:2px solid #2dd4a3!
 })();
 </script>
 
+<style id="dpbV145Style">
+/* v145: ضغطة مطوّلة = مفيش تحديد نص ولا قائمة نسخ على الأزرار والكروت (شكل فقط، الوظيفة زي ما هي) */
+button,button *,[role=button],[role=button] *,.btn,.dpbAdminBtn,.dpbQuickBtn,.dpbSupTracker,.dpbSupTracker *,.dpbSupUnit,.dpbSupUnit *,summary,label,select{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,[contenteditable="true"]{-webkit-user-select:text;user-select:text}
+/* كروت التراكرات: سطر الحالة سطر واحد، وعلامة ✓ مكانها تحت مش على العدّاد */
+html body #dpbSupTrackerGrid .dpbSupTracker{position:relative!important}
+html body #dpbSupTrackerGrid .dpbSupTracker .dpbSupMeta{font-size:9px!important;line-height:1.2!important;min-height:0!important;max-height:none!important;display:block!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;text-align:right!important;direction:rtl!important;margin-top:auto!important}
+html body #dpbSupTrackerGrid .dpbSupTracker.bulk-selected .dpbSupMeta{padding-left:19px!important}
+html body #dpbSupTrackerGrid .dpbSupTracker.bulk-selected:before{top:auto!important;right:auto!important;bottom:4px!important;left:4px!important;width:16px!important;height:16px!important;font-size:10px!important}
+#dpbSupClearTrackers{direction:rtl;unicode-bidi:isolate}
+/* تاب المزامنة: التلات أزرار نفس المقاس في صف واحد */
+#dpbFs2Card .fs2Btns:has(>button:nth-child(3):last-child){grid-template-columns:repeat(3,minmax(0,1fr))}
+#dpbFs2Card .fs2Btns:has(>button:nth-child(3):last-child)>button{font-size:12px!important;padding:8px 4px!important}
+/* حسابات المشرفين: زرّين التنبيه نفس المقاس */
+.dpbRemBtns{display:grid!important;grid-template-columns:1fr 1fr;gap:8px}
+.dpbRemBtns>button{width:100%;min-height:46px;margin:0!important;padding:8px 6px!important;font-size:13px!important;line-height:1.3;white-space:normal;text-align:center}
+/* شاشة الرسائل: حذف/إلغاء أيقونة بس، وعلامات اختيار دايرية */
+.dpbMsgFull .dpbSelBar{gap:10px}
+.dpbMsgFull .dpbSelBar button{width:42px;height:42px;padding:0;border-radius:12px;font-size:19px;line-height:1;display:inline-flex;align-items:center;justify-content:center;position:relative}
+.dpbMsgFull .dpbSelBar button.del::after{content:attr(data-n);position:absolute;top:-7px;right:-7px;min-width:18px;height:18px;padding:0 4px;box-sizing:border-box;border-radius:9px;background:#fff;color:#8a2230;font-size:11px;font-weight:900;line-height:18px;text-align:center}
+.dpbMsgFull .dpbSelBar button.del[data-n="0"]::after{display:none}
+.dpbSelMode .dpbMsgBub::before{content:'';display:inline-block;width:16px;height:16px;box-sizing:border-box;border-radius:50%;border:2px solid rgba(255,255,255,.65);vertical-align:-3px;margin-inline-end:8px}
+.dpbSelMode .dpbMsgBub.sel::before{content:'✓';background:#ffd54a;border-color:#ffd54a;color:#3a2a00;font-size:11px;font-weight:900;line-height:12px;text-align:center;color:#3a2a00}
+.dpbSelBar input[type=checkbox],.dpbAdminProcessPicker input[type=checkbox]{-webkit-appearance:none!important;appearance:none!important;width:22px!important;height:22px!important;flex:0 0 22px;border-radius:50%!important;border:2px solid #5b7a99!important;background:transparent!important;display:inline-grid!important;place-content:center;margin:0!important;cursor:pointer;transition:background .15s,border-color .15s}
+.dpbSelBar input[type=checkbox]:checked,.dpbAdminProcessPicker input[type=checkbox]:checked{background:#2fb98a!important;border-color:#2fb98a!important}
+.dpbSelBar input[type=checkbox]:checked::after,.dpbAdminProcessPicker input[type=checkbox]:checked::after{content:'✓';color:#04231a;font-size:13px;font-weight:900;line-height:1}
+</style>
+<script id="dpbV145Script">
+(function(){
+  "use strict";
+  /* الضغطة المطوّلة على زر/كارت ما تفتحش قائمة المتصفح (Copy / Select all)، وخانات الكتابة زي ما هي */
+  document.addEventListener('contextmenu',function(e){
+    var t=e.target;if(!t||!t.closest)return;
+    if(t.closest('input,textarea,[contenteditable="true"]'))return;
+    if(t.closest('button,[role=button],.dpbSupTracker,.dpbSupUnit,summary,label'))e.preventDefault();
+  },true);
+})();
+</script>
