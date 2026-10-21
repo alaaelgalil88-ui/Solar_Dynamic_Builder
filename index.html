@@ -7330,7 +7330,7 @@ async function onPlanFile(e){
   const up=document.getElementById('planUploadSetupBtn'); if(up) up.disabled=true;
   try{
     project.wb=await XLSX.read(await f.arrayBuffer(),{type:'array',cellStyles:true});
-    project.planFileName=f.name;project.planFile=f;try{localStorage.setItem('DPB_ADMIN_DEVICE_V1','1')}catch(_){}
+    project.planFileName=f.name;project.planFile=f;try{localStorage.setItem('DPB_ADMIN_DEVICE_V1','1');if(window.dpbDeviceRole)window.dpbDeviceRole.setAdmin(true)}catch(_){}
     project.planPreview=true; project.planApplied=false;
     cacheTestFile('plan',f);
     autoConfigureFromWorkbook();
@@ -10407,7 +10407,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 </div>
 <style>
 #dpbAdminPinModal .dpbBackupBox{max-height:96vh;overflow-y:auto}
-#dpbAdminPinModal .dpbBackupBox.syncMode .master-dots,#dpbAdminPinModal .dpbBackupBox.syncMode .master-keypad,#dpbAdminPinModal .dpbBackupBox.syncMode>h2,#dpbAdminPinModal .dpbBackupBox.syncMode>p,#dpbAdminPinModal .dpbBackupBox.syncMode #dpbAdminPinErr{display:none!important}
+#dpbAdminPinModal .dpbBackupBox.syncMode .master-dots,#dpbAdminPinModal .dpbBackupBox.syncMode .master-keypad,#dpbAdminPinModal .dpbBackupBox.syncMode>h2,#dpbAdminPinModal .dpbBackupBox.syncMode>p,#dpbAdminPinModal .dpbBackupBox.syncMode #dpbAdminPinErr,#dpbAdminPinModal .dpbBackupBox.syncMode #dpbAdminPinClose{display:none!important}
 .dpbSyncSetup{margin-top:10px;text-align:center}
 .dpbSyncSetup[hidden]{display:none!important}
 .dpbSyncIcon{font-size:34px;line-height:1;margin-bottom:6px}
@@ -10428,19 +10428,22 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 <script>
 /* ربط الجهاز بحساب المزامنة من شاشة كود الأدمن (موبايل جديد مالوش يوزر/باسورد محفوظين). الباسورد بيتحفظ على الجهاز بس، مش في أي ملف. */
 (function(){
-  var AUTH='dpb_fs_auth', busy=false;
+  var AUTH='dpb_fs_auth', busy=false, cont=null;
   function $(i){return document.getElementById(i)}
   function box(){var m=$('dpbAdminPinModal');return m&&m.querySelector('.dpbBackupBox')}
   function msg(t,k){var e=$('dpbSyncMsg');if(!e)return;e.textContent=t||'';e.className='dpbSyncMsg'+(k?' '+k:'')}
   function saved(){try{return JSON.parse(localStorage.getItem(AUTH)||'null')}catch(_){return null}}
   function withTimeout(p,ms){return Promise.race([p,new Promise(function(_,rej){setTimeout(function(){rej(new Error('timeout'))},ms)})])}
-  function show(){
+  function needed(){var a=saved();return !(a&&a.email&&a.password)&&navigator.onLine!==false}
+  function show(cb){
+    cont=(typeof cb==='function')?cb:null;
     var b=box(),p=$('dpbSyncSetup');if(!b||!p)return;
     var a=saved();$('dpbSyncEmail').value=(a&&a.email)||'';$('dpbSyncPass').value='';$('dpbSyncPass').type='password';
     msg('');b.classList.add('syncMode');p.hidden=false;
     setTimeout(function(){try{(a&&a.email?$('dpbSyncPass'):$('dpbSyncEmail')).focus()}catch(_){}},60);
   }
   function hide(note){
+    cont=null;
     var b=box(),p=$('dpbSyncSetup');if(b)b.classList.remove('syncMode');if(p)p.hidden=true;
     if(note&&$('dpbAdminPinErr'))$('dpbAdminPinErr').textContent=note;
   }
@@ -10461,6 +10464,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       await withTimeout(F.testConnection(),25000);
       await withTimeout(F.usersCount(),20000);   /* قراءة حقيقية من السيرفر: لو الدخول مرفوض هتفشل هنا */
       $('dpbSyncPass').value='';
+      var next=cont;
+      if(next){hide('');cont=null;next();return}
       hide('✅ الجهاز اتربط بالمزامنة. اكتب كود الأدمن.');
       var e=$('dpbAdminPinErr');if(e)e.style.color='#7dffb4';setTimeout(function(){if(e)e.style.color=''},4000);
     }catch(err){
@@ -10478,7 +10483,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     else{var i=$('dpbSyncPass');i.type=i.type==='password'?'text':'password'}
   });
   document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target&&(ev.target.id==='dpbSyncPass'||ev.target.id==='dpbSyncEmail'))go()});
-  window.dpbAdminSyncSetup={show:show,hide:hide};
+  window.dpbAdminSyncSetup={show:show,hide:hide,needed:needed};
 })();
 </script>
 
@@ -11593,7 +11598,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     const p=q("dpbAdminProductionEditPage"); if(!p)return;
     p.classList.remove("open"); p.setAttribute("aria-hidden","true");
   }
-  function showAdminAfterPin(){
+  function showAdminAfterPin(force){
+    if(!force){try{var SS=window.dpbAdminSyncSetup;if(SS&&SS.needed()){SS.show(function(){showAdminAfterPin(true)});return}}catch(_){}}
     q("dpbAdminPinModal").style.display="none";q("dpbAdminPinModal").setAttribute("aria-hidden","true");
     q("dpbStartGate").classList.add('dpbForceHidden');q("dpbStartGate").style.display="none";q("dpbProjectHome").style.display="none";q("dpbAdminOverlay").style.display="block";q("dpbAdminOverlay").setAttribute("aria-hidden","false");
     refreshProcessSelect();refreshProjectSelect(['*']);renderAccounts();renderProductionEdits();
@@ -21582,7 +21588,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 </script>
 
 <script>
-/* v149: the device the Excel was uploaded from (or an admin logged in on) is the ADMIN device: it never gets supervisor alarms or admin-to-supervisor alerts */
+/* v150: the device the Excel was uploaded from (or switched to admin in Sync tab > device role) is the ADMIN device; an admin login alone no longer marks it: it never gets supervisor alarms or admin-to-supervisor alerts */
 window.dpbAdminDev=function(){try{return localStorage.getItem('DPB_ADMIN_DEVICE_V1')==='1'}catch(_){return false}};
 window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1','1')}catch(_){}};
 /* v135: supervisor reminders (alarm + message). The admin sets them per supervisor account (Admin Control Center); the supervisor's phone schedules them
@@ -21648,7 +21654,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
   }
   function accountsList(){try{return JSON.parse(lsGet(ACC_KEY)||'[]')||[]}catch(_){return[]}}
   window.dpbReminders={
-    onLogin:function(acc){if(!acc||!acc.name)return Promise.resolve(null);if(acc.isAdmin){window.dpbMarkAdminDev();var pp=LN();return pp?cancelMine(pp).then(function(){lsSet(SIG,'')}):Promise.resolve(null)}if(window.dpbAdminDev())return Promise.resolve({ok:false,why:'admin-device'});lsSet(LAST,acc.name);try{if(window.dpbPush)window.dpbPush.register(acc.name)}catch(_){}return apply(acc.name,acc.reminders)},
+    onLogin:function(acc){if(!acc||!acc.name)return Promise.resolve(null);if(acc.isAdmin){var pp=LN();return pp?cancelMine(pp).then(function(){lsSet(SIG,'')}):Promise.resolve(null)}if(window.dpbAdminDev())return Promise.resolve({ok:false,why:'admin-device'});lsSet(LAST,acc.name);try{if(window.dpbPush)window.dpbPush.register(acc.name)}catch(_){}return apply(acc.name,acc.reminders)},
     refresh:function(){
       var u=lsGet(LAST);if(!u)return Promise.resolve(null);
       var list=accountsList();if(!list.length)return Promise.resolve(null);
@@ -21657,6 +21663,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
       return apply(u,a.reminders);
     },
     build:build,
+    clear:function(){var p=LN();lsSet(SIG,'');lsSet(LAST,'');return p?cancelMine(p):Promise.resolve()},
     testNow:async function(){
       var p=LN();
       if(!p)return 'إضافة الإشعارات مش موجودة في التطبيق ده. لازم نسخة APK جديدة فيها الإضافة (@capacitor/local-notifications).';
@@ -21705,7 +21712,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
         try{await p.createChannel({id:'dpb-messages',name:'الرسائل',description:'رسائل الأدمن والمشرفين',importance:4,visibility:1,vibration:true})}catch(_){}
         if(!started){
           started=true;
-          p.addListener('registration',function(t){if(t&&t.value&&cur)save(cur,t.value)});
+          p.addListener('registration',function(t){if(t&&t.value){lsSet('DPB_FCM_LOCAL_TOK_V1',t.value);if(cur)save(cur,t.value)}});
           p.addListener('registrationError',function(e){try{console.warn('push reg error',e)}catch(_){}});
           p.addListener('pushNotificationReceived',async function(n){
             /* app is open: Android does not show the system notification, so show it ourselves */
@@ -21723,7 +21730,45 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
   setTimeout(function(){try{var u=lsGet('DPB_REM_LAST_SUP_V1');if(u&&window.dpbPush)window.dpbPush.register(u)}catch(_){}},6000);
 
   /* v141: the admin phone registers too (token under fcm_admin) so supervisor replies reach the admin while the app is closed */
-  setInterval(function(){try{var st=window.__dpbSupState;if(st&&st.account&&st.account.isAdmin&&cur!=='admin'&&window.dpbPush){window.dpbMarkAdminDev();window.dpbPush.register('admin')}}catch(_){}},8000);
+  setInterval(function(){try{var st=window.__dpbSupState;if(st&&st.account&&st.account.isAdmin&&cur!=='admin'&&window.dpbAdminDev&&window.dpbAdminDev()&&window.dpbPush){window.dpbPush.register('admin')}}catch(_){}},8000);
+})();
+</script>
+
+<script>
+/* v150: ADMIN device = where the Excel is uploaded (no supervisor alarms / alerts there).
+   Any other device = SUPERVISOR. The phone's own push token is removed from every key it must not own, so the server cannot send to the wrong phone. */
+(function(){
+  var ACC='DPB_SUPERVISOR_ACCOUNTS_V1', LASTK='DPB_REM_LAST_SUP_V1', TOKK='DPB_FCM_LOCAL_TOK_V1', SENT='DPB_FCM_TOKEN_SENT_V1';
+  function lsGet(k){try{return localStorage.getItem(k)}catch(_){return null}}
+  function lsSet(k,v){try{localStorage.setItem(k,v)}catch(_){}}
+  function lsDel(k){try{localStorage.removeItem(k)}catch(_){}}
+  function key(u){return 'fcm_'+String(u||'').trim().toLowerCase().replace(/[^a-z0-9_\-]/g,'_')}
+  function post(p){
+    var work=fetch('https://dpb-firebase.local/kv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}).then(function(r){return r.text()}).then(function(t){return JSON.parse(t)}).catch(function(){return null});
+    return Promise.race([work,new Promise(function(res){setTimeout(function(){res(null)},12000)})]);
+  }
+  function isAdmin(){return !!(window.dpbAdminDev&&window.dpbAdminDev())}
+  function names(){var out=[],l=lsGet(LASTK);try{(JSON.parse(lsGet(ACC)||'[]')||[]).forEach(function(a){if(a&&a.name)out.push(String(a.name))})}catch(_){}if(l)out.push(l);return out.filter(function(n,i,a){return n&&n.toLowerCase()!=='admin'&&a.map(function(x){return x.toLowerCase()}).indexOf(n.toLowerCase())===i})}
+  /* delete the token documents that hold THIS phone's token under a key it must not own */
+  async function dropMine(keys){
+    var mine=lsGet(TOKK);if(!mine)return 0;var n=0;
+    for(var i=0;i<keys.length;i++){
+      var r=await post({action:'kvGet',key:keys[i]});if(!r||!r.ok)continue;
+      var v=null;try{v=JSON.parse(r.json||'{}')}catch(_){}
+      if(v&&v.tok===mine){var d=await post({action:'kvDelete',key:keys[i]});if(d&&d.ok!==false)n++}
+    }
+    return n;
+  }
+  async function setAdmin(silent){
+    lsSet('DPB_ADMIN_DEVICE_V1','1');lsDel(SENT);
+    try{if(window.dpbReminders&&window.dpbReminders.clear)await window.dpbReminders.clear()}catch(_){}
+    try{await dropMine(names().map(key))}catch(_){}
+    try{if(window.dpbPush)window.dpbPush.register('admin')}catch(_){}
+    return true;
+  }
+  window.dpbDeviceRole={setAdmin:setAdmin};
+  /* on the admin phone, once per app start: make sure no supervisor key holds this phone's token */
+  setTimeout(function(){try{if(isAdmin()&&navigator.onLine!==false&&!sessionStorage.getItem('dpb_role_clean')){sessionStorage.setItem('dpb_role_clean','1');dropMine(names().map(key))}}catch(_){}},15000);
 })();
 </script>
 

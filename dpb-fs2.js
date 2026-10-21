@@ -244,7 +244,7 @@
         app = appM.getApps().length ? appM.getApp() : appM.initializeApp(conf);
         // experimentalForceLongPolling: some networks / WebViews throttle or buffer Firestore's streaming channel, so reads work but writes hang for minutes (the warning bar showed "read ok, write stuck").
         // Long polling uses plain request/response calls that such networks let through. Never combined with auto-detect (the SDK refuses both together).
-        try { var tr = ls('dpb_fs2_transport', 'lp'), st0 = { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }; if (tr === 'lp') st0.experimentalForceLongPolling = true; else if (tr === 'auto') st0.experimentalAutoDetectLongPolling = true; dlog('transport', tr); db = fs.initializeFirestore(app, st0); } catch (e) { try { console.warn('[dpb-fs2] initializeFirestore failed, using default instance', e && e.message); } catch (x) {} db = fs.getFirestore(app); }
+        if (window.__dpbFs2Db) { db = window.__dpbFs2Db; } else try { var tr = ls('dpb_fs2_transport', 'lp'), st0 = { localCache: fs.persistentLocalCache({ tabManager: (window.Capacitor && fs.persistentSingleTabManager) ? fs.persistentSingleTabManager({ forceOwnership: true }) : fs.persistentMultipleTabManager() }) }; if (tr === 'lp') st0.experimentalForceLongPolling = true; else if (tr === 'auto') st0.experimentalAutoDetectLongPolling = true; dlog('transport', tr); db = fs.initializeFirestore(app, st0); window.__dpbFs2Db = db; } catch (e) { try { console.warn('[dpb-fs2] initializeFirestore failed, using default instance', e && e.message); } catch (x) {} db = fs.getFirestore(app); window.__dpbFs2Db = db; }
       }
       var auth = authM.getAuth(app), ac; window.__dpbFs2Tok = function (force) { try { return auth.currentUser ? auth.currentUser.getIdToken(!!force) : Promise.resolve(); } catch (e) { return Promise.reject(e); } }; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       // Offline start: auth.currentUser is empty until the SDK has restored the saved user from the device, so wait for that FIRST.
@@ -545,7 +545,7 @@
   // network channel of Firestore. Queued writes and listeners are kept by the SDK. At most once a minute.
   var lastBounce = 0, bounces = 0, bouncing = false;
   function bounceNow(why) {
-    if (Date.now() - lastBounce < 60000 || bouncing || navigator.onLine === false) return Promise.resolve(false);
+    if (Date.now() - lastBounce < 60000 || bouncing || navigator.onLine === false || (window.__dpbFs2W && window.__dpbFs2W.asserts)) return Promise.resolve(false);
     lastBounce = Date.now(); bounces++; bouncing = true; dlog('bounce', why);
     return getAdapter().then(function (a) { var tk = null; try { tk = window.__dpbFs2Tok ? window.__dpbFs2Tok(true).catch(function () {}) : null; } catch (e) {} return Promise.resolve(tk).then(function () { return a.bounce ? a.bounce() : null; }); }).then(function () { bouncing = false; dlog('bounce-done', ''); return true; }, function (e) { bouncing = false; dlog('bounce-fail', e && (e.code || e.message)); return false; });
   }
