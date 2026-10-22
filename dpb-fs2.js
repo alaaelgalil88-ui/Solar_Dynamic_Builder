@@ -1410,8 +1410,9 @@
 
   /* ---- automatic backup: every N minutes, only when the data changed since the last one (each run reads every document once, so it is meant for ONE device - the admin's) ---- */
   var bkBusy = false, bkLastVer = null;
+  function bkAdminDev() { try { return localStorage.getItem('DPB_ADMIN_DEVICE_V1') === '1' || localStorage.getItem('dpb_fs2_bk_admin') === '1'; } catch (e) { return false; } }
   function bkAutoTick(force) {
-    if (!on() || !curStore() || (!force && ls('dpb_fs2_bk_auto', 'off') !== 'on') || bkBusy) return Promise.resolve('skip');
+    if (!on() || !curStore() || (!force && (ls('dpb_fs2_bk_auto', 'off') !== 'on' || !bkAdminDev())) || bkBusy) return Promise.resolve('skip');
     var min = Number(ls('dpb_fs2_bk_min', '30')) || 30, last = Number(ls('dpb_fs2_bk_last', '0')) || 0;
     if (!force && (Date.now() - last < min * 60000 || bkLastVer === version)) return Promise.resolve('skip');
     bkBusy = true; var ver = version;
@@ -1438,7 +1439,7 @@
     el.textContent = failedAt ? ('الحالة: شغّالة لكن مش متصلة ❌ — ' + lastErr) : 'الحالة: بتتصل بـ Firestore…';
   }
   function mountCard() {
-    var host = document.querySelector('.dpbAdminTabPanel[data-tab="sync"]');
+    var host = document.getElementById('dpbBackupScreenHost');
     if (!host || document.getElementById('dpbFs2Card')) return;
     var c = document.createElement('section'); c.className = 'dpbAdminCard'; c.id = 'dpbFs2Card';
     c.innerHTML = '<h3>🧩 الطبقة الجديدة (كل الخرائط)</h3>' +
@@ -1530,7 +1531,7 @@
       bkGet('current').then(function (o) { return o && driveOn() ? bkDriveUpload(o) : null; }).then(function (d) { if (d) say(d.ok ? '📧 تم ☁️' : '⚠ Drive: ' + d.error); paintBk(); });
     });
     var au = $('dpbFs2Auto'), am = $('dpbFs2AutoMin'); au.checked = ls('dpb_fs2_bk_auto', 'off') === 'on'; am.value = ls('dpb_fs2_bk_min', '30');
-    au.addEventListener('change', function () { lsSet('dpb_fs2_bk_auto', au.checked ? 'on' : 'off'); say(au.checked ? 'النسخ التلقائي شغّال: كل ' + am.value + ' دقيقة لو في تغيير.' : 'النسخ التلقائي اتقفل.'); });
+    au.addEventListener('change', function () { lsSet('dpb_fs2_bk_auto', au.checked ? 'on' : 'off'); if (au.checked) lsSet('dpb_fs2_bk_admin', '1'); say(au.checked ? 'النسخ التلقائي شغّال: كل ' + am.value + ' دقيقة لو في تغيير.' : 'النسخ التلقائي اتقفل.'); });
     am.addEventListener('change', function () { lsSet('dpb_fs2_bk_min', am.value); });
     $('dpbFs2Backup').addEventListener('click', function () {
       if (!on()) { say('شغّل الطبقة الجديدة الأول.'); return; }

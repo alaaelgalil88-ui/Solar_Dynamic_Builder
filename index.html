@@ -1182,13 +1182,6 @@ window.XLSX = (() => {
 .dpbSupMeta{font-size:8px!important;line-height:1.12!important;margin-top:auto!important}
 /* Backup information must remain visible and readable without internal scrolling. */
 #dpbBackupModal .dpbBackupBox{overflow:hidden!important}
-#dpbBackupModal .dpbBackupLiveInfo{display:grid!important;grid-template-columns:1fr 1fr!important;gap:7px!important;margin-top:8px!important}
-#dpbBackupModal .dpbBackupLiveInfo>div{display:flex!important;flex-direction:column!important;gap:3px!important;padding:8px!important;border:1px solid #d7dde5!important;border-radius:11px!important;background:#f1f5f9!important;min-width:0!important}
-#dpbBackupModal .dpbBackupLiveInfo b{font-size:10px!important;color:#52606d!important}
-#dpbBackupModal .dpbBackupLiveInfo span{display:block!important;font-size:11px!important;font-weight:900!important;color:#17212b!important;line-height:1.3!important;white-space:normal!important;overflow-wrap:anywhere!important}
-#dpbBackupModal .dpbBackupStateGrid{margin-top:7px!important}
-#dpbBackupModal .dpbBackupState{min-width:0!important;overflow:hidden!important}
-#dpbBackupModal .dpbBackupState span{display:block!important;font-size:11px!important;font-weight:900!important;color:#17212b!important;line-height:1.35!important;white-space:normal!important;overflow-wrap:anywhere!important}
 @media(max-width:520px){
   .dpbSupTrackerGrid{gap:6px!important}
   .dpbSupTracker{padding:7px!important;border-radius:12px!important}
@@ -1197,10 +1190,6 @@ window.XLSX = (() => {
   .dpbSupTrackerRow{font-size:8px!important}
   .dpbSupProgress{height:4px!important;margin:6px 0 4px!important}
   .dpbSupMeta{font-size:7px!important}
-  #dpbBackupModal .dpbBackupLiveInfo{gap:6px!important}
-  #dpbBackupModal .dpbBackupLiveInfo>div{padding:7px!important}
-  #dpbBackupModal .dpbBackupLiveInfo b{font-size:9px!important}
-  #dpbBackupModal .dpbBackupLiveInfo span,#dpbBackupModal .dpbBackupState span{font-size:10px!important}
 }
 </style>
 
@@ -1307,14 +1296,6 @@ window.XLSX = (() => {
   opacity:1!important;
   font-weight:800!important;
   text-indent:0!important;
-}
-#dpbBackupModal .dpbBackupRow select#dpbBackupUnit option{
-  color:#111827!important;
-  background:#fff!important;
-}
-#dpbBackupModal .dpbBackupRow input#dpbBackupInterval::placeholder{
-  color:#6b7280!important;
-  opacity:1!important;
 }
 </style>
 
@@ -1955,15 +1936,7 @@ html,body{max-width:100%;overflow-x:hidden!important}
 </style>
 
 <style id="dpbBackupDocumentsControls">
-#dpbBackupModal .dpbBackupActions button.secondary{
-  background:#e7eef7!important;color:#123!important;border:0!important;
-}
-#dpbBackupModal #dpbBackupFolderStatus{
-  padding:6px 2px 0;text-align:center;font-size:11px;line-height:1.35;
-}
 @media(max-width:520px){
-  #dpbBackupModal .dpbBackupActions{gap:7px!important}
-  #dpbBackupModal .dpbBackupActions button{min-height:52px!important;font-size:13px!important}
 }
 </style>
 <style id="dpbFinalCompactEntryV3">
@@ -10320,56 +10293,35 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 
 <button id="dpbProjectHome" type="button" aria-label="Home" title="Home">⌂</button>
 
-<div id="dpbBackupModal" class="dpbBackupModal" aria-hidden="true">
+<style id="dpbBackupScreenCss">
+/* v155: شاشة 💾 الجديدة (نفس شكل الإطار والإغلاق القديم، الجوّا كارت الطبقة الجديدة) */
+#dpbBackupScreen{align-items:flex-start;padding:max(14px,env(safe-area-inset-top)) 12px 14px}
+#dpbBackupScreen .dpbBackupBox{max-height:calc(100vh - 28px);overflow-y:auto!important;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:16px 14px}
+#dpbBackupScreen .dpbBackupBox h2{font-size:26px;margin:0 0 12px}
+#dpbBackupScreenHost #dpbFs2Card{background:#0b1626;border:1px solid #243b57;border-radius:20px;padding:14px;color:#eaf2f8;margin:0}
+#dpbBackupScreen .dpbBackupClose{position:sticky;bottom:0}
+/* ثيم فاتح زي صورة ١ */
+#dpbBackupScreenHost #dpbFs2Card{background:#fff!important;border:1px solid #d7dde5!important;color:#17212b!important}
+#dpbBackupScreenHost #dpbFs2Card>h3{color:#17212b!important;font-size:20px}
+#dpbBackupScreenHost #dpbFs2Card .hint,#dpbBackupScreenHost #dpbFs2Card>.hint{color:#707782!important;background:transparent!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2Sec,#dpbBackupScreenHost #dpbFs2Card .fs2Lbl,#dpbBackupScreenHost #dpbFs2Card .fs2BoxT{color:#52606d!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2Opt,#dpbBackupScreenHost #dpbFs2Card details,#dpbBackupScreenHost #dpbFs2Card .fs2Box{background:#eef1f5!important;border:1px solid #ccd5df!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2OptT{color:#123!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2OptS,#dpbBackupScreenHost #dpbFs2Card details summary{color:#5c6672!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2OptS select{background:#fff!important;color:#123!important;border:1px solid #ccd5df!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2Box>.hint{color:#17212b!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2Btns>button,#dpbBackupScreenHost #dpbFs2Card details button,#dpbBackupScreenHost #dpbFs2Card details select{background:#e7eef7!important;color:#123!important;border:1px solid #ccd5df!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2Btns>button#dpbFs2Backup{background:#1769c2!important;color:#fff!important;border-color:#1769c2!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2SwTrack{background:#c6cdd6!important;border-color:#b3bcc7!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2Sw input:checked+.fs2SwTrack{background:#1769c2!important;border-color:#1769c2!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2Fld input{background:#fff!important;color:#123!important;border:1px solid #ccd5df!important}
+#dpbBackupScreenHost #dpbFs2Card .fs2Chip{background:#fff!important;border-color:#ccd5df!important;color:#123!important}
+</style>
+<div id="dpbBackupScreen" class="dpbBackupModal" aria-hidden="true">
   <div class="dpbBackupBox">
     <h2>النسخ الاحتياطي 💾</h2>
-    <div class="dpbBackupPanel">
-      <h3 style="margin:0;font-size:22px">النسخ الاحتياطي التلقائي</h3>
-      <p>يعمل في الخلفية بدون رسائل مزعجة. يحتفظ بنسختين فقط: الحالية والسابقة. كل نسخة جديدة تصبح هي الحالية، والحالية القديمة تصبح السابقة، وتُكتب فوق نفس الملفين على الهاتف وعلى Google Drive.</p>
-      <div class="dpbBackupRow">
-        <label class="dpbBackupTimeField"><span>المدة</span><input id="dpbBackupInterval" type="number" min="1" step="1" value="5"></label>
-        <label class="dpbBackupTimeField"><span>الوحدة</span><select id="dpbBackupUnit">
-          <option value="minutes">دقائق</option><option value="hours">ساعات</option><option value="days">أيام</option><option value="weeks">أسابيع</option><option value="months">شهور</option>
-        </select></label>
-      </div>
-      <label class="dpbBackupSwitchRow">
-        <span id="dpbBackupAutoToggleLabel" class="dpbBackupSwitchText">النسخ التلقائي: تشغيل</span>
-        <span class="dpbBackupSwitch">
-          <input id="dpbBackupAutoToggle" type="checkbox" checked>
-          <span class="dpbBackupSwitchTrack"><span class="dpbBackupSwitchThumb"></span></span>
-        </span>
-      </label>
-      <div id="dpbBackupModalStatus" class="dpbBackupLast">النسخ التلقائي مفعل.</div>
-      <div class="dpbBackupLiveInfo" aria-live="polite">
-        <div><b>الفترة الحالية</b><span id="dpbBackupScheduleInfo">—</span></div>
-        <div><b>موعد النسخة القادمة</b><span id="dpbBackupNextInfo">—</span></div>
-      </div>
-      <div class="dpbBackupStateGrid">
-        <div class="dpbBackupState"><b>النسخة الحالية</b><span id="dpbBackupCurrentInfo">لا توجد</span></div>
-        <div class="dpbBackupState"><b>النسخة السابقة</b><span id="dpbBackupPreviousInfo">لا توجد</span></div>
-      </div>
-      <div class="dpbBackupActions">
-        <button id="dpbBackupModalNow">Backup Now 📦</button>
-        <button id="dpbRestoreModal" class="secondary">Restore 📥</button>
-      </div>
-      <div class="dpbBackupActions" style="margin-top:8px">
-        <button id="dpbBackupChooseFolder" class="secondary">Location 📁</button>
-        <button id="dpbBackupShareFile" class="secondary">Export 📤</button>
-      </div>
-      <label class="dpbBackupSwitchRow">
-        <span id="dpbBackupDriveToggleLabel" class="dpbBackupSwitchText">☁️ رفع نسخة على Google Drive: تشغيل</span>
-        <span class="dpbBackupSwitch">
-          <input id="dpbBackupDriveToggle" type="checkbox" checked>
-          <span class="dpbBackupSwitchTrack"><span class="dpbBackupSwitchThumb"></span></span>
-        </span>
-      </label>
-      <input id="dpbBackupScriptUrl" type="url" inputmode="url" autocomplete="off" placeholder="رابط سكربت النسخ الاحتياطي (ينتهي بـ /exec)" style="width:100%;box-sizing:border-box;margin-top:8px;padding:11px 12px;border-radius:10px;border:1px solid #c9d6e6;background:#fff;color:#111;font-size:15px;direction:ltr;text-align:left">
-      <input id="dpbBackupDriveEmail" type="email" inputmode="email" autocomplete="off" placeholder="إيميل Google Drive اللي تترفع عليه النسخة" style="width:100%;box-sizing:border-box;margin-top:8px;padding:11px 12px;border-radius:10px;border:1px solid #c9d6e6;background:#fff;color:#111;font-size:15px;direction:ltr;text-align:left">
-      <div id="dpbBackupFolderStatus" class="dpbBackupLast">لم يتم اختيار مجلد خارجي بعد.</div>
-      <div id="dpbBackupOutCard" class="dpbBackupLast" style="line-height:1.9"></div>
-      <input id="dpbRestoreModalFile" type="file" accept=".json,application/json" style="display:none">
-    </div>
-    <button id="dpbBackupModalClose" class="dpbBackupClose">إغلاق</button>
+    <div id="dpbBackupScreenHost"></div>
+    <button id="dpbBackupScreenClose" class="dpbBackupClose" type="button">إغلاق</button>
   </div>
 </div>
 
@@ -11032,559 +10984,12 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     else a.push({id:uid(),...payload,createdAt:new Date().toISOString()});
     saveAccounts(a);pushAccountToSheet(payload);resetForm();alert("تم حفظ حساب المشرف وتحديد صلاحيات العمليات.");
   }
-  const BACKUP_DB_NAME="DPB_BACKUP_DB_V4",BACKUP_DB_STORE="backups";
-  const BACKUP_CURRENT_KEY="DPB_BACKUP_CURRENT_V2";
-  const BACKUP_PREVIOUS_KEY="DPB_BACKUP_PREVIOUS_V2";
-  const BACKUP_LAST_CHANGE_KEY="DPB_BACKUP_LAST_CHANGE_V2";
-  const BACKUP_CURRENT_TIME_KEY="DPB_BACKUP_CURRENT_TIME_V2";
-  const BACKUP_PREVIOUS_TIME_KEY="DPB_BACKUP_PREVIOUS_TIME_V2";
-  const BACKUP_DIR_HANDLE_KEY="documentsDirectoryHandle";
-  let backupDbPromise=null,dpbBackupTimer=null,dpbBackupSelectedFile=null;
-
-  // ===== Native Android bridge hooks (used only if this page is wrapped in a real
-  // Android app that injects window.DPB_NATIVE_BRIDGE via addJavascriptInterface).
-  // On a normal mobile browser, window.DPB_NATIVE_BRIDGE stays undefined and every
-  // function below falls back to the existing web behavior — nothing changes today.
-  function dpbHasNativeBridge(){
-    return typeof window!=="undefined" && !!window.DPB_NATIVE_BRIDGE;
-  }
-  // Native side must implement: chooseFolder() -> string|null (persisted folder name/uri),
-  // writeBackupFile(name, jsonText) -> boolean, hasFolder() -> boolean.
-  async function nativeChooseFolder(){
-    const name = await window.DPB_NATIVE_BRIDGE.chooseFolder();
-    return name || null;
-  }
-  async function nativeWriteBackupFile(name, text){
-    return await window.DPB_NATIVE_BRIDGE.writeBackupFile(name, text);
-  }
-  async function nativeHasFolder(){
-    try{ return !!(await window.DPB_NATIVE_BRIDGE.hasFolder()); }catch(_){ return false; }
-  }
-  // Exposed so a native background job (WorkManager -> headless WebView) can load this
-  // same page and call these directly without going through the UI at all.
-  window.dpbRunAutoBackupCheck = ()=>autoBackup();
-  window.dpbGetBackupSnapshot = ()=>snapshot();
-
-  function openBackupDb(){
-    if(!window.indexedDB)return Promise.resolve(null);
-    if(backupDbPromise)return backupDbPromise;
-    backupDbPromise=new Promise(resolve=>{
-      try{
-        const r=indexedDB.open(BACKUP_DB_NAME,1);
-        r.onupgradeneeded=()=>{
-          if(!r.result.objectStoreNames.contains(BACKUP_DB_STORE))
-            r.result.createObjectStore(BACKUP_DB_STORE);
-        };
-        r.onsuccess=()=>resolve(r.result);
-        r.onerror=()=>resolve(null);
-      }catch(_){resolve(null)}
-    });
-    return backupDbPromise;
-  }
-  async function backupDbGet(k){
-    const db=await openBackupDb();if(!db)return null;
-    return new Promise(resolve=>{
-      try{
-        const tx=db.transaction(BACKUP_DB_STORE,"readonly"),r=tx.objectStore(BACKUP_DB_STORE).get(k);
-        r.onsuccess=()=>resolve(r.result??null);r.onerror=()=>resolve(null);
-      }catch(_){resolve(null)}
-    });
-  }
-  async function backupDbPut(k,v){
-    const db=await openBackupDb();if(!db)return false;
-    return new Promise(resolve=>{
-      try{
-        const tx=db.transaction(BACKUP_DB_STORE,"readwrite");
-        tx.objectStore(BACKUP_DB_STORE).put(v,k);
-        tx.oncomplete=()=>resolve(true);tx.onerror=()=>resolve(false);tx.onabort=()=>resolve(false);
-      }catch(_){resolve(false)}
-    });
-  }
-  async function backupCurrentData(){
-    const idb=await backupDbGet("current");if(idb)return idb;
-    try{const x=localStorage.getItem(BACKUP_CURRENT_KEY);return x?JSON.parse(x):null}catch(_){return null}
-  }
-
-  function snapshot(){
-    const p=(typeof project!=="undefined"&&project)?project:{};
-    let testSnapshot=null;
-    try{testSnapshot=JSON.parse(localStorage.getItem("DPB_TEST_PROJECT_SNAPSHOT_V3")||"null")}catch(_){}
-    return {
-      version:4,createdAt:new Date().toISOString(),
-      supervisorAccounts:typeof accounts==="function"?accounts():[],
-      supervisorRecords:(()=>{try{return JSON.parse(localStorage.getItem("DPB_SHARED_PRODUCTION_V2")||"{}")}catch(_){return {}}})(),
-      planFileName:p.planFileName||testSnapshot?.planFileName||"",
-      testSnapshot,
-      backupMode:localStorage.getItem(BACKUP_MODE_KEY)||"auto",
-      backupInterval:localStorage.getItem("DPB_BACKUP_INTERVAL_V1")||"5",
-      backupUnit:localStorage.getItem("DPB_BACKUP_UNIT_V1")||"minutes"
-    };
-  }
-
-  // احتياط: لو في مسار حفظ ما بلّغش بالتعديل، بنقارن بصمة البيانات نفسها بآخر نسخة، فأي تعديل فعلي يتحسب.
-  const BACKUP_SIG_KEY="DPB_BACKUP_SIG_V1";
-  const _sigMemo={};
-  function sourceSig(){
-    // Same signature as before (hash of every character), but a value that did not change since the last call reuses its previous
-    // hash instead of being re-hashed: hashing the whole production store (MBs) was costing 0.3 s+ on a phone at every check.
-    let h=5381,n=0;
-    ["DPB_SHARED_PRODUCTION_V2","DPB_TEST_PROJECT_SNAPSHOT_V3",ACC_KEY].forEach(k=>{
-      let v="";try{v=localStorage.getItem(k)||""}catch(_){}
-      n+=v.length;
-      let m=_sigMemo[k];
-      if(!m||m.v!==v){
-        let x=h;for(let i=0;i<v.length;i++){x=((x<<5)+x+v.charCodeAt(i))|0}
-        m=_sigMemo[k]={v:v,seed:h,out:x};
-      }else if(m.seed!==h){
-        let x=h;for(let i=0;i<v.length;i++){x=((x<<5)+x+v.charCodeAt(i))|0}
-        m.seed=h;m.out=x;
-      }
-      h=m.out;
-    });
-    return h+":"+n;
-  }
-  let sigTick=0;
-  function checkSigChange(){
-    if(Date.now()-sigTick<30000)return;sigTick=Date.now();
-    try{
-      const now=sourceSig(),old=localStorage.getItem(BACKUP_SIG_KEY);
-      if(old===null){localStorage.setItem(BACKUP_SIG_KEY,now);return}
-      if(old!==now&&!Number(localStorage.getItem(BACKUP_LAST_CHANGE_KEY)||0))markDataChanged();
-    }catch(_){}
-  }
-  function markDataChanged(){
-    try{
-      // المزامنة بتنادي هنا في كل سحب حتى لو مفيش جديد: نعلّم "تعديل" بس لو البيانات فعلًا اختلفت عن آخر نسخة
-      // already marked as changed -> nothing to do; checked first so the big store is not hashed on every save
-      if(Number(localStorage.getItem(BACKUP_LAST_CHANGE_KEY)||0))return;
-      const old=localStorage.getItem(BACKUP_SIG_KEY);
-      if(old!==null&&sourceSig()===old)return;
-      // ولو في تعديل معلّق أصلًا منزحزحش موعده (المزامنة المتكررة كانت بتأجّل النسخة للأبد)
-      localStorage.setItem(BACKUP_LAST_CHANGE_KEY,String(Date.now()));
-    }catch(_){}
-  }
-  window.__dpbMarkDataChanged=markDataChanged;
-
-  function intervalMs(n,unit){
-    n=Math.max(1,Number(n)||1);
-    return n*(unit==="minutes"?60000:unit==="hours"?3600000:unit==="days"?86400000:unit==="weeks"?604800000:2592000000);
-  }
-  function addInterval(ts,n,unit){
-    const d=new Date(ts);n=Math.max(1,Number(n)||1);
-    if(unit==="months"){
-      const day=d.getDate();d.setDate(1);d.setMonth(d.getMonth()+n);
-      const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
-      d.setDate(Math.min(day,last));return d.getTime();
-    }
-    return ts+intervalMs(n,unit);
-  }
-  function scheduleDueAt(changeAt){
-    const n=Math.max(1,Number(localStorage.getItem("DPB_BACKUP_INTERVAL_V1")||5));
-    const unit=localStorage.getItem("DPB_BACKUP_UNIT_V1")||"minutes";
-    return addInterval(Number(changeAt)||Date.now(),n,unit);
-  }
-
-  async function getDocumentsDirectoryHandle(){
-    return await backupDbGet(BACKUP_DIR_HANDLE_KEY);
-  }
-  async function setDocumentsDirectoryHandle(handle){
-    return await backupDbPut(BACKUP_DIR_HANDLE_KEY,handle);
-  }
-  async function requestDocumentsFolder(){
-    if(dpbHasNativeBridge()){
-      const name=await nativeChooseFolder();
-      if(!name)throw new Error("لم يتم اختيار المجلد.");
-      await setDocumentsDirectoryHandle({native:true,name});
-      if(q("dpbBackupFolderStatus"))q("dpbBackupFolderStatus").textContent="📁 تم اختيار المجلد. سيُستخدم لحفظ النسخ الخارجية.";
-      return {native:true,name};
-    }
-    if(!window.showDirectoryPicker)throw new Error("اختيار المجلد غير مدعوم في هذا المتصفح. متاح فقط داخل التطبيق أو على متصفح كمبيوتر.");
-    const handle=await window.showDirectoryPicker({mode:"readwrite"});
-    await setDocumentsDirectoryHandle(handle);
-    if(q("dpbBackupFolderStatus"))q("dpbBackupFolderStatus").textContent="📁 تم اختيار المجلد. سيُستخدم لحفظ النسخ الخارجية.";
-    return handle;
-  }
-  async function ensureDirectoryPermission(handle){
-    if(!handle)return false;
-    try{
-      if(handle.queryPermission){
-        const current=await handle.queryPermission({mode:"readwrite"});
-        if(current==="granted")return true;
-      }
-      if(handle.requestPermission){
-        const next=await handle.requestPermission({mode:"readwrite"});
-        return next==="granted";
-      }
-    }catch(_){}
-    return false;
-  }
-  // ===== نسخة برّه التطبيق: الهاتف + Google Drive، دايمًا نسختين بس (الحالية + السابقة) وبنفس أسماء الملفات =====
-  const BK_CUR_NAME="DPB_Backup_current.json", BK_PREV_NAME="DPB_Backup_previous.json";
-  const PHONE_PENDING_KEY="DPB_BACKUP_PHONE_PENDING_V1";
-  const DRIVE_EMAIL_KEY="DPB_BACKUP_DRIVE_EMAIL_V1", OUT_STATUS_KEY="DPB_BACKUP_OUT_STATUS_V1", DRIVE_ON_KEY="DPB_BACKUP_DRIVE_V1", DRIVE_PENDING_KEY="DPB_BACKUP_DRIVE_PENDING_V1";
-  const IS_LOCAL_HOST=/^(localhost|127\.0\.0\.1)$/.test(location.hostname)&&location.protocol==='http:'&&!window.Capacitor; /* the Capacitor app is served from https://localhost: that is NOT a dev machine */
-  // على localhost الرفع على Drive مقفول افتراضيًا (عشان بيانات التجربة ما تكتبش فوق نسخة الشغل الحقيقية)
-  function driveEnabled(){
-    let v=null;try{v=localStorage.getItem(DRIVE_ON_KEY)}catch(_){}
-    return v===null?!IS_LOCAL_HOST:v!=="off";
-  }
-  function driveEmail(){try{return String(localStorage.getItem(DRIVE_EMAIL_KEY)||"").trim()}catch(_){return ""}}
-  function validEmail(e){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)}
-  function readOutStatus(){try{return JSON.parse(localStorage.getItem(OUT_STATUS_KEY)||"{}")||{}}catch(_){return {}}}
-  function setOutStatus(kind,val){
-    const o=readOutStatus();o[kind]=val;
-    try{localStorage.setItem(OUT_STATUS_KEY,JSON.stringify(o))}catch(_){}
-    renderOutStatus();
-  }
-  function fmtWhen(t){
-    const d=new Date(t),today=new Date();
-    const tm=d.toLocaleTimeString("ar-EG",{hour:"numeric",minute:"2-digit"});
-    return d.toDateString()===today.toDateString()?("الساعة "+tm):(d.toLocaleDateString("ar-EG")+" "+tm);
-  }
-  function renderOutStatus(){
-    const box=q("dpbBackupOutCard");if(!box)return;
-    const st=readOutStatus();box.textContent="";
-    const add=(txt,color)=>{const d=document.createElement("div");d.textContent=txt;if(color)d.style.color=color;box.appendChild(d);return d};
-    add("آخر حفظ برّه التطبيق:");
-    const ph=st.phone;
-    if(!ph)add("📱 على الهاتف: لم يتم بعد");
-    else if(ph.ok)add("📱 على الهاتف: ✔ نجح "+fmtWhen(ph.time)+(ph.where?" ("+ph.where+")":""),"#7be08a");
-    else add("📱 على الهاتف: ✖ "+(ph.error||"فشل")+" ("+fmtWhen(ph.time)+")","#ff8080");
-    const dr=st.drive;
-    if(!driveEnabled())add("☁️ Google Drive: متوقف");
-    else if(!dr)add("☁️ Google Drive: لم يتم بعد");
-    else{
-      const row=add(dr.ok?("☁️ Google Drive: ✔ نجح "+fmtWhen(dr.time)):("☁️ Google Drive: ✖ "+(dr.error||"فشل")+" ("+fmtWhen(dr.time)+")"),dr.ok?"#7be08a":"#ff8080");
-      if(dr.ok&&dr.url&&/^https:\/\//.test(dr.url)){
-        const a=document.createElement("a");a.href=dr.url;a.target="_blank";a.rel="noopener";a.textContent=" 🔗 فتح الملف";a.style.color="#8ec5ff";row.appendChild(a);
-      }
-      if(dr.ok&&dr.sharedWith)add("📧 مشاركة مع: "+dr.sharedWith+" ✔","#7be08a");
-      else if(dr.ok&&dr.shareError)add("📧 تعذّرت المشاركة مع "+(driveEmail()||"الإيميل")+": "+dr.shareError,"#ff8080");
-      else if(dr.ok&&!driveEmail())add("📧 اكتب إيميل Drive عشان النسخة تظهر عنده");
-      {const acc=dr.sharedWith||driveEmail()||dr.owner;if(dr.ok&&acc)add("الملف محفوظ في حساب: "+acc)}
-    }
-  }
-  function capFS(){
-    try{return window.__DPB_NATIVE&&window.__DPB_PLUG?window.__DPB_PLUG('Filesystem'):null}catch(_){return null}
-  }
-  async function writeFilesToHandle(handle,files){
-    for(const f of files){
-      const fh=await handle.getFileHandle(f.name,{create:true});
-      const w=await fh.createWritable();await w.write(f.text);await w.close();   // بتكتب فوق الملف الموجود
-    }
-  }
-  // بيكتب الملفين على الهاتف/الجهاز. interactive=true (ضغطة زرار) يسمح بنافذة اختيار مجلد أو مشاركة. التلقائي ما بيفتحش أي نافذة.
-  async function writePhoneFiles(files,interactive){
-    let lastErr="";
-    if(dpbHasNativeBridge()){
-      try{
-        if(await nativeHasFolder()){
-          for(const f of files){
-            const ok=await nativeWriteBackupFile(f.name,f.text);
-            if(!ok)throw new Error("تعذّرت الكتابة في المجلد المختار");
-          }
-          return {ok:true,where:"المجلد المختار"};
-        }
-        lastErr="لم يتم اختيار مجلد للحفظ بعد";
-      }catch(e){console.warn("native backup write failed",e);lastErr=(e&&e.message)||"تعذّرت الكتابة في المجلد المختار"}
-    }
-    try{
-      let handle=await getDocumentsDirectoryHandle();
-      if(handle&&!handle.native){
-        if(await ensureDirectoryPermission(handle)){
-          await writeFilesToHandle(handle,files);
-          return {ok:true,where:"المجلد المختار"};
-        }
-        lastErr="المتصفح محتاج إذن المجلد — افتح النسخ الاحتياطي واضغط «نسخ احتياطي الآن»";
-      }else if(!handle&&interactive&&window.showDirectoryPicker&&!dpbHasNativeBridge()){
-        handle=await requestDocumentsFolder();
-        await writeFilesToHandle(handle,files);
-        return {ok:true,where:"المجلد المختار"};
-      }
-    }catch(e){console.warn("Documents write failed",e);lastErr=(e&&e.message)||lastErr||"تعذّرت الكتابة في المجلد"}
-    // تطبيق Capacitor من غير bridge للمجلد: Documents/DPB، وكل مرة فوق نفس الملفين
-    const fs=capFS();
-    if(fs){
-      try{
-        for(const f of files)await fs.writeFile({path:"DPB/"+f.name,data:f.text,directory:"DOCUMENTS",encoding:"utf8",recursive:true});
-        return {ok:true,where:"Documents/DPB"};
-      }catch(e){console.warn("capacitor backup write failed",e);lastErr=(e&&e.message)||"تعذّرت الكتابة في Documents/DPB"}
-    }
-    if(interactive){
-      // آخر حل: تنزيل/مشاركة ملف النسخة الحالية
-      const blob=new Blob([files[0].text],{type:"application/json"});
-      const url=URL.createObjectURL(blob),a=document.createElement("a");
-      a.href=url;a.download=files[0].name;
-      document.body.appendChild(a);a.click();a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),1500);
-      return {ok:true,where:window.__DPB_NATIVE?"نافذة المشاركة":"مجلد التنزيلات"};
-    }
-    return {ok:false,error:lastErr||"لم يتم اختيار مكان للحفظ على الهاتف"};
-  }
-  function driveErrorText(res){
-    const raw=String((res&&res.error)||"");
-    if(/Unknown action/i.test(raw))return "Code.gs المنشور ما فيهوش النسخ الاحتياطي — انشر نسخة جديدة (Deploy > Manage deployments > Version: New version)";
-    if(/unauthorized|401/i.test(raw)||(res&&res.code===401))return "سجّل دخول من جديد (التوكن غير صالح)";
-    if(res&&res.__reachable===false){
-      if(navigator.onLine===false)return "لا يوجد اتصال بالإنترنت";
-      if(window.DPB_backupUrl&&window.DPB_backupUrl()){
-        if(res.__probe==="get-ok")return "الرابط شغال لكن رفع النسخة اتمنع — في Apps Script: شغّل دالة authorizeBackup مرة واحدة ووافق على الصلاحيات، وبعدها Deploy > Manage deployments > Version: New version";
-        return "تعذّر الاتصال بسكربت النسخ الاحتياطي — افتح الرابط في المتصفح: لازم يظهر ok:true. لو طلب تسجيل دخول أو إذن، اجعل Who has access = Anyone ووافق على الصلاحيات";
-      }
-      return "تعذّر الاتصال بـ Apps Script";
-    }
-    return raw||"فشل الرفع";
-  }
-  async function uploadBackupToDrive(data){
-    if(!driveEnabled())return {skipped:true};
-    for(let i=0;i<30&&typeof window.DPB_backupPost!=="function";i++)await new Promise(r=>setTimeout(r,100));
-    let res;
-    try{
-      if(typeof window.DPB_backupPost!=="function")throw new Error("الاتصال بالسحابة غير جاهز");
-      res=await window.DPB_backupPost("saveBackup",{content:JSON.stringify(data),createdAt:data.createdAt||new Date().toISOString(),shareWith:driveEmail()},90000);
-    }catch(e){res={ok:false,error:String((e&&e.message)||e)}}
-    if(res&&res.ok){
-      try{localStorage.removeItem(DRIVE_PENDING_KEY)}catch(_){}
-      setOutStatus("drive",{ok:true,time:Date.now(),url:res.url||"",owner:res.owner||"",sharedWith:res.sharedWith||"",shareError:res.shareError||""});
-      return {ok:true};
-    }
-    try{localStorage.setItem(DRIVE_PENDING_KEY,String(Date.now()))}catch(_){}
-    const err=driveErrorText(res);
-    setOutStatus("drive",{ok:false,time:Date.now(),error:err});
-    return {ok:false,error:err};
-  }
-  let outBusy=false;
-  // بيحفظ النسخة (الحالية + السابقة) على الهاتف وعلى Drive. كل واحدة مستقلة: فشل واحدة ما بيوقفش التانية.
-  async function externalSave(data,interactive){
-    if(outBusy)return {busy:true};
-    outBusy=true;
-    try{
-      const prev=await backupDbGet("previous");
-      const files=[{name:BK_CUR_NAME,text:JSON.stringify(data)}];
-      if(prev)files.push({name:BK_PREV_NAME,text:JSON.stringify(prev)});
-      let phone,drive;
-      try{phone=await writePhoneFiles(files,!!interactive)}catch(e){phone={ok:false,error:(e&&e.message)||"فشل"}}
-      if(phone.ok){try{localStorage.removeItem(PHONE_PENDING_KEY)}catch(_){}setOutStatus("phone",{ok:true,time:Date.now(),where:phone.where})}
-      else{try{localStorage.setItem(PHONE_PENDING_KEY,"1")}catch(_){}if(interactive||phone.error)setOutStatus("phone",{ok:false,time:Date.now(),error:phone.error})}
-      try{drive=await uploadBackupToDrive(data)}catch(e){drive={ok:false,error:(e&&e.message)||"فشل"}}
-      return {phone,drive};
-    }finally{outBusy=false}
-  }
-  // لو آخر رفع على Drive فشل (نت قطع مثلًا) نعيده بالنسخة الحالية كل 5 دقايق لحد ما ينجح
-  let lastDriveRetry=0;
-  async function retryDriveIfPending(){
-    try{
-      if(!driveEnabled()||outBusy)return;
-      if(!localStorage.getItem(DRIVE_PENDING_KEY))return;
-      if(navigator.onLine===false||Date.now()-lastDriveRetry<300000)return;
-      lastDriveRetry=Date.now();
-      const cur=await backupCurrentData();if(!cur)return;
-      outBusy=true;try{await uploadBackupToDrive(cur)}finally{outBusy=false}
-    }catch(e){console.warn("drive retry",e)}
-  }
-  async function writeBackupToDocuments(data){
-    return await externalSave(data,true);
-  }
-
-  async function rotateAndStore(){
-    const sigNow=sourceSig();
-    const data=snapshot(),now=Date.now(),cur=await backupCurrentData();
-    if(cur){
-      await backupDbPut("previous",cur);
-      localStorage.setItem(BACKUP_PREVIOUS_TIME_KEY,String(Number(localStorage.getItem(BACKUP_CURRENT_TIME_KEY)||now)));
-    }
-    const saved=await backupDbPut("current",data);
-    if(!saved){
-      try{localStorage.setItem(BACKUP_CURRENT_KEY,JSON.stringify(data))}
-      catch(_){throw new Error("تعذر الحفظ: مساحة التخزين غير كافية.")}
-    }else{
-      try{localStorage.removeItem(BACKUP_CURRENT_KEY)}catch(_){}
-    }
-    localStorage.setItem(BACKUP_CURRENT_TIME_KEY,String(now));
-    localStorage.removeItem(BACKUP_LAST_CHANGE_KEY);
-    try{localStorage.setItem(BACKUP_SIG_KEY,sigNow)}catch(_){}
-    localStorage.setItem("DPB_BACKUP_LAST_MANUAL_V1",new Date(now).toLocaleString("ar-EG"));
-    updateBackupInfo();
-    return data;
-  }
-
-  async function updateBackupInfo(){
-    const cur=await backupCurrentData(),prev=await backupDbGet("previous");
-    const currentTime=Number(localStorage.getItem(BACKUP_CURRENT_TIME_KEY)||0);
-    const previousTime=Number(localStorage.getItem(BACKUP_PREVIOUS_TIME_KEY)||0);
-    const recordCount=o=>{
-      const r=o?.supervisorRecords?.records??o?.records??[];
-      return Array.isArray(r)?r.length:0;
-    };
-    const fmt=(o,t)=>{
-      if(!o)return "لا توجد نسخة";
-      const stamp=o.createdAt?new Date(o.createdAt).toLocaleString("ar-EG"):(t?new Date(t).toLocaleString("ar-EG"):"");
-      return `${stamp} · ${recordCount(o)} سجل إنتاج`;
-    };
-    if(q("dpbBackupCurrentInfo"))q("dpbBackupCurrentInfo").textContent=fmt(cur,currentTime);
-    if(q("dpbBackupPreviousInfo"))q("dpbBackupPreviousInfo").textContent=fmt(prev,previousTime);
-    const n=Math.max(1,Number(localStorage.getItem("DPB_BACKUP_INTERVAL_V1")||5));
-    const unit=localStorage.getItem("DPB_BACKUP_UNIT_V1")||"minutes";
-    const unitName={minutes:"دقائق",hours:"ساعات",days:"أيام",weeks:"أسابيع",months:"شهور"}[unit]||unit;
-    if(q("dpbBackupScheduleInfo"))q("dpbBackupScheduleInfo").textContent=`كل ${n} ${unitName}`;
-    const mode=(localStorage.getItem(BACKUP_MODE_KEY)||"auto")==="auto";
-    const lastChange=Number(localStorage.getItem(BACKUP_LAST_CHANGE_KEY)||0);
-    if(q("dpbBackupNextInfo")){
-      if(!mode)q("dpbBackupNextInfo").textContent="متوقف";
-      else if(lastChange)q("dpbBackupNextInfo").textContent=new Date(scheduleDueAt(lastChange)).toLocaleString("ar-EG");
-      else if(currentTime)q("dpbBackupNextInfo").textContent=new Date(scheduleDueAt(currentTime)).toLocaleString("ar-EG");
-      else q("dpbBackupNextInfo").textContent="بعد أول تعديل جديد ثم انتهاء الفترة";
-    }
-  }
-
-  function dueAndChanged(){
-    if((localStorage.getItem(BACKUP_MODE_KEY)||"auto")!=="auto")return false;
-    const lastChange=Number(localStorage.getItem(BACKUP_LAST_CHANGE_KEY)||0);
-    if(!lastChange)return false;
-    return Date.now()>=scheduleDueAt(lastChange);
-  }
-
-  // بيكتب النسخة الحالية برّه التطبيق فورًا (هاتف + Drive) من غير ما حد يضغط «نسخ احتياطي الآن»
-  async function syncExternalNow(){
-    try{
-      if(outBusy)return;
-      const cur=await backupCurrentData();if(!cur)return;
-      const r=await externalSave(cur,false);
-      const msg="🟢 اتحفظت برّه التطبيق"+(r&&r.phone&&r.phone.ok?" — 📱 ✔":"")+(r&&r.drive&&r.drive.ok?" — ☁️ ✔":"")+".";
-      if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=msg;
-    }catch(e){console.warn("syncExternalNow",e)}
-  }
-  // لو الكتابة على الهاتف فشلت (إذن المجلد مثلًا) نعيدها تلقائيًا من غير نوافذ لحد ما تنجح
-  let lastPhoneRetry=0;
-  async function retryPhoneIfPending(){
-    try{
-      if(outBusy||!localStorage.getItem(PHONE_PENDING_KEY))return;
-      if(Date.now()-lastPhoneRetry<30000)return;
-      lastPhoneRetry=Date.now();
-      await syncExternalNow();
-    }catch(_){}
-  }
-  // المتصفح بيفقد إذن المجلد بعد كل فتح للصفحة. أول لمسة في الصفحة بتجدد الإذن (من غير ما تفتح أي شاشة)، وبعدها الحفظ بيرجع تلقائي.
-  let lastGrantTry=0;
-  document.addEventListener("pointerdown",async()=>{
-    try{
-      if(dpbHasNativeBridge()||!localStorage.getItem(PHONE_PENDING_KEY))return;
-      if(Date.now()-lastGrantTry<60000)return;
-      const h=await getDocumentsDirectoryHandle();
-      if(!h||h.native||!h.requestPermission)return;
-      lastGrantTry=Date.now();
-      if(await ensureDirectoryPermission(h))await syncExternalNow();
-    }catch(_){}
-  },true);
-  async function manualBackup(){
-    try{
-      const data=await rotateAndStore();
-      const r=await externalSave(data,true);
-      const parts=["تم إنشاء النسخة (الحالية والسابقة)."];
-      if(r&&r.phone)parts.push(r.phone.ok?("📱 حُفظت على الهاتف ("+r.phone.where+")."):("📱 لم تُحفظ على الهاتف: "+r.phone.error));
-      if(r&&r.drive&&!r.drive.skipped)parts.push(r.drive.ok?"☁️ رُفعت على Google Drive.":("☁️ لم تُرفع على Drive: "+r.drive.error));
-      const msg=parts.join(" ");
-      const bad=r&&((r.phone&&!r.phone.ok)||(r.drive&&!r.drive.skipped&&!r.drive.ok));
-      if(q("dpbBackupStatus"))q("dpbBackupStatus").textContent=msg;
-      if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=(bad?"⚠️ ":"✅ ")+msg;
-    }catch(e){
-      if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent="❌ "+(e?.message||"تعذر إنشاء النسخة.");
-      console.warn("manual backup",e);
-    }
-  }
-
-  let autoBusy=false;
-  async function autoBackup(){
-    if(autoBusy)return;
-    autoBusy=true;
-    try{
-      checkSigChange();
-      if(dueAndChanged()){
-        const data=await rotateAndStore();
-        const r=await externalSave(data,false);
-        const okP=r&&r.phone&&r.phone.ok, okD=r&&r.drive&&r.drive.ok;
-        const msg="🟢 تم النسخ التلقائي"+(okP?" — 📱 الهاتف ✔":"")+(okD?" — ☁️ Drive ✔":"")+".";
-        if(q("dpbBackupStatus"))q("dpbBackupStatus").textContent=msg;
-        if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=msg;
-      }else{updateBackupInfo();await retryDriveIfPending();await retryPhoneIfPending()}
-    }catch(e){console.warn("auto backup",e)}
-    finally{autoBusy=false}
-  }
-
-  function scheduleAutoBackup(){
-    if(dpbBackupTimer)clearInterval(dpbBackupTimer);
-    dpbBackupTimer=setInterval(autoBackup,15000);
-    autoBackup();
-  }
-
-  function syncDriveToggleUI(on){
-    const t=q("dpbBackupDriveToggle");if(t)t.checked=on;
-    const l=q("dpbBackupDriveToggleLabel");if(l)l.textContent="☁️ رفع نسخة على Google Drive: "+(on?"تشغيل":"إيقاف");
-  }
-  function syncAutoToggleUI(on){
-    const t=q("dpbBackupAutoToggle");if(t)t.checked=on;
-    const l=q("dpbBackupAutoToggleLabel");if(l)l.textContent="النسخ التلقائي: "+(on?"تشغيل":"إيقاف");
-  }
-
-  async function openBackupModal(){
-    const m=q("dpbBackupModal");if(!m)return;
-    q("dpbBackupInterval").value=localStorage.getItem("DPB_BACKUP_INTERVAL_V1")||"5";
-    q("dpbBackupUnit").value=localStorage.getItem("DPB_BACKUP_UNIT_V1")||"minutes";
-    const on=(localStorage.getItem(BACKUP_MODE_KEY)||"auto")==="auto";
-    syncAutoToggleUI(on);
-    const h=await getDocumentsDirectoryHandle();
-    if(q("dpbBackupFolderStatus"))
-      q("dpbBackupFolderStatus").textContent=h?"📁 مجلد خارجي محفوظ ويمكن استخدامه تلقائيًا.":"لم يتم اختيار مجلد خارجي بعد.";
-    q("dpbBackupModalStatus").textContent=on?"🟢 النسخ التلقائي يعمل":"⚪ النسخ التلقائي متوقف";
-    syncDriveToggleUI(driveEnabled());if(q("dpbBackupDriveEmail"))q("dpbBackupDriveEmail").value=driveEmail();if(q("dpbBackupScriptUrl"))q("dpbBackupScriptUrl").value=(localStorage.getItem("DPB_BACKUP_URL_V1")||"");renderOutStatus();
-    await updateBackupInfo();
-    m.style.display="flex";m.setAttribute("aria-hidden","false");
-  }
-
-  function closeBackupModal(){
-    const m=q("dpbBackupModal");
-    if(m){m.style.display="none";m.setAttribute("aria-hidden","true")}
-  }
-
-  function setAutoMode(on){
-    localStorage.setItem(BACKUP_MODE_KEY,on?"auto":"off");
-    syncAutoToggleUI(on);
-    scheduleAutoBackup();
-  }
-
-  function saveBackupSchedule(){
-    localStorage.setItem("DPB_BACKUP_INTERVAL_V1",String(Math.max(1,Number(q("dpbBackupInterval").value||5))));
-    localStorage.setItem("DPB_BACKUP_UNIT_V1",q("dpbBackupUnit").value||"minutes");
-    updateBackupInfo();scheduleAutoBackup();
-  }
-
-  function restoreBackup(file){
-    const r=new FileReader();
-    r.onload=async()=>{
-      try{
-        const d=JSON.parse(r.result);
-        if(!d||typeof d!=="object")throw new Error("bad backup");
-        if(Array.isArray(d.supervisorAccounts))localStorage.setItem(ACC_KEY,JSON.stringify(d.supervisorAccounts));
-        if(d.supervisorRecords)localStorage.setItem("DPB_SHARED_PRODUCTION_V2",JSON.stringify(d.supervisorRecords));
-        if(d.testSnapshot)localStorage.setItem("DPB_TEST_PROJECT_SNAPSHOT_V3",JSON.stringify(d.testSnapshot));
-        if(d.backupMode)localStorage.setItem(BACKUP_MODE_KEY,String(d.backupMode));
-        if(d.backupInterval)localStorage.setItem("DPB_BACKUP_INTERVAL_V1",String(d.backupInterval));
-        if(d.backupUnit)localStorage.setItem("DPB_BACKUP_UNIT_V1",String(d.backupUnit));
-        await backupDbPut("current",d);
-        localStorage.setItem(BACKUP_CURRENT_TIME_KEY,String(Date.now()));
-        localStorage.removeItem(BACKUP_LAST_CHANGE_KEY);
-        if(typeof restoreTestSession==="function")await restoreTestSession();
-        if(typeof renderAccounts==="function")renderAccounts();
-        if(typeof window.__dpbRefreshSupervisorUI==="function")window.__dpbRefreshSupervisorUI();
-        await updateBackupInfo();
-        alert("تمت استعادة النسخة بنجاح. البيانات الحالية جاهزة للعمل.");
-      }catch(e){
-        console.error(e);
-        alert("ملف النسخة الاحتياطية غير صالح أو لا يمكن استعادته على هذا الجهاز.");
-      }
-    };
-    r.readAsText(file);
-  }
+  /* v155: شاشة 💾 الجديدة. القديمة (النسخ الاحتياطي القديم بتاع الجهاز) اتحذفت بالكامل؛ الكارت بتاع الطبقة الجديدة (dpb-fs2.js) بيتركّب جواها. */
+  window.__dpbMarkDataChanged=function(){};
+  function openBackupScreen(){const m=q("dpbBackupScreen");if(!m)return;m.style.display="flex";m.setAttribute("aria-hidden","false");try{const b=m.querySelector(".dpbBackupBox");if(b)b.scrollTop=0}catch(_){}}
+  function closeBackupScreen(){const m=q("dpbBackupScreen");if(m){m.style.display="none";m.setAttribute("aria-hidden","true")}}
+  window.openBackupModal=openBackupScreen;window.closeBackupScreen=closeBackupScreen;
+  window.dpbRunAutoBackupCheck=()=>{try{return window.DPB_FS2&&window.DPB_FS2.autoTick&&window.DPB_FS2.autoTick(false)}catch(_){}};
 
   function openProductionEditsPage(){
     const p=q("dpbAdminProductionEditPage"); if(!p)return;
@@ -11762,7 +11167,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   q("dpbAdminSupPin").addEventListener("input",e=>{e.target.value=e.target.value.replace(/\D/g,"").slice(0,4)});
   q("dpbAdminKeypad").querySelectorAll("button").forEach(b=>b.onclick=()=>adminKey(b.dataset.k));
   q("dpbAdminPinClose").onclick=()=>{q("dpbAdminPinModal").style.display="none";q("dpbAdminPinModal").setAttribute("aria-hidden","true")};
-  function closeAdmin(){closeBackupModal();q("dpbAdminOverlay").style.display="none";q("dpbAdminOverlay").setAttribute("aria-hidden","true");q("dpbStartGate").classList.remove('dpbForceHidden');q("dpbStartGate").style.display="flex";q("dpbProjectHome").style.display="none"}
+  function closeAdmin(){closeBackupScreen();q("dpbAdminOverlay").style.display="none";q("dpbAdminOverlay").setAttribute("aria-hidden","true");q("dpbStartGate").classList.remove('dpbForceHidden');q("dpbStartGate").style.display="flex";q("dpbProjectHome").style.display="none"}
   function returnToStartGate(){
     try{closeAdmin()}catch(_){}
     try{closeOverlay()}catch(_){}
@@ -11847,8 +11252,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
      DPB_HAMMER_CLASS_ROUTE (later in the file) — do not bind here, this
      used to fire alongside it (targeting the wrong #dpbProjectHome icon
      button) and corrupt the transition into Builder Setup. */
-  q("dpbBackupNow").onclick=openBackupModal;
-  const backupCard=q("dpbBackupNow");if(backupCard)backupCard.onclick=openBackupModal;
+  q("dpbBackupNow").onclick=openBackupScreen;
+  q("dpbBackupScreenClose").onclick=closeBackupScreen;
   if(q("dpbAdminHardReset"))q("dpbAdminHardReset").onclick=function(){ if(typeof window.hardResetLocalData==="function") window.hardResetLocalData(); };
   if(q("dpbAdminSyncBtn"))q("dpbAdminSyncBtn").onclick=async function(){
     // Same job as the old "رفع الحدود ☁️" button: push this device's Excel-sourced
@@ -11867,31 +11272,6 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     finally{btn.disabled=false;btn.innerHTML=prevHtml;}
   };
 
-  q("dpbBackupModalNow").onclick=async()=>{saveBackupSchedule();await manualBackup()};
-
-  q("dpbBackupShareFile").onclick=async()=>{
-    const status=q("dpbBackupFolderStatus");
-    try{
-      const data=await backupCurrentData();
-      if(!data){if(status)status.textContent="ℹ️ لا توجد نسخة محفوظة بعد لمشاركتها.";return;}
-      const name="DPB_Backup_"+new Date().toISOString().replace(/[:.]/g,"-")+".json";
-      const text=JSON.stringify(data,null,2);
-      const file=new File([text],name,{type:"application/json"});
-      if(navigator.canShare && navigator.canShare({files:[file]})){
-        await navigator.share({files:[file],title:"نسخة احتياطية",text:name});
-        if(status)status.textContent="📤 تم فتح نافذة المشاركة، اختر المكان اللي تحفظ فيه.";
-      }else{
-        const url=URL.createObjectURL(file),a=document.createElement("a");
-        a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
-        setTimeout(()=>URL.revokeObjectURL(url),1500);
-        if(status)status.textContent="ℹ️ المشاركة غير مدعومة هنا، تم الحفظ في مجلد التنزيلات (Downloads) بدلًا من ذلك.";
-      }
-    }catch(e){
-      if(e && e.name==="AbortError"){if(status)status.textContent="تم إلغاء المشاركة.";return}
-      console.warn("share backup failed",e);
-      if(status)status.textContent="⚠️ تعذّرت المشاركة. حاول مرة أخرى.";
-    }
-  };
 
   if(!window.__dpbCloudTestBound){window.__dpbCloudTestBound=true;document.addEventListener("click",ev=>{
     const bt=ev.target&&ev.target.closest&&ev.target.closest("#dpbCloudSyncTestBtn");if(!bt)return;window.__dpbRunCloudTest(bt);});}
@@ -11919,77 +11299,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     }
   };
 
-  q("dpbBackupChooseFolder").onclick=async()=>{
-    try{
-      const h=await requestDocumentsFolder();
-      if(h && q("dpbBackupFolderStatus"))
-        q("dpbBackupFolderStatus").textContent="📁 تم اختيار المجلد بنجاح. النسخ القادمة يمكن حفظها فيه تلقائيًا.";
-      if(h)await syncExternalNow();
-    }catch(e){
-      const why=String((e&&e.message)||e||"").trim();
-      if(q("dpbBackupFolderStatus"))
-        q("dpbBackupFolderStatus").textContent="ℹ️ لم يتم اختيار المجلد"+(why&&!/لم يتم اختيار المجلد/.test(why)?" — "+why:"")+". يمكنك المحاولة مرة أخرى.";
-    }
-  };
 
-  q("dpbRestoreModal").onclick=async()=>{
-    if(dpbBackupSelectedFile){
-      await restoreBackup(dpbBackupSelectedFile);
-      dpbBackupSelectedFile=null;
-      q("dpbBackupModalStatus").textContent="✅ تمت استعادة النسخة المرفوعة.";
-    }else{
-      q("dpbRestoreModalFile").click();
-    }
-  };
-  q("dpbRestoreModalFile").onchange=e=>{
-    const f=e.target.files[0];
-    if(f){
-      dpbBackupSelectedFile=f;
-      q("dpbBackupModalStatus").textContent=`📤 تم رفع النسخة: ${f.name} — اضغط «استعادة النسخة».`;
-    }
-    e.target.value="";
-  };
 
-  q("dpbBackupModalClose").onclick=closeBackupModal;
-
-  q("dpbBackupAutoToggle").onchange=(e)=>{
-    const on=e.target.checked;
-    if(on)saveBackupSchedule();
-    setAutoMode(on);
-  };
-  q("dpbBackupDriveEmail").onchange=async(e)=>{
-    const v=String(e.target.value||"").trim().toLowerCase();
-    if(v&&!validEmail(v)){if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent="⚠️ الإيميل غير صالح";return}
-    try{localStorage.setItem(DRIVE_EMAIL_KEY,v)}catch(_){}
-    e.target.value=v;
-    if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=v?"📧 اتحفظ الإيميل — بشارك النسخة معاه…":"📧 اتمسح الإيميل";
-    try{
-      const cur=await backupCurrentData();
-      if(cur&&driveEnabled()&&!outBusy){outBusy=true;try{await uploadBackupToDrive(cur)}finally{outBusy=false}}
-    }catch(_){}
-    renderOutStatus();
-    if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=v?"📧 تم":"";
-  };
-  q("dpbBackupDriveToggle").onchange=(e)=>{
-    try{localStorage.setItem(DRIVE_ON_KEY,e.target.checked?"on":"off")}catch(_){}
-    syncDriveToggleUI(e.target.checked);renderOutStatus();
-    if(e.target.checked)syncExternalNow();
-  };
-  q("dpbBackupScriptUrl").onchange=async(e)=>{
-    const v=String(e.target.value||"").trim();
-    if(v&&!/^https:\/\/script\.google\.com\/.+\/exec$/.test(v)){if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent="⚠️ الرابط لازم يبدأ بـ https://script.google.com وينتهي بـ /exec";return}
-    try{localStorage.setItem("DPB_BACKUP_URL_V1",v)}catch(_){}
-    if(q("dpbBackupModalStatus"))q("dpbBackupModalStatus").textContent=v?"🔗 اتحفظ رابط سكربت النسخ الاحتياطي":"🔗 اتمسح — هيرجع للسكربت القديم";
-    if(v)await syncExternalNow();
-  };
-  q("dpbBackupInterval").onchange=saveBackupSchedule;
-  q("dpbBackupUnit").onchange=saveBackupSchedule;
-  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")autoBackup()});
-  window.addEventListener("pageshow",()=>autoBackup());
-  window.addEventListener("focus",()=>autoBackup());
-
-  updateBackupInfo();
-  scheduleAutoBackup();
 })();
 </script>
 
@@ -18626,28 +17937,6 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
 
 /* Backup modal: compact, labeled time controls, no internal scrolling. */
 #dpbBackupModal{padding:10px!important}
-#dpbBackupModal .dpbBackupBox{
-  width:min(560px,96vw)!important;max-height:calc(100dvh - 20px)!important;
-  overflow:hidden!important;box-sizing:border-box!important;padding:14px!important;border-radius:24px!important;
-}
-#dpbBackupModal .dpbBackupBox h2{font-size:24px!important;margin:0 0 8px!important}
-#dpbBackupModal .dpbBackupPanel{padding:12px!important;border-radius:17px!important}
-#dpbBackupModal .dpbBackupPanel h3{font-size:18px!important}
-#dpbBackupModal .dpbBackupPanel p{font-size:11px!important;line-height:1.45!important;margin:4px 0 8px!important}
-#dpbBackupModal .dpbBackupRow{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
-#dpbBackupModal .dpbBackupTimeField{display:flex!important;flex-direction:column!important;gap:4px!important}
-#dpbBackupModal .dpbBackupTimeField>span{font-size:10px!important;font-weight:900!important;color:#5c6672!important}
-#dpbBackupModal .dpbBackupRow input,#dpbBackupModal .dpbBackupRow select{box-sizing:border-box!important;height:42px!important;padding:8px 10px!important;font-size:15px!important}
-#dpbBackupModal .dpbBackupSwitchRow{margin-top:9px!important;padding:9px 12px!important}
-#dpbBackupModal .dpbBackupSwitchText{font-size:13px!important}
-#dpbBackupModal .dpbBackupLast{margin-top:7px!important;font-size:11px!important}
-#dpbBackupModal .dpbBackupStateGrid{grid-template-columns:1fr 1fr!important;gap:7px!important;margin-top:7px!important}
-#dpbBackupModal .dpbBackupState{padding:7px!important;font-size:10px!important}
-#dpbBackupModal .dpbBackupState b{font-size:11px!important;margin-bottom:2px!important}
-#dpbBackupModal .dpbBackupActions{gap:7px!important;margin-top:8px!important}
-#dpbBackupModal .dpbBackupActions button{min-height:44px!important;font-size:13px!important}
-#dpbBackupModal #dpbBackupShare{min-height:42px!important;margin-top:7px!important;font-size:12px!important}
-#dpbBackupModal #dpbBackupModalClose{min-height:42px!important;margin-top:7px!important;font-size:13px!important}
 @media(max-width:420px){
   #dpbSupLogin .dpbSupLoginBox{padding:9px 11px 11px!important;margin:5px auto!important}
   #dpbSupLogin .dpbSupHero{padding:7px 9px!important}
@@ -22223,6 +21512,5 @@ html{scroll-padding-bottom:calc(70px + env(safe-area-inset-bottom,0px))}
 @media(max-width:380px){#dpbSupLaunch,#dpbAdminLaunch{padding:5px 8px!important;font-size:10.5px!important}#dpbSupLaunch{left:8px!important}#dpbAdminLaunch{right:8px!important}.float-nav{gap:2px!important}.float-nav .float-nav-btn{width:34px!important}.float-nav .float-nav-label{max-width:54px!important;min-width:38px!important;font-size:8.5px!important}}
 body.print-activity #dpbBottomBar{display:none!important}
 @media print{#dpbBottomBar{display:none!important}body{padding-bottom:0!important}}
-#dpbBackupModal .dpbBackupBox{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;max-height:calc(100dvh - 20px)!important}
 </style>
 <div id="dpbBottomBar" aria-hidden="true"></div>
