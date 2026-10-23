@@ -11119,6 +11119,18 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   function checkAdminPin(v){
     q("dpbAdminPinErr").textContent="";
     const gs=window.DPB_GS;
+    // v156 سرعة الدخول: لو الكود ده اتأكد من Firebase قبل كده على الجهاز ده (بصمة محفوظة)، بنفتح فورًا من غير ما نستنى النت،
+    // والتأكد من Firebase بيتم في الخلفية. لو الكود اتغيّر أو الحساب اتوقف من مكان تاني، بيتقفل الدخول ويتمسح المحفوظ.
+    if(gs && typeof gs.verifyAdminPin==="function" && typeof window.DPB_offlineAuthOk==="function" && window.DPB_offlineAuthOk("Admin",v)){
+      showAdminAfterPin();
+      gs.verifyAdminPin(v).then(function(res){
+        if(res && res.reachable && !res.ok && !res.setup && !res.locked){
+          try{returnToStartGate()}catch(_){}
+          setTimeout(function(){alert("كود الأدمن اتغيّر أو اتوقف. ادخل بالكود الجديد.")},60);
+        }
+      }).catch(function(){});
+      return;
+    }
     if(gs && typeof gs.verifyAdminPin==="function"){
       gs.verifyAdminPin(v).then(function(res){
         if(res && res.reachable && res.setup){
@@ -17666,6 +17678,27 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       if(!ok){rejectLogin();return}
       finishLogin(ok);
     };
+    // v156 سرعة الدخول: الحساب ده اتأكد من Firebase قبل كده على الجهاز (بصمة محفوظة) => بندخل فورًا، والتأكد من Firebase في الخلفية.
+    // لو الرقم اتغيّر أو الحساب اتوقف: بيخرج من الحساب ويتمسح المحفوظ. لو الصلاحيات اتغيّرت بتتحدّث من غير ما نستنى.
+    if(window.DPB_GS&&typeof window.DPB_GS.verifyLoginEx==="function"&&typeof window.DPB_offlineAuthOk==="function"&&window.DPB_offlineAuthOk(account.name,pass)){
+      const fast=supervisorExists(account.name,pass);
+      if(fast){
+        finishLogin(fast);
+        window.DPB_GS.verifyLoginEx(account.name,pass).then(r=>{
+          if(!r)return;
+          if(r.reachable&&!r.ok&&!r.locked){
+            try{q("dpbSupLogout").click()}catch(_){}
+            setTimeout(()=>alert("الرقم السري اتغيّر أو الحساب اتوقف من الأدمن. ادخل بالرقم الجديد."),60);
+          }else if(r.ok&&r.account&&state.account&&String(state.account.name)===String(account.name)){
+            try{
+              const ids=supervisorAllowedProcessIds(r.account);
+              if(JSON.stringify(ids)!==JSON.stringify(state.assignedProcessIds)){state.account=r.account;state.assignedProcessIds=ids;state.assignedProcessId=ids.length===1?ids[0]:null;}
+            }catch(_){}
+          }
+        }).catch(()=>{});
+        return;
+      }
+    }
     // Verify live against the Users sheet first (so a PIN/role change made
     // there takes effect immediately, without waiting for the periodic
     // background sync). If the Sheet is unreachable, fall back to the last

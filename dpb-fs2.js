@@ -52,6 +52,19 @@
     } catch (e) {}
   }
   window.__dpbFs2Diag = function () { return dlogBuf.slice(); };
+  // v156: memory trail for the "force closed - ran out of memory" crashes. Every 30 s the JS heap is sampled; a line goes into the diagnostics log when it
+  // moved by 25 MB or more (or every 10 min), so after the next crash the log shows how the heap grew and what the layer was doing just before.
+  (function () {
+    var lastMb = -999, lastAt = 0;
+    function sample() {
+      try {
+        var m = performance && performance.memory; if (!m) return;
+        var mb = Math.round(m.usedJSHeapSize / 1048576), lim = Math.round(m.jsHeapSizeLimit / 1048576), n = Date.now();
+        if (Math.abs(mb - lastMb) >= 25 || n - lastAt > 600000) { lastMb = mb; lastAt = n; dlog('mem', mb + ' MB of ' + lim + ' MB' + (document.hidden ? ' (background)' : '')); }
+      } catch (e) {}
+    }
+    setInterval(sample, 30000); setTimeout(sample, 5000);
+  })();
 
   // Firestore's commit() only resolves when the SERVER acknowledges. This wrapper answers {acked:true} when the server confirmed within the wait,
   // and {acked:false, done} when it did not (offline, or no answer within 4 s): the write is saved on the device and queued by the SDK, so the screen can
@@ -1191,8 +1204,8 @@
   function stable(v) { if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']'; if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ':' + stable(v[k]); }).join(',') + '}'; return JSON.stringify(v); }
   function bytesOf(s) { try { return new TextEncoder().encode(s).length; } catch (e) { return s.length * 2; } }
   function bkRead() {
-    return getStore().then(function (s) {
-      var a = s.adapter; if (!a || !a.list) throw new Error('الاتصال الحالي مش بيدعم قراءة كل المستندات');
+    return getAdapter().then(function (a) {   // v156: the backup reads the whole namespace, so it no longer needs a project to be open
+      if (!a || !a.list) throw new Error('الاتصال الحالي مش بيدعم قراءة كل المستندات');
       return Promise.all(BK_COLLS.map(function (c) { return a.list(bkP(c)); })).then(function (r) {
         var out = {}; BK_COLLS.forEach(function (c, i) { out[c] = {}; r[i].forEach(function (d) { out[c][d.id] = clean(d.data); }); }); return out;
       });
@@ -1276,15 +1289,41 @@
     return bkIdb().then(function (db) { return new Promise(function (res, rej) { var t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = function () { res(); }; t.onerror = function () { rej(t.error); }; t.onabort = function () { rej(t.error || new Error('فشل الحفظ الداخلي')); }; }); });
   }
   function bkSame(a, b) { return !!a && !!b && stable(a.rows) === stable(b.rows) && stable(a.kv) === stable(b.kv); }
-  // reads Firebase; if nothing changed since the current copy, nothing rotates (so pressing it twice never wipes the real "previous")
+  // v156 (out-of-memory fix): the change check no longer builds giant strings of the whole backup (old + new, twice) and no longer keeps 4-5 copies alive.
+  // Every document gets a small fingerprint; only the fingerprints are compared. The big copies are only touched when something really changed,
+  // and the small \"meta\" records feed the status line so painting it never loads a whole backup again.
+  function hashStr(t) { var h1 = 0x811c9dc5, h2 = 5381; for (var i = 0; i < t.length; i++) { var c = t.charCodeAt(i); h1 = Math.imul(h1 ^ c, 16777619); h2 = (Math.imul(h2, 33) + c) | 0; } return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + t.length.toString(36); }
+  function bkFp(cur) { var fp = {}; BK_COLLS.forEach(function (c) { fp[c] = {}; Object.keys(cur[c] || {}).forEach(function (id) { fp[c][id] = hashStr(stable(cur[c][id])); }); }); return fp; }
+  function bkMeta(o) { return o ? { savedAt: o.savedAt, counts: o.counts } : null; }
+  // reads Firebase; if nothing changed since the current copy, nothing rotates (so pressing it twice never wipes the real "previous").
+  // Unchanged -> { changed:false, current:null } (callers load the copy themselves only if they need it).
   function bkBackupNow() {
     return bkRead().then(function (cur) {
-      var obj = bkMake(cur);
-      return bkGet('current').then(function (old) {
-        if (bkSame(old, obj)) return bkGet('previous').then(function (pv) { return { changed: false, current: old, previous: pv }; });
-        return Promise.resolve(old ? bkPut('previous', old) : null).then(function () { return bkPut('current', obj); }).then(function () { return bkGet('previous'); }).then(function (pv) { return { changed: true, current: obj, previous: pv }; });
+      var obj = bkMake(cur), fp = bkFp(cur); cur = null;
+      function rotate(old) {
+        return Promise.resolve(old ? bkPut('previous', old).then(function () { return bkPut('previousmeta', bkMeta(old)); }) : null)
+          .then(function () { return bkPut('current', obj); })
+          .then(function () { return bkPut('currentmeta', bkMeta(obj)); })
+          .then(function () { return bkPut('currentfp', fp); })
+          .then(function () { return { changed: true, current: obj, previous: old || null }; });
+      }
+      return bkGet('currentfp').then(function (ofp) {
+        if (ofp) {
+          if (stable(ofp) === stable(fp)) return { changed: false, current: null, previous: null };
+          return bkGet('current').then(rotate);
+        }
+        // first run after the update: the old copy has no fingerprint yet, compare the old way once
+        return bkGet('current').then(function (old) {
+          if (old && bkSame(old, obj)) return bkPut('currentfp', fp).then(function () { return bkPut('currentmeta', bkMeta(old)); }).then(function () { return { changed: false, current: null, previous: null }; });
+          return rotate(old);
+        });
       });
     });
+  }
+  // external copy first, then the Drive upload - one after the other, so two huge strings never exist at the same time
+  function bkPublish(r) {
+    return bkSaveExternal(r.current, r.previous, false).then(function (w) { bkNoteExt(w); return w; }, function () { return 'fail'; })
+      .then(function (w) { return bkDriveUpload(r.current).then(function (d) { return [w, d]; }); });
   }
   function bkPerm(h, ask) {
     return Promise.resolve().then(function () {
@@ -1370,7 +1409,10 @@
     drivePaint();
     var el = document.getElementById('dpbFs2BkInfo'); if (!el) return Promise.resolve();
     var d = document.getElementById('dpbFs2Dir'); if (d) d.style.display = (window.showDirectoryPicker || window.DPB_NATIVE_BRIDGE) ? '' : 'none';
-    return Promise.all([bkGet('current'), bkGet('previous')]).then(function (r) {
+    return Promise.all([bkGet('currentmeta'), bkGet('previousmeta')]).then(function (r) {
+      if (!r[0]) return Promise.all([bkGet('current'), bkGet('previous')]).then(function (f) { var m = [bkMeta(f[0]), bkMeta(f[1])]; if (m[0]) bkPut('currentmeta', m[0]); if (m[1]) bkPut('previousmeta', m[1]); return m; });
+      return r;
+    }).then(function (r) {
       var x = null; try { x = JSON.parse(ls('dpb_fs2_bk_ext', 'null')); } catch (e) {}
       el.textContent = 'الحالية: ' + bkLine(r[0]) + '\nالسابقة: ' + bkLine(r[1]) + (x && BK_WHERE[x.w] ? '\nآخر حفظ برّه التطبيق: ' + BK_WHERE[x.w] + ' ✔ ' + new Date(x.t).toLocaleTimeString('ar-EG') : '') + '';
     }).catch(function () {});
@@ -1412,20 +1454,28 @@
   var bkBusy = false, bkLastVer = null;
   function bkAdminDev() { try { return localStorage.getItem('DPB_ADMIN_DEVICE_V1') === '1' || localStorage.getItem('dpb_fs2_bk_admin') === '1'; } catch (e) { return false; } }
   function bkAutoTick(force) {
-    if (!on() || !curStore() || (!force && (ls('dpb_fs2_bk_auto', 'off') !== 'on' || !bkAdminDev())) || bkBusy) return Promise.resolve('skip');
-    var min = Number(ls('dpb_fs2_bk_min', '30')) || 30, last = Number(ls('dpb_fs2_bk_last', '0')) || 0;
-    if (!force && (Date.now() - last < min * 60000 || bkLastVer === version)) return Promise.resolve('skip');
+    if (!on() || (!force && (ls('dpb_fs2_bk_auto', 'off') !== 'on' || !bkAdminDev())) || bkBusy) return Promise.resolve('skip');
+    var min = Number(ls('dpb_fs2_bk_min', '30')) || 30, last = Number(ls('dpb_fs2_bk_last', '0')) || 0, since = Date.now() - last;
+    if (!force) {
+      if (since < min * 60000) return Promise.resolve('skip');
+      // with a project open the listener tells us when something changed (own edits AND other devices' edits); with no project open nothing can tell,
+      // so the namespace is looked at no more than once an hour (every look reads each document once)
+      if (curStore()) { if (bkLastVer === version) return Promise.resolve('skip'); }
+      else if (since < Math.max(min, 60) * 60000) return Promise.resolve('skip');
+    }
     bkBusy = true; var ver = version;
     return bkBackupNow().then(function (r) {
       bkLastVer = ver; lsSet('dpb_fs2_bk_last', String(Date.now()));
-      if (!r.changed) { if (driveOn() && ls('dpb_fs2_bk_drive_pending', '')) return bkDriveUpload(r.current).then(function () { return 'same'; }); return 'same'; }
-      return Promise.all([
-        bkSaveExternal(r.current, r.previous, false).then(function (w) { bkNoteExt(w); return w; }, function () { return 'none'; }),
-        bkDriveUpload(r.current)
-      ]).then(function (x) { return 'saved:' + x[0]; });
+      if (!r.changed) {
+        if (driveOn() && ls('dpb_fs2_bk_drive_pending', '')) return bkGet('current').then(function (c) { return c ? bkDriveUpload(c) : null; }).then(function () { return 'same'; });
+        return 'same';
+      }
+      return bkPublish(r).then(function (x) { return 'saved:' + x[0]; });
     }).catch(function () { return 'error'; }).then(function (x) { bkBusy = false; bkPaint(); return x; });
   }
   if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
+  // Android freezes the page's timers while the app is in the background: when the admin comes back, check right away instead of waiting for the next minute
+  try { document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { bkAutoTick(false); }, 4000); }); } catch (e) {}
   window.DPB_FS2.autoTick = bkAutoTick;
   window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), failed: !!failedAt, err: String(lastErr || '') }; };
   window.DPB_FS2.backupNow = bkBackupNow; window.DPB_FS2.saveExternal = bkSaveExternal;
@@ -1538,13 +1588,10 @@
       say('بقرا كل البيانات من Firebase…');
       bkBackupNow().then(function (r) {
         if (!r.changed) {
-          if (driveOn() && ls('dpb_fs2_bk_drive_pending', '')) return bkDriveUpload(r.current).then(function (d) { say(d.ok ? 'مفيش تغيير، بس رفعت النسخة الحالية على Drive ☁️.' : '⚠ Drive: ' + d.error); paintBk(); });
+          if (driveOn() && ls('dpb_fs2_bk_drive_pending', '')) return bkGet('current').then(function (c) { return c ? bkDriveUpload(c) : { ok: false, error: 'مفيش نسخة' }; }).then(function (d) { say(d.ok ? 'مفيش تغيير، بس رفعت النسخة الحالية على Drive ☁️.' : '⚠ Drive: ' + d.error); paintBk(); });
           say('مفيش تغيير من آخر نسخة، فالحالية والسابقة زي ما هم.'); paintBk(); return;
         }
-        return Promise.all([
-          bkSaveExternal(r.current, r.previous, false).then(function (w) { bkNoteExt(w); return w; }, function () { return 'fail'; }),
-          bkDriveUpload(r.current)
-        ]).then(function (x) {
+        return bkPublish(r).then(function (x) {
           var w = x[0], d = x[1];
           var ph = w === 'fail' ? ' ⚠ تعذّرت الكتابة في المجلد، دوس 📤.' : (w !== 'none' ? ' و' + where[w].replace(/^\S+ /, '') + '.' : '. دوس 📤 لو عاوز تحفظها برّه التطبيق.');
           var dr = d.skipped ? '' : (d.ok ? ' ☁️ ورُفعت على Google Drive.' : ' ⚠ Drive: ' + d.error);
