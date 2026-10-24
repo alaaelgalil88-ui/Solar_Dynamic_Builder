@@ -1361,10 +1361,14 @@
   function bkMeta(o) { return o ? { savedAt: o.savedAt, counts: o.counts } : null; }
   // reads Firebase; if nothing changed since the current copy, nothing rotates (so pressing it twice never wipes the real "previous").
   // Unchanged -> { changed:false, current:null } (callers load the copy themselves only if they need it).
+  function bkStep(x) { lsSet('dpb_fs2_bk_step', x + '@' + new Date().toLocaleTimeString('ar-EG')); }
   function bkBackupNow() {
+    bkStep('read');
     return bkRead().then(function (cur) {
+      bkStep('compare');
       var obj = bkMake(cur), fp = bkFp(cur); cur = null;
       function rotate(old) {
+        bkStep('save-in-app');
         return Promise.resolve(old ? bkPut('previous', old).then(function () { return bkPut('previousmeta', bkMeta(old)); }) : null)
           .then(function () { return bkPut('current', obj); })
           .then(function () { return bkPut('currentmeta', bkMeta(obj)); })
@@ -1373,12 +1377,12 @@
       }
       return bkGet('currentfp').then(function (ofp) {
         if (ofp) {
-          if (stable(ofp) === stable(fp)) return { changed: false, current: null, previous: null };
+          if (stable(ofp) === stable(fp)) { bkStep('done'); return { changed: false, current: null, previous: null }; }
           return bkGet('current').then(rotate);
         }
         // first run after the update: the old copy has no fingerprint yet, compare the old way once
         return bkGet('current').then(function (old) {
-          if (old && bkSame(old, obj)) return bkPut('currentfp', fp).then(function () { return bkPut('currentmeta', bkMeta(old)); }).then(function () { return { changed: false, current: null, previous: null }; });
+          if (old && bkSame(old, obj)) return bkPut('currentfp', fp).then(function () { return bkPut('currentmeta', bkMeta(old)); }).then(function () { bkStep('done'); return { changed: false, current: null, previous: null }; });
           return rotate(old);
         });
       });
@@ -1386,8 +1390,9 @@
   }
   // external copy first, then the Drive upload - one after the other, so two huge strings never exist at the same time
   function bkPublish(r) {
+    bkStep('phone-copy');
     return bkSaveExternal(r.current, r.previous, false).then(function (w) { bkNoteExt(w); return w; }, function () { return 'fail'; })
-      .then(function (w) { return bkDriveUpload(r.current).then(function (d) { return [w, d]; }); });
+      .then(function (w) { bkStep('drive'); return bkDriveUpload(r.current).then(function (d) { bkStep('done'); return [w, d]; }); });
   }
   function bkPerm(h, ask) {
     return Promise.resolve().then(function () {
@@ -1406,14 +1411,29 @@
     return window.showDirectoryPicker({ mode: 'readwrite' }).then(function (h) { return bkPut('dir', h).then(function () { return h; }); });
   }
   function capFs() { try { var C = window.Capacitor, P = C && C.Plugins; return (P && P.Filesystem && (!C.isNativePlatform || C.isNativePlatform())) ? P.Filesystem : null; } catch (e) { return null; } }
+  /*BKNAT-START*/
+  // v159: the phone-folder write (DpbFolder.write({name,text})) pushes the WHOLE backup as ONE string through the Capacitor bridge. With the real project that is
+  // several MB, and the WebView itself dies (native "JniAndroid$UncaughtExceptionException" the moment Backup Now is pressed). A string above BK_BRIDGE_MAX is
+  // never sent in one call; the caller falls through to the chunked Documents/DPB write (or none) and the in-app copy + Drive copy still happen.
+  var BK_BRIDGE_MAX = 1000000, BK_CHUNK = 400000;
   function bkWriteNative(nb, cur, prev) {
-    function one(n, o) { return Promise.resolve(nb.writeBackupFile(n, JSON.stringify(o))).then(function (ok) { if (ok === false) throw new Error('الكتابة في مكان الحفظ فشلت'); }); }
+    var a = JSON.stringify(cur), b = prev ? JSON.stringify(prev) : null;
+    if (a.length > BK_BRIDGE_MAX || (b && b.length > BK_BRIDGE_MAX)) return Promise.resolve(false);   // too big for one bridge call: not written here
+    function one(n, t) { return Promise.resolve(nb.writeBackupFile(n, t)).then(function (ok) { if (ok === false) throw new Error('الكتابة في مكان الحفظ فشلت'); }); }
+    return one(BK_FILE.current, a).then(function () { return b ? one(BK_FILE.previous, b) : null; }).then(function () { return true; });
+  }
+  // Capacitor Filesystem: first piece writeFile, the rest appendFile (400K chars each), so no single bridge call is big
+  function bkWriteCap(F, cur, prev) {
+    function one(n, o) {
+      var str = JSON.stringify(o), path = 'DPB/' + n, p = Promise.resolve();
+      for (var i = 0; i < str.length || i === 0; i += BK_CHUNK) (function (piece, first) {
+        p = p.then(function () { var a = { path: path, data: piece, directory: 'DOCUMENTS', encoding: 'utf8' }; if (first) { a.recursive = true; return F.writeFile(a); } return F.appendFile(a); });
+      })(str.slice(i, i + BK_CHUNK), i === 0);
+      return p;
+    }
     return one(BK_FILE.current, cur).then(function () { return prev ? one(BK_FILE.previous, prev) : null; });
   }
-  function bkWriteCap(F, cur, prev) { // Capacitor: Documents/DPB/<fixed name>, overwritten each time
-    function one(n, o) { return F.writeFile({ path: 'DPB/' + n, data: JSON.stringify(o), directory: 'DOCUMENTS', encoding: 'utf8', recursive: true }); }
-    return one(BK_FILE.current, cur).then(function () { return prev ? one(BK_FILE.previous, prev) : null; });
-  }
+  /*BKNAT-END*/
   // interactive=false (auto / right after a backup): only places that need no tap - the APK's chosen folder, Documents/DPB, a chosen desktop folder.
   // interactive=true (a tap on "save outside the app"): the same, then the folder picker / share sheet / a download.
   // Returns 'native' | 'documents' | 'folder' | 'share' | 'download' | 'none'. A failed write rejects.
@@ -1423,7 +1443,7 @@
       if (!nb) return Promise.resolve(null);
       return Promise.resolve(nb.hasFolder ? nb.hasFolder() : false).catch(function () { return false; }).then(function (has) {
         var ready = has ? Promise.resolve(true) : (interactive && nb.chooseFolder ? Promise.resolve(nb.chooseFolder()).then(function (n) { if (!n) { var e = new Error('اتلغى'); e.name = 'AbortError'; throw e; } return true; }) : Promise.resolve(false));
-        return ready.then(function (ok) { return ok ? bkWriteNative(nb, cur, prev).then(function () { return 'native'; }) : null; });
+        return ready.then(function (ok) { return ok ? bkWriteNative(nb, cur, prev).then(function (w) { return w === false ? null : 'native'; }) : null; });
       });
     }
     function viaDocs() { return cf ? bkWriteCap(cf, cur, prev).then(function () { return 'documents'; }) : Promise.resolve(null); }
@@ -1478,7 +1498,8 @@
       return r;
     }).then(function (r) {
       var x = null; try { x = JSON.parse(ls('dpb_fs2_bk_ext', 'null')); } catch (e) {}
-      el.textContent = 'الحالية: ' + bkLine(r[0]) + '\nالسابقة: ' + bkLine(r[1]) + (x && BK_WHERE[x.w] ? '\nآخر حفظ برّه التطبيق: ' + BK_WHERE[x.w] + ' ✔ ' + new Date(x.t).toLocaleTimeString('ar-EG') : '') + '';
+      var st = ls('dpb_fs2_bk_step', ''), cut = (st && !/^done@/.test(st)) ? '\n⚠ آخر نسخة اتقطعت عند الخطوة: ' + st : '';
+      el.textContent = 'الحالية: ' + bkLine(r[0]) + '\nالسابقة: ' + bkLine(r[1]) + cut + (x && BK_WHERE[x.w] ? '\nآخر حفظ برّه التطبيق: ' + BK_WHERE[x.w] + ' ✔ ' + new Date(x.t).toLocaleTimeString('ar-EG') : '') + '';
     }).catch(function () {});
   }
   /* ---- Google Drive copy (Apps Script action saveBackup): two files per namespace (current + previous), rotated on the server.
