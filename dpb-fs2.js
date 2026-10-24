@@ -1264,7 +1264,7 @@
   /* ---- Backup / restore: one JSON file with everything the layer keeps in Firestore (dpb2/{ns}/rows = map cells, dpb2/{ns}/kv = map catalog, map shapes, original Excel files).
      Restore = make Firestore equal to the file: preview first, a safety copy of the CURRENT state is downloaded before anything is written, writes go in size-limited batches,
      Excel-file parts are written before their pointer and removed after it, so a reader never sees a half file. ---- */
-  var BK_COLLS = ['rows', 'kv'], BK_FORMAT = 'dpb-fs2-backup';
+  var BK_COLLS = ['rows', 'kv'], BK_FORMAT = 'dpb-fs2-backup', bkAutoRun = false, BK_SRV_GAP = 6 * 3600000;
   function bkP(c) { return 'dpb2/' + nsName() + '/' + c; }
   function bkStamp() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()); }
   function stable(v) { if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']'; if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ':' + stable(v[k]); }).join(',') + '}'; return JSON.stringify(v); }
@@ -1293,7 +1293,9 @@
       bkStep('read-local');
       return bkReadCache(a).then(function (loc) {
         if (loc) { lsSet('dpb_fs2_bk_src', 'local'); return loc; }
-        bkStep('read-server'); lsSet('dpb_fs2_bk_src', 'server');
+        // v161: the automatic run never goes to the server more than once every BK_SRV_GAP (a server read costs one read per document); the manual button always may
+        if (bkAutoRun && Date.now() - (Number(ls('dpb_fs2_bk_srv_last', '0')) || 0) < BK_SRV_GAP) throw Object.assign(new Error('bk-skip-server'), { code: 'bk-skip' });
+        bkStep('read-server'); lsSet('dpb_fs2_bk_src', 'server'); lsSet('dpb_fs2_bk_srv_last', String(Date.now()));
         var out = {}, tot = 0, p = Promise.resolve();
         BK_COLLS.forEach(function (c) { p = p.then(function () { return a.list(bkP(c)); }).then(function (r) { out[c] = {}; tot += r.length; r.forEach(function (d) { out[c][d.id] = clean(d.data); }); }); });
         return p.then(function () { lsSet('dpb_fs2_bk_docs', String(tot)); return out; });
@@ -1561,23 +1563,21 @@
   }
 
   /* ---- automatic backup: every N minutes, only when the data changed since the last one (each run reads every document once, so it is meant for ONE device - the admin's) ---- */
-  var bkBusy = false, bkLastVer = null, BK_DAY_READS = 12000;
+  var bkBusy = false, bkLastVer = null;
   function bkAdminDev() { try { return localStorage.getItem('DPB_ADMIN_DEVICE_V1') === '1' || localStorage.getItem('dpb_fs2_bk_admin') === '1'; } catch (e) { return false; } }
   function bkAutoTick(force) {
     if (!on() || (!force && (ls('dpb_fs2_bk_auto', 'off') !== 'on' || !bkAdminDev())) || bkBusy) return Promise.resolve('skip');
     var min = Number(ls('dpb_fs2_bk_min', '30')) || 30, last = Number(ls('dpb_fs2_bk_last', '0')) || 0, since = Date.now() - last;
     if (!force) {
-      // every backup run reads EVERY document once from the server. The free quota is 50,000 reads a day for all devices together, so the automatic backups may use
-      // at most BK_DAY_READS of it: the gap between two runs grows with the size of the data (about 1,000 documents -> a run every 2 hours at most), whatever minutes were chosen.
-      var docs = Number(ls('dpb_fs2_bk_docs', '0')) || 0, budgetMin = docs ? Math.ceil(1440 * docs / BK_DAY_READS) : 0;
-      if (since < Math.max(min, budgetMin) * 60000) return Promise.resolve('skip');
+      // v161: the backup is made from the phone's own copy (no reads), so the gap is just the minutes the user chose. Only a fallback to the server is rate-limited (see bkRead).
+      if (since < min * 60000) return Promise.resolve('skip');
       if (Date.now() < Number(ls('dpb_fs2_bk_quota_until', '0'))) return Promise.resolve('skip');
       // with a project open the listener tells us when something changed (own edits AND other devices' edits); with no project open nothing can tell,
       // so the namespace is looked at no more than once an hour (every look reads each document once)
       if (curStore()) { if (bkLastVer === version) return Promise.resolve('skip'); }
       else if (since < Math.max(min, 60) * 60000) return Promise.resolve('skip');
     }
-    bkBusy = true; var ver = version;
+    bkBusy = true; bkAutoRun = !force; var ver = version;
     return bkBackupNow().then(function (r) {
       bkLastVer = ver; lsSet('dpb_fs2_bk_last', String(Date.now()));
       if (!r.changed) {
@@ -1585,7 +1585,10 @@
         return 'same';
       }
       return bkPublish(r).then(function (x) { return 'saved:' + x[0]; });
-    }).catch(function (e) { if (/resource-exhausted|quota/i.test(String(e && (e.code || e.message || e)))) lsSet('dpb_fs2_bk_quota_until', String(Date.now() + 3 * 3600000)); return 'error'; }).then(function (x) { bkBusy = false; bkPaint(); return x; });
+    }).catch(function (e) {
+      if (e && e.code === 'bk-skip') { bkLastVer = ver; lsSet('dpb_fs2_bk_last', String(Date.now())); return 'skip-server'; }   // v161: phone copy not usable and the server was read recently: wait for the next change / interval instead of retrying every minute
+      if (/resource-exhausted|quota/i.test(String(e && (e.code || e.message || e)))) lsSet('dpb_fs2_bk_quota_until', String(Date.now() + 3 * 3600000)); return 'error';
+    }).then(function (x) { bkBusy = false; bkAutoRun = false; bkPaint(); return x; });
   }
   if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
   // Android freezes the page's timers while the app is in the background: when the admin comes back, check right away instead of waiting for the next minute
@@ -1699,7 +1702,7 @@
     am.addEventListener('change', function () { lsSet('dpb_fs2_bk_min', am.value); });
     $('dpbFs2Backup').addEventListener('click', function () {
       if (!on()) { say('شغّل الطبقة الجديدة الأول.'); return; }
-      say('بقرا كل البيانات من Firebase…');
+      say('بقرا البيانات من نسخة الجهاز…');
       bkBackupNow().then(function (r) {
         if (!r.changed) {
           if (driveOn() && ls('dpb_fs2_bk_drive_pending', '')) return bkGet('current').then(function (c) { return c ? bkDriveUpload(c) : { ok: false, error: 'مفيش نسخة' }; }).then(function (d) { say(d.ok ? 'مفيش تغيير، بس رفعت النسخة الحالية على Drive ☁️.' : '⚠ Drive: ' + d.error); paintBk(); });
