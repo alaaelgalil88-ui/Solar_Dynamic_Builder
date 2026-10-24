@@ -52,6 +52,20 @@
     } catch (e) {}
   }
   window.__dpbFs2Diag = function () { return dlogBuf.slice(); };
+  // v157: Firestore's free plan allows 50,000 READS a day (writes: 20,000). Every document a device receives from the server costs one read, so the app now
+  // counts, per device and per quota day (resets at midnight Pacific time), how many documents came from: listeners (live changes), single reads (kv/settings/users)
+  // and full backup reads. The totals go into the diagnostics log, so the day the quota runs out the log says who used it.
+  var RC = { d: '', listen: 0, get: 0, backup: 0 }, rcDirty = false, rcLogged = '';
+  function rcDay() { var d = new Date(Date.now() - 7 * 3600000); return d.getUTCFullYear() + '-' + (d.getUTCMonth() + 1) + '-' + d.getUTCDate(); }
+  function rcLoad() { var day = rcDay(); if (RC.d === day) return; var o = null; try { o = JSON.parse(ls('dpb_fs2_reads', 'null')); } catch (e) {} RC = (o && o.d === day) ? o : { d: day, listen: 0, get: 0, backup: 0 }; }
+  function rc(kind, n) { rcLoad(); RC[kind] = (RC[kind] || 0) + (n || 0); rcDirty = true; }
+  function rcToday() { rcLoad(); return { day: RC.d, listen: RC.listen, get: RC.get, backup: RC.backup, total: RC.listen + RC.get + RC.backup }; }
+  window.DPB_FS2_reads = rcToday;
+  setInterval(function () {
+    if (rcDirty) { rcDirty = false; try { localStorage.setItem('dpb_fs2_reads', JSON.stringify(RC)); } catch (e) {} }
+    var t = rcToday(), sig = Math.floor(t.total / 500);
+    if (t.total && String(sig) !== rcLogged) { rcLogged = String(sig); dlog('reads', 'today on this device: ' + t.total + ' (live changes ' + t.listen + ', single reads ' + t.get + ', backup ' + t.backup + ') of the 50,000/day free quota (all devices together)'); }
+  }, 15000);
   // v156: memory trail for the "force closed - ran out of memory" crashes. Every 30 s the JS heap is sampled; a line goes into the diagnostics log when it
   // moved by 25 MB or more (or every 10 min), so after the next crash the log shows how the heap grew and what the layer was doing just before.
   (function () {
@@ -136,6 +150,21 @@
     return { stringValue: String(v) };
   }
   function restFields(o) { var f = {}; Object.keys(o).forEach(function (k) { if (o[k] !== undefined) f[k] = restVal(o[k]); }); return f; }
+  /*BKDEC-START*/
+  // v158: Firestore REST value -> plain JS (twin of restVal), used by the paged backup read
+  function restDec(v) {
+    if (!v || typeof v !== 'object') return null;
+    if ('stringValue' in v) return v.stringValue;
+    if ('integerValue' in v) return Number(v.integerValue);
+    if ('doubleValue' in v) return Number(v.doubleValue);
+    if ('booleanValue' in v) return !!v.booleanValue;
+    if ('timestampValue' in v) return v.timestampValue;
+    if ('mapValue' in v) { var o = {}, f = (v.mapValue && v.mapValue.fields) || {}; Object.keys(f).forEach(function (k) { o[k] = restDec(f[k]); }); return o; }
+    if ('arrayValue' in v) return ((v.arrayValue && v.arrayValue.values) || []).map(restDec);
+    return null;
+  }
+  function restDocId(name) { var x = String(name || '').split('/').pop(); try { return decodeURIComponent(x); } catch (e) { return x; } }
+  /*BKDEC-END*/
   function restFp(k) { return /^[A-Za-z_][A-Za-z_0-9]*$/.test(k) ? k : '`' + String(k).replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`'; }
   function restWrites(docsBase, ops) {
     return ops.map(function (o) {
@@ -294,6 +323,41 @@
         return restSend([{ update: { name: DOCS + '/dpb2/' + nsName() + '/kv/clock-' + dev, fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 't', setToServerValue: 'REQUEST_TIME' }] }]).then(function () { return 'ok'; }, function (e) { return String(e && (e.code || e.message) || e); });
       }
 
+      /*BKLIST-START*/
+      // v158: the backup used ONE big getDocsFromServer for ~1000 documents. On a weak phone connection the SDK stream gives up with the generic
+      // "Failed to get documents from server" (code unavailable) and no backup is ever made. Fallback: plain HTTPS pages (200 docs each, 30 s, 2 retries per page)
+      function restList(path) {
+        var out = [], token = '';
+        function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+        function page(tries) {
+          if (!auth.currentUser) return Promise.reject(Object.assign(new Error('no signed-in user'), { code: 'no-auth' }));
+          return auth.currentUser.getIdToken().then(function (tok) {
+            var ctl = (typeof AbortController === 'function') ? new AbortController() : null, tm = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, 30000);
+            var url = 'https://firestore.googleapis.com/v1/' + DOCS + '/' + path + '?pageSize=200' + (token ? '&pageToken=' + encodeURIComponent(token) : '');
+            return prevFetch(url, { headers: { 'Authorization': 'Bearer ' + tok }, signal: ctl ? ctl.signal : undefined }).then(
+              function (r) { clearTimeout(tm); return r.text().then(function (t) { if (!r.ok) throw restError(r.status, t); return JSON.parse(t); }); },
+              function (e) { clearTimeout(tm); throw Object.assign(new Error(e && e.name === 'AbortError' ? 'rest-timeout (30s)' : String((e && e.message) || e)), { code: e && e.name === 'AbortError' ? 'rest-timeout' : 'rest-network' }); });
+          }).catch(function (e) {
+            if (tries > 0 && !(e && e.definite)) return pause(900).then(function () { return page(tries - 1); });
+            throw e;
+          }).then(function (j) {
+            var docs = (j && j.documents) || [];
+            docs.forEach(function (d) { var f = d.fields || {}, o = {}; Object.keys(f).forEach(function (k) { o[k] = restDec(f[k]); }); out.push({ id: restDocId(d.name), data: o }); });
+            rc('backup', docs.length); token = (j && j.nextPageToken) || '';
+            return token ? page(2) : out;
+          });
+        }
+        return page(2);
+      }
+      function sdkList(path) { var col = fs.collection.apply(null, [db].concat(path.split('/'))); return (fs.getDocsFromServer ? fs.getDocsFromServer(col) : fs.getDocs(col)).then(function (q) { rc('backup', q.docs.length); return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }); }
+      function listAll(path) {
+        return sdkList(path).catch(function (e) {
+          var c = String((e && (e.code || e.message)) || e);
+          if (/resource-exhausted|quota|permission|unauth/i.test(c)) throw e;   // the server answered: a second try cannot help
+          return restList(path).catch(function (e2) { throw Object.assign(new Error('SDK: ' + c + ' | HTTPS: ' + String((e2 && e2.message) || e2)), { code: (e2 && e2.code) || 'backup-read' }); });
+        });
+      }
+      /*BKLIST-END*/
       // ---- v127 cell writes: transaction (server compare) online, outbox otherwise ----
       function txChunk(chunk) {
         var skipped = [];
@@ -388,10 +452,10 @@
             function wait(p, ms) { return Promise.race([p.then(function () { return 'ok'; }, function (e) { return String(e && e.code || e && e.message || e); }), new Promise(function (res) { setTimeout(function () { res('timeout'); }, ms); })]); }
             return wait(fs.getDocFromServer(r), 8000).then(function (a) { out.read = a; return restProbe(); }).then(function (rr) { out.rest = rr; return wait(fs.setDoc(r, { t: fs.serverTimestamp() }), 8000); }).then(function (b) { out.write = b; return out; });
           },
-          get: function (path) { return fs.getDoc(dref(path)).then(function (x) { return x.exists() ? x.data() : null; }); },
-          listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { cb(q.docChanges().map(function (c) { return c.type === 'removed' ? { id: c.doc.id, removed: true } : { id: c.doc.id, data: c.doc.data() }; }), null, true); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
+          get: function (path) { return fs.getDoc(dref(path)).then(function (x) { try { if (!x.metadata.fromCache) rc('get', 1); } catch (e) {} return x.exists() ? x.data() : null; }); },
+          listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { try { if (!q.metadata.fromCache) rc('listen', q.docChanges().length); } catch (e) {} cb(q.docChanges().map(function (c) { return c.type === 'removed' ? { id: c.doc.id, removed: true } : { id: c.doc.id, data: c.doc.data() }; }), null, true); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
           // every document of a collection, read from the SERVER (never the local cache), so a backup is exactly what Firestore holds
-          list: function (path) { var col = fs.collection.apply(null, [db].concat(path.split('/'))); return (fs.getDocsFromServer ? fs.getDocsFromServer(col) : fs.getDocs(col)).then(function (q) { return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }); },
+          list: function (path) { return listAll(path); },
           // t:'s' = write a whole small doc (meta). t:'f' = write only the listed cells inside a row doc (mergeFields replaces exactly those cells, never the rest of the row)
           write: function (ops) {
             var fOps = ops.filter(function (o) { return o.t === 'f'; }), rest = ops.filter(function (o) { return o.t !== 'f'; });
@@ -1207,7 +1271,7 @@
     return getAdapter().then(function (a) {   // v156: the backup reads the whole namespace, so it no longer needs a project to be open
       if (!a || !a.list) throw new Error('الاتصال الحالي مش بيدعم قراءة كل المستندات');
       return Promise.all(BK_COLLS.map(function (c) { return a.list(bkP(c)); })).then(function (r) {
-        var out = {}; BK_COLLS.forEach(function (c, i) { out[c] = {}; r[i].forEach(function (d) { out[c][d.id] = clean(d.data); }); }); return out;
+        var out = {}, tot = 0; BK_COLLS.forEach(function (c, i) { out[c] = {}; tot += r[i].length; r[i].forEach(function (d) { out[c][d.id] = clean(d.data); }); }); lsSet('dpb_fs2_bk_docs', String(tot)); return out;
       });
     });
   }
@@ -1451,13 +1515,17 @@
   }
 
   /* ---- automatic backup: every N minutes, only when the data changed since the last one (each run reads every document once, so it is meant for ONE device - the admin's) ---- */
-  var bkBusy = false, bkLastVer = null;
+  var bkBusy = false, bkLastVer = null, BK_DAY_READS = 12000;
   function bkAdminDev() { try { return localStorage.getItem('DPB_ADMIN_DEVICE_V1') === '1' || localStorage.getItem('dpb_fs2_bk_admin') === '1'; } catch (e) { return false; } }
   function bkAutoTick(force) {
     if (!on() || (!force && (ls('dpb_fs2_bk_auto', 'off') !== 'on' || !bkAdminDev())) || bkBusy) return Promise.resolve('skip');
     var min = Number(ls('dpb_fs2_bk_min', '30')) || 30, last = Number(ls('dpb_fs2_bk_last', '0')) || 0, since = Date.now() - last;
     if (!force) {
-      if (since < min * 60000) return Promise.resolve('skip');
+      // every backup run reads EVERY document once from the server. The free quota is 50,000 reads a day for all devices together, so the automatic backups may use
+      // at most BK_DAY_READS of it: the gap between two runs grows with the size of the data (about 1,000 documents -> a run every 2 hours at most), whatever minutes were chosen.
+      var docs = Number(ls('dpb_fs2_bk_docs', '0')) || 0, budgetMin = docs ? Math.ceil(1440 * docs / BK_DAY_READS) : 0;
+      if (since < Math.max(min, budgetMin) * 60000) return Promise.resolve('skip');
+      if (Date.now() < Number(ls('dpb_fs2_bk_quota_until', '0'))) return Promise.resolve('skip');
       // with a project open the listener tells us when something changed (own edits AND other devices' edits); with no project open nothing can tell,
       // so the namespace is looked at no more than once an hour (every look reads each document once)
       if (curStore()) { if (bkLastVer === version) return Promise.resolve('skip'); }
@@ -1471,7 +1539,7 @@
         return 'same';
       }
       return bkPublish(r).then(function (x) { return 'saved:' + x[0]; });
-    }).catch(function () { return 'error'; }).then(function (x) { bkBusy = false; bkPaint(); return x; });
+    }).catch(function (e) { if (/resource-exhausted|quota/i.test(String(e && (e.code || e.message || e)))) lsSet('dpb_fs2_bk_quota_until', String(Date.now() + 3 * 3600000)); return 'error'; }).then(function (x) { bkBusy = false; bkPaint(); return x; });
   }
   if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
   // Android freezes the page's timers while the app is in the background: when the admin comes back, check right away instead of waiting for the next minute
