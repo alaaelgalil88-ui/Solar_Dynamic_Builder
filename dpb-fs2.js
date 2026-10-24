@@ -456,6 +456,8 @@
           listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { try { if (!q.metadata.fromCache) rc('listen', q.docChanges().length); } catch (e) {} cb(q.docChanges().map(function (c) { return c.type === 'removed' ? { id: c.doc.id, removed: true } : { id: c.doc.id, data: c.doc.data() }; }), null, true); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
           // every document of a collection, read from the SERVER (never the local cache), so a backup is exactly what Firestore holds
           list: function (path) { return listAll(path); },
+          // v160: read what this phone already holds (no network, no quota). null = not supported / nothing there
+          listCache: function (path) { if (!fs.getDocsFromCache) return Promise.resolve(null); var col = fs.collection.apply(null, [db].concat(path.split('/'))); return fs.getDocsFromCache(col).then(function (q) { return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }, function () { return null; }); },
           // t:'s' = write a whole small doc (meta). t:'f' = write only the listed cells inside a row doc (mergeFields replaces exactly those cells, never the rest of the row)
           write: function (ops) {
             var fOps = ops.filter(function (o) { return o.t === 'f'; }), rest = ops.filter(function (o) { return o.t !== 'f'; });
@@ -1267,14 +1269,38 @@
   function bkStamp() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()); }
   function stable(v) { if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']'; if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ':' + stable(v[k]); }).join(',') + '}'; return JSON.stringify(v); }
   function bytesOf(s) { try { return new TextEncoder().encode(s).length; } catch (e) { return s.length * 2; } }
+  /*BKREAD-START*/
+  // v160: the backup is made from the copy this phone already holds (Firestore local cache): zero reads from the daily quota, no network, and it does not
+  // touch the server channel that kept dying in "read". Only if that copy is missing or visibly incomplete (fewer docs than the last full server read) does it
+  // fall back to the server, one collection at a time.
+  function bkReadCache(a) {
+    if (!a.listCache) return Promise.resolve(null);
+    var out = {}, tot = 0, p = Promise.resolve();
+    BK_COLLS.forEach(function (c) {
+      p = p.then(function () { return a.listCache(bkP(c)); }).then(function (r) {
+        if (!r) throw new Error('no-cache');
+        out[c] = {}; tot += r.length; r.forEach(function (d) { out[c][d.id] = clean(d.data); });
+      });
+    });
+    return p.then(function () {
+      var exp = parseInt(ls('dpb_fs2_bk_docs', '0'), 10) || 0;
+      return (!tot || (exp && tot < exp * 0.95)) ? null : out;
+    }, function () { return null; });
+  }
   function bkRead() {
     return getAdapter().then(function (a) {   // v156: the backup reads the whole namespace, so it no longer needs a project to be open
       if (!a || !a.list) throw new Error('الاتصال الحالي مش بيدعم قراءة كل المستندات');
-      return Promise.all(BK_COLLS.map(function (c) { return a.list(bkP(c)); })).then(function (r) {
-        var out = {}, tot = 0; BK_COLLS.forEach(function (c, i) { out[c] = {}; tot += r[i].length; r[i].forEach(function (d) { out[c][d.id] = clean(d.data); }); }); lsSet('dpb_fs2_bk_docs', String(tot)); return out;
+      bkStep('read-local');
+      return bkReadCache(a).then(function (loc) {
+        if (loc) { lsSet('dpb_fs2_bk_src', 'local'); return loc; }
+        bkStep('read-server'); lsSet('dpb_fs2_bk_src', 'server');
+        var out = {}, tot = 0, p = Promise.resolve();
+        BK_COLLS.forEach(function (c) { p = p.then(function () { return a.list(bkP(c)); }).then(function (r) { out[c] = {}; tot += r.length; r.forEach(function (d) { out[c][d.id] = clean(d.data); }); }); });
+        return p.then(function () { lsSet('dpb_fs2_bk_docs', String(tot)); return out; });
       });
     });
   }
+  /*BKREAD-END*/
   function bkMake(cur) { return { format: BK_FORMAT, version: 1, ns: nsName(), savedAt: new Date().toISOString(), counts: { rows: Object.keys(cur.rows).length, kv: Object.keys(cur.kv).length }, rows: cur.rows, kv: cur.kv }; }
   function bkDownload(obj, name) {
     var blob = new Blob([JSON.stringify(obj)], { type: 'application/json' }), url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -1363,7 +1389,6 @@
   // Unchanged -> { changed:false, current:null } (callers load the copy themselves only if they need it).
   function bkStep(x) { lsSet('dpb_fs2_bk_step', x + '@' + new Date().toLocaleTimeString('ar-EG')); }
   function bkBackupNow() {
-    bkStep('read');
     return bkRead().then(function (cur) {
       bkStep('compare');
       var obj = bkMake(cur), fp = bkFp(cur); cur = null;
@@ -1498,8 +1523,8 @@
       return r;
     }).then(function (r) {
       var x = null; try { x = JSON.parse(ls('dpb_fs2_bk_ext', 'null')); } catch (e) {}
-      var st = ls('dpb_fs2_bk_step', ''), cut = (st && !/^done@/.test(st)) ? '\n⚠ آخر نسخة اتقطعت عند الخطوة: ' + st : '';
-      el.textContent = 'الحالية: ' + bkLine(r[0]) + '\nالسابقة: ' + bkLine(r[1]) + cut + (x && BK_WHERE[x.w] ? '\nآخر حفظ برّه التطبيق: ' + BK_WHERE[x.w] + ' ✔ ' + new Date(x.t).toLocaleTimeString('ar-EG') : '') + '';
+      var srcT = ls('dpb_fs2_bk_src', ''), srcL = srcT ? '\nمصدر آخر نسخة: ' + (srcT === 'local' ? 'نسخة الجهاز (من غير قراءات)' : 'السيرفر') : '', st = ls('dpb_fs2_bk_step', ''), cut = (st && !/^done@/.test(st)) ? '\n⚠ آخر نسخة اتقطعت عند الخطوة: ' + st : '';
+      el.textContent = 'الحالية: ' + bkLine(r[0]) + '\nالسابقة: ' + bkLine(r[1]) + srcL + cut + (x && BK_WHERE[x.w] ? '\nآخر حفظ برّه التطبيق: ' + BK_WHERE[x.w] + ' ✔ ' + new Date(x.t).toLocaleTimeString('ar-EG') : '') + '';
     }).catch(function () {});
   }
   /* ---- Google Drive copy (Apps Script action saveBackup): two files per namespace (current + previous), rotated on the server.
