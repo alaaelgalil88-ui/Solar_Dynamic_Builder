@@ -1317,7 +1317,7 @@
     BK_COLLS.forEach(function (c) {
       var A = cur[c] || {}, B = bk[c] || {}; d.add[c] = []; d.change[c] = []; d.remove[c] = [];
       Object.keys(B).forEach(function (id) { if (!Object.prototype.hasOwnProperty.call(A, id)) d.add[c].push(id); else if (stable(A[id]) !== stable(B[id])) d.change[c].push(id); });
-      Object.keys(A).forEach(function (id) { if (!Object.prototype.hasOwnProperty.call(B, id) && !(bk.slim && c === 'kv' && /^xlfile_/.test(id))) d.remove[c].push(id); });   /* v167: a slim (Drive) copy has no Excel files by design, so restoring it must never delete them */
+      Object.keys(A).forEach(function (id) { if (!Object.prototype.hasOwnProperty.call(B, id) && !(bk.slim && c === 'kv' && /^(xlfile_|mapsnap_)/.test(id))) d.remove[c].push(id); });   /* v167: a slim (Drive) copy has no Excel files by design, so restoring it must never delete them */
       d.n.add += d.add[c].length; d.n.change += d.change[c].length; d.n.remove += d.remove[c].length;
     });
     return d;
@@ -1554,32 +1554,39 @@
     return raw || 'فشل الرفع';
   }
   // v167: the copy sent to Drive leaves out the original Excel files (kv xlfile_*): they are base64 and made the file ~12 MB, which never finished uploading on 4G
-  // (AbortError). They stay in Firestore and in the phone/local backup file; the Drive copy keeps every cell, map and setting.
+  // (AbortError). The map snapshots (mapsnap_*) are left out too. They stay in Firestore and in the phone/local backup file; the Drive copy keeps every cell, map and setting.
   function bkSlim(obj) {
-    var kv = {}, n = 0; Object.keys((obj && obj.kv) || {}).forEach(function (k) { if (/^xlfile_/.test(k)) n++; else kv[k] = obj.kv[k]; });
+    var kv = {}, n = 0; Object.keys((obj && obj.kv) || {}).forEach(function (k) { if (/^(xlfile_|mapsnap_)/.test(k)) n++; else kv[k] = obj.kv[k]; });
     var o = {}; Object.keys(obj).forEach(function (k) { o[k] = obj[k]; }); o.kv = kv; o.slim = { noExcelFiles: n };
     return o;
   }
   window.DPB_FS2.bkSlim = bkSlim;
   function bkDriveUpload(obj) {
     if (!driveOn()) return Promise.resolve({ skipped: true });
-    obj = bkSlim(obj);
+    obj = bkSlim(obj); var upT0 = Date.now(), upMB = (bytesOf(JSON.stringify(obj)) / 1048576).toFixed(2);
     var wait = Promise.resolve(); for (var i = 0; i < 20 && typeof window.DPB_gsCall !== 'function'; i++) wait = wait.then(function () { return new Promise(function (r) { setTimeout(r, 100); }); });
     return wait.then(function () {
       if (typeof window.DPB_gsCall !== 'function') return { ok: false, error: 'الاتصال بالسحابة غير جاهز' };
       return (typeof window.DPB_backupPost === 'function' ? window.DPB_backupPost({ kind: 'firebase', ns: nsName(), content: JSON.stringify(obj), shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000) : window.DPB_gsCall('saveBackup', { kind: 'firebase', ns: nsName(), content: JSON.stringify(obj), shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000));
     }).then(function (res) {
-      if (res && res.ok) { lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: true, t: Date.now(), url: res.url || '', owner: res.owner || '', sharedWith: res.sharedWith || '', shareError: res.shareError || '' })); try { localStorage.removeItem('dpb_fs2_bk_drive_pending'); } catch (e) {} return { ok: true }; }
-      var err = driveErr(res); lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: false, t: Date.now(), error: err })); lsSet('dpb_fs2_bk_drive_pending', '1'); return { ok: false, error: err };
-    }).catch(function (e) { var err = String((e && e.message) || e || 'فشل'); lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: false, t: Date.now(), error: err })); lsSet('dpb_fs2_bk_drive_pending', '1'); return { ok: false, error: err }; });
+      if (res && res.ok) { lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: true, mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), url: res.url || '', owner: res.owner || '', sharedWith: res.sharedWith || '', shareError: res.shareError || '' })); try { localStorage.removeItem('dpb_fs2_bk_drive_pending'); } catch (e) {} return { ok: true }; }
+      var err = driveErr(res); lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: false, mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), error: err })); lsSet('dpb_fs2_bk_drive_pending', '1'); return { ok: false, error: err };
+    }).catch(function (e) { var err = String((e && e.message) || e || 'فشل'); lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: false, mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), error: err })); lsSet('dpb_fs2_bk_drive_pending', '1'); return { ok: false, error: err }; });
+  }
+  // v169: shows WHICH link the upload used (read from the link field, nothing is hard-coded here): its length and last characters, or that the field is empty
+  function bkUrlNote() {
+    var u = ''; try { u = String(localStorage.getItem('DPB_BACKUP_URL_V1') || ''); } catch (e) {}
+    if (!u.trim()) return '\nرابط الرفع: الخانة فاضية (بيستخدم الرابط الافتراضي الداخلي)';
+    var t = u.trim(), odd = (u !== t || /\s/.test(t)) ? ' ⚠ فيه مسافات' : '';
+    return '\nرابط الرفع: ' + t.length + ' حرف، آخره ' + t.slice(-16) + odd;
   }
   function bkDriveLine() {
     var x = null; try { x = JSON.parse(ls('dpb_fs2_bk_drive', 'null')); } catch (e) {}
     if (!driveOn()) return '\nGoogle Drive: متوقف';
     if (!x) return '\nGoogle Drive: لسه ما اترفعش';
     var t = new Date(x.t).toLocaleTimeString('ar-EG');
-    if (!x.ok) return '\nGoogle Drive: ✖ ' + x.error + ' (' + t + ')';
-    return '\nGoogle Drive: ✔ نجح الساعة ' + t + (x.sharedWith ? ' — مشاركة مع ' + x.sharedWith + ' ✔' : (x.shareError ? ' — ⚠ تعذّرت المشاركة: ' + x.shareError : (driveEmail() ? '' : ' — اكتب إيميل Drive عشان النسخة تظهر عنده'))) + (x.owner ? '\nالملف محفوظ في حساب: ' + x.owner : '');
+    if (!x.ok) return '\nGoogle Drive: ✖ ' + x.error + ' (' + t + ')' + (x.mb ? '\nحجم المرفوع: ' + x.mb + ' MB بعد ' + x.sec + ' ث' : '') + bkUrlNote();
+    return '\nGoogle Drive: ✔ نجح الساعة ' + t + (x.mb ? ' (' + x.mb + ' MB في ' + x.sec + ' ث)' : '') + (x.sharedWith ? ' — مشاركة مع ' + x.sharedWith + ' ✔' : (x.shareError ? ' — ⚠ تعذّرت المشاركة: ' + x.shareError : (driveEmail() ? '' : ' — اكتب إيميل Drive عشان النسخة تظهر عنده'))) + (x.owner ? '\nالملف محفوظ في حساب: ' + x.owner : '');
   }
 
   /* ---- automatic backup: every N minutes, only when the data changed since the last one (each run reads every document once, so it is meant for ONE device - the admin's) ---- */
