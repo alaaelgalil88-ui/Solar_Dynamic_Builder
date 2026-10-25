@@ -24,7 +24,7 @@ public class DpbKeepAliveService extends Service {
     public static volatile boolean running = false;
     private static final String CHANNEL = "dpb_keepalive";
     private static final int NOTIF_ID = 7731;
-    private static final long MAX_MS = 25L * 60L * 1000L;
+    private static final long MAX_MS = 6L * 60L * 1000L;
 
     private PowerManager.WakeLock wake;
     private final Handler handler = new Handler(Looper.getMainLooper());
