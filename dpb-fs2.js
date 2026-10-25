@@ -1345,6 +1345,7 @@
   }
   // ask(summary) -> true to continue. Returns { applied, diff, safety } (applied false = nothing written).
   function bkRestore(text, ask, progress) {
+    if (typeof text === 'string' && text.indexOf('"dpbz"') > -1 && text.indexOf('"dpbz"') < 40) return bkUnpack(text).then(function (t) { return bkRestore(t, ask, progress); });   // v168: compressed Drive copy
     var bk; try { bk = JSON.parse(text); } catch (e) { return Promise.reject(new Error('الملف مش نسخة احتياطية صالحة (مش JSON)')); }
     if (!bk || bk.format !== BK_FORMAT || typeof bk.rows !== 'object' || typeof bk.kv !== 'object' || !bk.rows || !bk.kv) return Promise.reject(new Error('الملف ده مش نسخة احتياطية من الطبقة الجديدة'));
     var bad = BK_COLLS.some(function (c) { var m = bk[c]; return Array.isArray(m) || Object.keys(m).some(function (id) { var v = m[id]; return !id || /\//.test(id) || !v || typeof v !== 'object' || Array.isArray(v); }); });
@@ -1561,13 +1562,42 @@
     return o;
   }
   window.DPB_FS2.bkSlim = bkSlim;
+  // v168: the Drive copy is compressed (gzip, then base64 inside a small JSON wrapper) before it is sent. The cells repeat the same field names thousands of times, so the file
+  // is typically ~8-10x smaller: much less to push over 4G and much less memory in the page. The wrapper is still valid JSON, so the Apps Script needs no change.
+  // bkUnpack() (used by the restore) turns the wrapper back into the normal backup text; a normal (uncompressed) backup passes through untouched.
+  function bkB64(u8) { var s = '', i, n = u8.length; for (i = 0; i < n; i += 24576) s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(n, i + 24576))); return btoa(s); }
+  function bkFromB64(b) { var s = atob(b), n = s.length, u = new Uint8Array(n), i; for (i = 0; i < n; i++) u[i] = s.charCodeAt(i); return u; }
+  function bkStreamBytes(inputBytes, stream) {
+    var w = stream.writable.getWriter(); w.write(inputBytes); w.close();
+    return new Response(stream.readable).arrayBuffer().then(function (b) { return new Uint8Array(b); });
+  }
+  function bkPack(text) {
+    text = String(text);
+    if (typeof CompressionStream !== 'function' || typeof Response !== 'function') return Promise.resolve(text);
+    try {
+      return bkStreamBytes(new TextEncoder().encode(text), new CompressionStream('gzip')).then(function (z) {
+        var out = JSON.stringify({ dpbz: 'gz64', n: text.length, z: bkB64(z) });
+        return out.length < text.length ? out : text;
+      }, function () { return text; });
+    } catch (e) { return Promise.resolve(text); }
+  }
+  function bkUnpack(text) {
+    var w = null; try { var t = String(text); if (t.indexOf('"dpbz"') > -1 && t.indexOf('"dpbz"') < 40) w = JSON.parse(t); } catch (e) {}
+    if (!w || w.dpbz !== 'gz64' || !w.z) return Promise.resolve(text);
+    if (typeof DecompressionStream !== 'function') return Promise.reject(new Error('\u0627\u0644\u0645\u062a\u0635\u0641\u062d \u0645\u0634 \u0628\u064a\u062f\u0639\u0645 \u0641\u0643 \u0627\u0644\u0636\u063a\u0637 \u0644\u0646\u0633\u062e\u0629 Drive'));
+    return bkStreamBytes(bkFromB64(w.z), new DecompressionStream('gzip')).then(function (u) { return new TextDecoder().decode(u); });
+  }
+  window.DPB_FS2.bkPack = bkPack; window.DPB_FS2.bkUnpack = bkUnpack;
   function bkDriveUpload(obj) {
     if (!driveOn()) return Promise.resolve({ skipped: true });
-    obj = bkSlim(obj); var upT0 = Date.now(), upMB = (bytesOf(JSON.stringify(obj)) / 1048576).toFixed(2);
+    obj = bkSlim(obj); var upT0 = Date.now(), upMB = '?', fullStr = JSON.stringify(obj);
     var wait = Promise.resolve(); for (var i = 0; i < 20 && typeof window.DPB_gsCall !== 'function'; i++) wait = wait.then(function () { return new Promise(function (r) { setTimeout(r, 100); }); });
     return wait.then(function () {
       if (typeof window.DPB_gsCall !== 'function') return { ok: false, error: 'الاتصال بالسحابة غير جاهز' };
-      return (typeof window.DPB_backupPost === 'function' ? window.DPB_backupPost({ kind: 'firebase', ns: nsName(), content: JSON.stringify(obj), shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000) : window.DPB_gsCall('saveBackup', { kind: 'firebase', ns: nsName(), content: JSON.stringify(obj), shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000));
+      return bkPack(fullStr).then(function (packed) {
+        fullStr = null; upMB = (bytesOf(packed) / 1048576).toFixed(2);
+        return (typeof window.DPB_backupPost === 'function' ? window.DPB_backupPost({ kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000) : window.DPB_gsCall('saveBackup', { kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000));
+      });
     }).then(function (res) {
       if (res && res.ok) { lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: true, mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), url: res.url || '', owner: res.owner || '', sharedWith: res.sharedWith || '', shareError: res.shareError || '' })); try { localStorage.removeItem('dpb_fs2_bk_drive_pending'); } catch (e) {} return { ok: true }; }
       var err = driveErr(res); lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: false, mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), error: err })); lsSet('dpb_fs2_bk_drive_pending', '1'); return { ok: false, error: err };

@@ -11500,7 +11500,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     }catch(e){
       const fetchErr=String((e&&e.name)||"")+": "+String((e&&e.message)||e);
       // the WebView could not do it: try the phone's native HTTP before giving up
-      const n=await nativeCall("POST",bodyStr,ms);
+      const n=(bodyStr.length>700000)?{err:"skipped: body too big for the native bridge ("+Math.round(bodyStr.length/1024)+" KB)"}:await nativeCall("POST",bodyStr,ms);   /* v168: a multi-MB string through the Capacitor bridge can freeze/close the app */
       if(n&&n.txt!==undefined&&(n.status===undefined||n.status<400)){const j=parseRes(n.txt);if(j&&j.ok)return j;if(j&&j.error)return Object.assign({},j,{__via:"native"})}
       // still failing: does a plain GET of the link work (from the WebView, then natively)?
       let probe="";
