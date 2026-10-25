@@ -21173,11 +21173,20 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
     }catch(_){return false}
   }
 
+  /* v163: right after a chat message is saved, tell the push Worker to look at THIS thread (fire-and-forget, no secret in the app: the Worker reads the message itself and only pushes what it finds).
+     Set the Worker address once: window.DPB_PUSH_URL (dpb-config.js) or localStorage DPB_PUSH_URL_V1. Empty = no ping (the Worker's periodic scan still delivers). */
+  function pingPush(dir,user){
+    try{
+      var base=String(window.DPB_PUSH_URL||lsGet('DPB_PUSH_URL_V1')||'').trim().replace(/\/+$/,'');
+      if(!/^https:\/\//i.test(base))return;
+      fetch(base+'/ping',{method:'POST',mode:'no-cors',keepalive:true,headers:{'Content-Type':'text/plain'},body:JSON.stringify({dir:dir,user:String(user||'')})}).catch(function(){});
+    }catch(_){}
+  }
   var api=window.dpbMsg={
     adminSend:async function(user,text){
       var k=key('msga_',user),cur=await rd(k);if(cur===null)return {ok:false};
       var m=Array.isArray(cur.m)?cur.m:[];m.push({id:rid(),t:nowIso(),x:text});if(m.length>MAXN)m=m.slice(-MAXN);
-      return {ok:await wr(k,Object.assign({},cur,{m:m}))};
+      var okA=await wr(k,Object.assign({},cur,{m:m}));if(okA)pingPush('a',user);return {ok:okA};
     },
     thread:async function(user,side){
       var ab=await Promise.all([rd(key('msga_',user)),rd(key('msgs_',user))]),a=ab[0],s=ab[1];
@@ -21198,7 +21207,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
     supReply:async function(user,text){
       var k=key('msgs_',user),cur=await rd(k);if(cur===null)return {ok:false};
       var r=Array.isArray(cur.r)?cur.r:[];r.push({id:rid(),t:nowIso(),x:text});if(r.length>MAXN)r=r.slice(-MAXN);
-      cur.r=r;return {ok:await wr(k,cur)};
+      cur.r=r;var okS=await wr(k,cur);if(okS)pingPush('s',user);return {ok:okS};
     },
     supMarkSeen:async function(user,thr){
       var a=thr.a.m||[];if(!a.length)return;var newest=a[a.length-1].t;if(newest<=(thr.seenT||''))return;
