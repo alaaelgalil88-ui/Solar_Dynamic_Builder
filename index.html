@@ -11491,9 +11491,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         return {status:r&&r.status,txt:txt};
       }catch(e){return {err:String((e&&e.message)||e)}}
     };
-    /* v172: on the APK a stalled WebView connection used to be waited on for the whole `ms` (2 min) before the phone's native HTTP got its turn (the script log showed the request arriving ~2 min after the upload started, then finishing in ~8 s). Now the WebView gets 35 s, then the native path runs. Outside the APK (no native HTTP) nothing changes. */
-    const hasNative=!!(window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.CapacitorHttp&&typeof window.Capacitor.Plugins.CapacitorHttp.request==="function");
-    const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),hasNative?Math.min(ms,35000):ms);
+    /* v172b: the real copy is ~1.3 MB and this phone uploads at roughly 10 KB/s, so the request legitimately needs ~2 min to arrive (the script log showed it arriving at ~116 s and finishing in 8 s). A short WebView timeout therefore aborted uploads that would have worked, so there is none: the wait is the caller's `ms`, raised to 4 minutes for bodies over ~600 KB. */
+    if(bodyStr.length>600000&&ms<240000)ms=240000;
+    const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),ms);
     try{ if(window.DPB_KA)window.DPB_KA.on("drive"); }catch(_){}
     try{
       const r=await fetch(u,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:bodyStr,signal:ctl.signal,redirect:"follow"});
