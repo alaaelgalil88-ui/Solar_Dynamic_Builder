@@ -1506,7 +1506,7 @@
     }
     return viaNative().then(function (r) { return r || viaDocs(); }).then(function (r) { return r || viaFolder(); }).then(function (r) { return r || (interactive ? viaShare() : 'none'); });
   }
-  function bkLine(o) { return o ? new Date(o.savedAt).toLocaleString('ar-EG') + ' (' + o.counts.rows + ' خلية / ' + o.counts.kv + ' خريطة)' : 'مفيش'; }
+  function bkLine(o) { return o ? new Date(o.savedAt).toLocaleString('ar-EG') + ' (' + o.counts.rows + ' صف / ' + o.counts.kv + ' مستند)' : 'مفيش'; }
   var BK_WHERE = { native: '📱 على الهاتف (المجلد المختار)', documents: '📱 على الهاتف (Documents/DPB)', folder: '📁 في المجلد المختار', share: '📤 من نافذة المشاركة', download: '⬇️ في التنزيلات', none: '' };
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function bkNoteExt(w) { if (w && w !== 'none') lsSet('dpb_fs2_bk_ext', JSON.stringify({ w: w, t: Date.now() })); }

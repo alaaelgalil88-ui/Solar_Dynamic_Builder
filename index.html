@@ -10300,7 +10300,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 #dpbBackupScreen .dpbBackupBox{max-height:calc(100vh - 28px);overflow-y:auto!important;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:16px 14px}
 #dpbBackupScreen .dpbBackupBox h2{font-size:26px;margin:0 0 12px}
 #dpbBackupScreenHost #dpbFs2Card{background:#0b1626;border:1px solid #243b57;border-radius:20px;padding:14px;color:#eaf2f8;margin:0}
-#dpbBackupScreen .dpbBackupClose{position:sticky;bottom:0}
+#dpbBackupScreen .dpbBackupHdr{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fff;margin:-16px -14px 10px;padding:12px 14px 8px}
+#dpbBackupScreen .dpbBackupHdr h2{margin:0}
+#dpbBackupScreen .dpbBackupX{flex:0 0 auto;width:42px;height:42px;min-height:0;padding:0;border-radius:50%;border:1px solid #ccd5df;background:#e7eef7;color:#123;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
 /* ثيم فاتح زي صورة ١ */
 #dpbBackupScreenHost #dpbFs2Card{background:#fff!important;border:1px solid #d7dde5!important;color:#17212b!important}
 #dpbBackupScreenHost #dpbFs2Card>h3{color:#17212b!important;font-size:20px}
@@ -10320,9 +10322,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 </style>
 <div id="dpbBackupScreen" class="dpbBackupModal" aria-hidden="true">
   <div class="dpbBackupBox">
-    <h2>النسخ الاحتياطي 💾</h2>
+    <div class="dpbBackupHdr"><h2>النسخ الاحتياطي 💾</h2><button id="dpbBackupScreenClose" class="dpbBackupX" type="button" aria-label="إغلاق" title="إغلاق">✕</button></div>
     <div id="dpbBackupScreenHost"></div>
-    <button id="dpbBackupScreenClose" class="dpbBackupClose" type="button">إغلاق</button>
   </div>
 </div>
 
