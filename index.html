@@ -21022,22 +21022,34 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
     var to=new Promise(function(res){setTimeout(function(){res(null)},12000)});
     return Promise.race([work,to]);
   }
-  /* v162: one phone = one supervisor key. Keys this phone wrote its token to are remembered; when a different supervisor signs in on the same phone,
-     the token is removed from the previous keys (only where it still equals THIS phone's token), so a push addressed to supervisor A never rings supervisor B's phone. */
-  var KEYS='DPB_FCM_KEYS_V1';
+  /* v162/v165: one phone = one supervisor key. When a different supervisor signs in on the same phone, this phone's token is removed from the other supervisors' keys
+     (only where it still equals THIS phone's token), so a push addressed to supervisor A never rings supervisor B's phone.
+     v165: the old code asked the store to DELETE the key, but the store only allows deleting xlfile_ keys ("refused"), so nothing was ever cleaned. The key is now overwritten with an EMPTY token
+     (the Worker sends nothing to an empty token), and every supervisor account known on this phone is checked, not only the keys this install remembers (older installs wrote keys it never recorded). */
+  var KEYS='DPB_FCM_KEYS_V1', CLEAN='DPB_FCM_CLEAN_V2';
   function keyList(){try{var a=JSON.parse(lsGet(KEYS)||'[]');return Array.isArray(a)?a:[]}catch(_){return[]}}
+  function knownKeys(){
+    var out=keyList().slice();
+    try{(JSON.parse(lsGet('DPB_SUPERVISOR_ACCOUNTS_V1')||'[]')||[]).forEach(function(a){if(a&&a.name&&!a.isAdmin)out.push(key(a.name))})}catch(_){}
+    var l=lsGet('DPB_REM_LAST_SUP_V1');if(l)out.push(key(l));
+    out.push(key('admin'));
+    return out.filter(function(k,i,a){return k&&a.indexOf(k)===i});
+  }
   async function dropOthers(cur,tok){
-    var list=keyList(),keep=[];
+    var sigC=cur+'|'+tok;
+    if(lsGet(CLEAN)===sigC)return;                         /* already cleaned for this supervisor + this token */
+    var list=knownKeys(),keep=[],allOk=true;
     for(var i=0;i<list.length;i++){
       var k=list[i];if(k===cur)continue;
       var r=await post({action:'kvGet',key:k});
-      if(!r){keep.push(k);continue}                       /* offline / timeout: try again next time */
-      if(!r.ok)continue;                                  /* no such document any more: nothing to clean */
+      if(!r){keep.push(k);allOk=false;continue}           /* offline / timeout: try again next time */
+      if(!r.ok)continue;
       var v=null;try{v=JSON.parse(r.json||'{}')}catch(_){}
-      if(v&&v.tok===tok){var d=await post({action:'kvDelete',key:k});if(!d||d.ok===false)keep.push(k)}
+      if(v&&v.tok===tok){var d=await post({action:'kvPatch',key:k,set:{tok:'',t:new Date().toISOString(),clearedBy:cur},replace:true});if(!(d&&d.ok)){keep.push(k);allOk=false}}
     }
     keep.push(cur);
     lsSet(KEYS,JSON.stringify(keep.filter(function(k,i,a){return a.indexOf(k)===i}).slice(-12)));
+    if(allOk)lsSet(CLEAN,sigC);
   }
   async function save(user,tok){
     var sig=String(user).toLowerCase()+'|'+tok,k=key(user);
@@ -21103,7 +21115,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
     for(var i=0;i<keys.length;i++){
       var r=await post({action:'kvGet',key:keys[i]});if(!r||!r.ok)continue;
       var v=null;try{v=JSON.parse(r.json||'{}')}catch(_){}
-      if(v&&v.tok===mine){var d=await post({action:'kvDelete',key:keys[i]});if(d&&d.ok!==false)n++}
+      if(v&&v.tok===mine){var d=await post({action:'kvPatch',key:keys[i],set:{tok:'',t:new Date().toISOString(),clearedBy:'role'},replace:true});if(d&&d.ok)n++}   /* v165: overwrite with an empty token (the store refuses kvDelete for fcm_ keys) */
     }
     return n;
   }
