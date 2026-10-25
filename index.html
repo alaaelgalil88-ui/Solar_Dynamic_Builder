@@ -164,7 +164,8 @@
   window.DPB_NATIVE_BRIDGE={
     chooseFolder:async function(){var F=plug('DpbFolder');if(!F)throw new Error('إضافة اختيار المجلد مش موجودة في التطبيق ده - ثبّت أحدث APK');var r=await F.choose();return (r&&r.name)||null;},
     hasFolder:async function(){var F=plug('DpbFolder');if(!F)return false;var r=await F.has();return !!(r&&r.has);},
-    writeBackupFile:async function(n,t){var F=plug('DpbFolder');if(!F)return false;var r=await F.write({name:String(n),text:String(t)});return !!(r&&r.ok);}
+    canAppend:async function(){try{var F=plug('DpbFolder');if(!F||typeof F.version!=='function')return false;var r=await F.version();return !!(r&&r.v>=2);}catch(e){return false;}},
+     writeBackupFile:async function(n,t,app){var F=plug('DpbFolder');if(!F)return false;var r=await F.write({name:String(n),text:String(t),append:!!app});return !!(r&&r.ok);}
   };
   // 3) الطباعة / PDF: بنبني صفحة بيضاء مستقلة (من نفس الـCSS + منطقة الطباعة) وبنطبعها من WebView منفصل،
   //    فمفيش اعتماد على شكل التطبيق الداكن ولا على كلاسات الصفحة الحية اللي كانت بتتشال قبل ما الطباعة تخلص.

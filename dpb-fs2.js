@@ -1317,7 +1317,7 @@
     BK_COLLS.forEach(function (c) {
       var A = cur[c] || {}, B = bk[c] || {}; d.add[c] = []; d.change[c] = []; d.remove[c] = [];
       Object.keys(B).forEach(function (id) { if (!Object.prototype.hasOwnProperty.call(A, id)) d.add[c].push(id); else if (stable(A[id]) !== stable(B[id])) d.change[c].push(id); });
-      Object.keys(A).forEach(function (id) { if (!Object.prototype.hasOwnProperty.call(B, id)) d.remove[c].push(id); });
+      Object.keys(A).forEach(function (id) { if (!Object.prototype.hasOwnProperty.call(B, id) && !(bk.slim && c === 'kv' && /^xlfile_/.test(id))) d.remove[c].push(id); });   /* v167: a slim (Drive) copy has no Excel files by design, so restoring it must never delete them */
       d.n.add += d.add[c].length; d.n.change += d.change[c].length; d.n.remove += d.remove[c].length;
     });
     return d;
@@ -1445,9 +1445,20 @@
   var BK_BRIDGE_MAX = 1000000, BK_CHUNK = 400000;
   function bkWriteNative(nb, cur, prev) {
     var a = JSON.stringify(cur), b = prev ? JSON.stringify(prev) : null;
-    if (a.length > BK_BRIDGE_MAX || (b && b.length > BK_BRIDGE_MAX)) return Promise.resolve(false);   // too big for one bridge call: not written here
     function one(n, t) { return Promise.resolve(nb.writeBackupFile(n, t)).then(function (ok) { if (ok === false) throw new Error('الكتابة في مكان الحفظ فشلت'); }); }
-    return one(BK_FILE.current, a).then(function () { return b ? one(BK_FILE.previous, b) : null; }).then(function () { return true; });
+    if (a.length <= BK_BRIDGE_MAX && (!b || b.length <= BK_BRIDGE_MAX)) return one(BK_FILE.current, a).then(function () { return b ? one(BK_FILE.previous, b) : null; }).then(function () { return true; });
+    // v167: too big for one bridge call. If the installed plugin can append, write the chosen folder in pieces (first piece overwrites, the rest append); otherwise not written here (Documents/DPB still gets it).
+    return Promise.resolve(typeof nb.canAppend === 'function' ? nb.canAppend() : false).then(function (can) {
+      if (!can) return false;
+      function chunked(n, str) {
+        var p = Promise.resolve();
+        for (var i = 0; i < str.length || i === 0; i += BK_CHUNK) (function (piece, first) {
+          p = p.then(function () { return Promise.resolve(nb.writeBackupFile(n, piece, !first)).then(function (ok) { if (ok === false) throw new Error('الكتابة في مكان الحفظ فشلت'); }); });
+        })(str.slice(i, i + BK_CHUNK), i === 0);
+        return p;
+      }
+      return chunked(BK_FILE.current, a).then(function () { return b ? chunked(BK_FILE.previous, b) : null; }).then(function () { return true; });
+    });
   }
   // Capacitor Filesystem: first piece writeFile, the rest appendFile (400K chars each), so no single bridge call is big
   function bkWriteCap(F, cur, prev) {
@@ -1542,8 +1553,17 @@
     if (res && res.__reachable === false) return navigator.onLine === false ? 'لا يوجد اتصال بالإنترنت' : ((ls('DPB_BACKUP_URL_V1', '') ? 'تعذّر الاتصال بسكربت النسخ الاحتياطي — افتح الرابط في المتصفح: لازم يظهر ok:true، وتأكد Who has access = Anyone' : 'تعذّر الاتصال بـ Apps Script') + (res.__detail ? '\n[تفاصيل: ' + String(res.__probe || '') + ' | ' + String(res.__detail).slice(0, 200) + ']' : ''));   /* v166: the real reason, so it is no longer hidden */
     return raw || 'فشل الرفع';
   }
+  // v167: the copy sent to Drive leaves out the original Excel files (kv xlfile_*): they are base64 and made the file ~12 MB, which never finished uploading on 4G
+  // (AbortError). They stay in Firestore and in the phone/local backup file; the Drive copy keeps every cell, map and setting.
+  function bkSlim(obj) {
+    var kv = {}, n = 0; Object.keys((obj && obj.kv) || {}).forEach(function (k) { if (/^xlfile_/.test(k)) n++; else kv[k] = obj.kv[k]; });
+    var o = {}; Object.keys(obj).forEach(function (k) { o[k] = obj[k]; }); o.kv = kv; o.slim = { noExcelFiles: n };
+    return o;
+  }
+  window.DPB_FS2.bkSlim = bkSlim;
   function bkDriveUpload(obj) {
     if (!driveOn()) return Promise.resolve({ skipped: true });
+    obj = bkSlim(obj);
     var wait = Promise.resolve(); for (var i = 0; i < 20 && typeof window.DPB_gsCall !== 'function'; i++) wait = wait.then(function () { return new Promise(function (r) { setTimeout(r, 100); }); });
     return wait.then(function () {
       if (typeof window.DPB_gsCall !== 'function') return { ok: false, error: 'الاتصال بالسحابة غير جاهز' };
