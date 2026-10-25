@@ -10347,7 +10347,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       <input id="dpbSyncEmail" type="email" dir="ltr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@example.com">
       <label class="dpbSyncLbl" for="dpbSyncPass">باسورد المزامنة</label>
       <div class="dpbSyncPassRow">
-        <input id="dpbSyncPass" type="password" dir="ltr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="••••••••">
+        <input id="dpbSyncPass" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" dir="ltr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="••••••">
         <button id="dpbSyncEye" type="button" aria-label="إظهار الباسورد">👁</button>
       </div>
       <div id="dpbSyncMsg" class="dpbSyncMsg" role="status" aria-live="polite"></div>
@@ -10435,6 +10435,12 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     else{var i=$('dpbSyncPass');i.type=i.type==='password'?'text':'password'}
   });
   document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target&&(ev.target.id==='dpbSyncPass'||ev.target.id==='dpbSyncEmail'))go()});
+  /* v162: the sync password is 6 digits only - numeric keypad (inputmode above), digits only, and the keyboard closes by itself after the 6th digit */
+  document.addEventListener('input',function(ev){
+    var t=ev.target;if(!t||t.id!=='dpbSyncPass')return;
+    var d=String(t.value||'').replace(/[^0-9]/g,'').slice(0,6);if(d!==t.value)t.value=d;
+    if(d.length===6){try{t.blur()}catch(_){}}
+  });
   window.dpbAdminSyncSetup={show:show,hide:hide,needed:needed};
 })();
 </script>
