@@ -11445,7 +11445,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   /* v167: keep-alive. While edits are still waiting for the server (online) or the Drive backup is uploading, ask the Android app to run a small foreground service
      so the upload can finish even if the app is closed. It stops when everything is done. Does nothing outside the Android APK. */
   (function(){
-    var MAXMS=20*60*1000, tags={}, running=false, startedAt=0, latch=false, plug=null, zero=0;
+    var MAXMS=5*60*1000, tags={}, running=false, startedAt=0, latch=false, plug=null, zero=0;
     function P(){try{var C=window.Capacitor;if(!C||!C.isNativePlatform||!C.isNativePlatform())return null;if(plug)return plug;plug=(C.Plugins&&C.Plugins.DpbKeepAlive)||(C.registerPlugin&&C.registerPlugin("DpbKeepAlive"))||null;return plug;}catch(_){return null}}
     function any(){for(var k in tags)if(tags[k])return true;return false}
     function sync(){
@@ -11491,17 +11491,19 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         return {status:r&&r.status,txt:txt};
       }catch(e){return {err:String((e&&e.message)||e)}}
     };
-    const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),ms);
+    /* v172: on the APK a stalled WebView connection used to be waited on for the whole `ms` (2 min) before the phone's native HTTP got its turn (the script log showed the request arriving ~2 min after the upload started, then finishing in ~8 s). Now the WebView gets 35 s, then the native path runs. Outside the APK (no native HTTP) nothing changes. */
+    const hasNative=!!(window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.CapacitorHttp&&typeof window.Capacitor.Plugins.CapacitorHttp.request==="function");
+    const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),hasNative?Math.min(ms,35000):ms);
     try{ if(window.DPB_KA)window.DPB_KA.on("drive"); }catch(_){}
     try{
       const r=await fetch(u,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:bodyStr,signal:ctl.signal,redirect:"follow"});
       const txt=await r.text();
-      return parseRes(txt);
+      return Object.assign({},parseRes(txt),{__via:"web"});
     }catch(e){
       const fetchErr=String((e&&e.name)||"")+": "+String((e&&e.message)||e);
       // the WebView could not do it: try the phone's native HTTP before giving up
-      const n=(bodyStr.length>700000)?{err:"skipped: body too big for the native bridge ("+Math.round(bodyStr.length/1024)+" KB)"}:await nativeCall("POST",bodyStr,ms);   /* v168: a multi-MB string through the Capacitor bridge can freeze/close the app */
-      if(n&&n.txt!==undefined&&(n.status===undefined||n.status<400)){const j=parseRes(n.txt);if(j&&j.ok)return j;if(j&&j.error)return Object.assign({},j,{__via:"native"})}
+      const n=(bodyStr.length>1000000)?{err:"skipped: body too big for the native bridge ("+Math.round(bodyStr.length/1024)+" KB)"}:await nativeCall("POST",bodyStr,ms);   /* v168: a multi-MB string through the Capacitor bridge can freeze/close the app */
+      if(n&&n.txt!==undefined&&(n.status===undefined||n.status<400)){const j=parseRes(n.txt);if(j&&j.ok)return Object.assign({},j,{__via:"native"});if(j&&j.error)return Object.assign({},j,{__via:"native"})}
       // still failing: does a plain GET of the link work (from the WebView, then natively)?
       let probe="";
       try{

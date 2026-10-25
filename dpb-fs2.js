@@ -1515,6 +1515,8 @@
     var el = document.getElementById('dpbFs2DriveInfo'); if (!el) return;
     el.textContent = '';
     if (!driveOn()) { el.textContent = '☁️ رفع Drive متوقف'; return; }
+    var run = Number(ls('dpb_fs2_bk_drive_run', '0')) || 0;
+    if (run && Date.now() - run < 6 * 60000) { el.textContent = '⏳ جاري الرفع إلى Google Drive من الساعة ' + new Date(run).toLocaleTimeString('ar-EG') + ' (' + Math.round((Date.now() - run) / 1000) + ' ث)…'; return; }
     var x = null; try { x = JSON.parse(ls('dpb_fs2_bk_drive', 'null')); } catch (e) {}
     if (!x) { el.textContent = '☁️ لسه ما اترفعتش نسخة على Drive'; return; }
     var when = new Date(x.t).toLocaleString('ar-EG');
@@ -1588,8 +1590,14 @@
     return bkStreamBytes(bkFromB64(w.z), new DecompressionStream('gzip')).then(function (u) { return new TextDecoder().decode(u); });
   }
   window.DPB_FS2.bkPack = bkPack; window.DPB_FS2.bkUnpack = bkUnpack;
+  /* v172: while a Drive upload is in progress the card says so (with the start time) instead of staying silent; the marker is ignored after 6 minutes in case the page was killed mid-upload */
   function bkDriveUpload(obj) {
     if (!driveOn()) return Promise.resolve({ skipped: true });
+    lsSet('dpb_fs2_bk_drive_run', String(Date.now())); try { drivePaint(); } catch (e) {}
+    function done() { try { localStorage.removeItem('dpb_fs2_bk_drive_run'); } catch (e) {} try { drivePaint(); } catch (e) {} }
+    return bkDriveUpload0(obj).then(function (r) { done(); return r; }, function (e) { done(); throw e; });
+  }
+  function bkDriveUpload0(obj) {
     obj = bkSlim(obj); var upT0 = Date.now(), upMB = '?', fullStr = JSON.stringify(obj);
     var wait = Promise.resolve(); for (var i = 0; i < 20 && typeof window.DPB_gsCall !== 'function'; i++) wait = wait.then(function () { return new Promise(function (r) { setTimeout(r, 100); }); });
     return wait.then(function () {
@@ -1599,7 +1607,7 @@
         return (typeof window.DPB_backupPost === 'function' ? window.DPB_backupPost({ kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000) : window.DPB_gsCall('saveBackup', { kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000));
       });
     }).then(function (res) {
-      if (res && res.ok) { lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: true, mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), url: res.url || '', owner: res.owner || '', sharedWith: res.sharedWith || '', shareError: res.shareError || '' })); try { localStorage.removeItem('dpb_fs2_bk_drive_pending'); } catch (e) {} return { ok: true }; }
+      if (res && res.ok) { lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: true, via: res.__via || '', mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), url: res.url || '', owner: res.owner || '', sharedWith: res.sharedWith || '', shareError: res.shareError || '' })); try { localStorage.removeItem('dpb_fs2_bk_drive_pending'); } catch (e) {} return { ok: true }; }
       var err = driveErr(res); lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: false, mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), error: err })); lsSet('dpb_fs2_bk_drive_pending', '1'); return { ok: false, error: err };
     }).catch(function (e) { var err = String((e && e.message) || e || 'فشل'); lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: false, mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), error: err })); lsSet('dpb_fs2_bk_drive_pending', '1'); return { ok: false, error: err }; });
   }
@@ -1651,6 +1659,8 @@
   // Android freezes the page's timers while the app is in the background: when the admin comes back, check right away instead of waiting for the next minute
   try { document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { bkAutoTick(false); }, 4000); }); } catch (e) {}
   window.DPB_FS2.autoTick = bkAutoTick;
+  /* v172: the status card refreshes itself while it is open (it used to show whatever it showed when it was opened) */
+  try { setInterval(function () { if (!document.hidden && document.getElementById('dpbFs2DriveInfo')) bkPaint(); }, 3000); } catch (e) {}
   window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), failed: !!failedAt, err: String(lastErr || '') }; };
   window.DPB_FS2.backupNow = bkBackupNow; window.DPB_FS2.saveExternal = bkSaveExternal;
 
