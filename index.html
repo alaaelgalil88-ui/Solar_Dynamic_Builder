@@ -21193,7 +21193,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
       if(a===null&&s===null)return null;a=a||{};s=s||{};
       var seenT=s.seenT||'',items=[],hid=(side==='admin'?a.hid:s.hid)||[],newestReply='';
       (a.m||[]).forEach(function(m){if(hid.indexOf(m.id)<0)items.push({id:m.id,from:'admin',t:m.t,x:m.x,read:!!seenT&&m.t<=seenT})});
-      (s.r||[]).forEach(function(m){if(m.t>newestReply)newestReply=m.t;if(hid.indexOf(m.id)<0)items.push({id:m.id,from:'sup',t:m.t,x:m.x})});
+      var seenS=String(a.seenS||'');(s.r||[]).forEach(function(m){if(m.t>newestReply)newestReply=m.t;if(hid.indexOf(m.id)<0)items.push({id:m.id,from:'sup',t:m.t,x:m.x,read:side==='sup'&&!!seenS&&m.t<=seenS})});
       items.sort(function(p,q){return p.t<q.t?-1:p.t>q.t?1:0});
       return {items:items,seenT:seenT,a:a,s:s,newestReply:newestReply};
     },
@@ -21213,6 +21213,13 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
       var a=thr.a.m||[];if(!a.length)return;var newest=a[a.length-1].t;if(newest<=(thr.seenT||''))return;
       var s=Object.assign({},thr.s,{seenT:newest,seenAt:nowIso()});
       if(await wr(key('msgs_',user),s)){thr.seenT=newest;thr.s=s}
+    },
+    /* v164: the admin opened the chat and saw the supervisor's replies -> record it in msga_<user>.seenS (the admin is the only writer of that doc), so the supervisor sees double ticks on his replies */
+    adminMarkSeen:async function(user,thr){
+      var nr=thr&&thr.newestReply||'';if(!nr||nr<=String((thr.a&&thr.a.seenS)||''))return;
+      var k=key('msga_',user),cur=await rd(k);if(cur===null)return;
+      if(nr<=String(cur.seenS||''))return;
+      if(await wr(k,Object.assign({},cur,{seenS:nr,seenSAt:nowIso()})))thr.a=Object.assign({},thr.a,{seenS:nr});
     },
     notify:notify,
     pollNow:function(){return pollSup()},
@@ -21343,7 +21350,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
   function renderSupThread(thr){
     var box=$('dpbSupMsgThread');box.textContent='';
     if(!thr.items.length){box.textContent='مفيش رسايل لسه.';return}
-    thr.items.forEach(function(i){bubble(box,i.from==='sup'?'me':'them',i.x,(i.from==='sup'?'إنت':'الأدمن')+' · '+fmt(i.t),i.id,i.from)});
+    thr.items.forEach(function(i){bubble(box,i.from==='sup'?'me':'them',i.x,(i.from==='sup'?'إنت'+(i.read?' ✓✓':' ✓'):'الأدمن')+' · '+fmt(i.t),i.id,i.from)});
     if(selOn('dpbSupMsgThread'))selUpdate(box);
     box.scrollTop=box.scrollHeight;
   }
@@ -21379,7 +21386,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
     cSet('admin',user,thr);
     if(admSigOf(user,thr.items)!==admSig)renderAdmin(user,thr.items);
     var newestReply=thr.newestReply||'';
-    if(newestReply){lsSet(seenKey(user),newestReply);lsSet('DPB_MSG_ADMIN_NOTIFIED_'+String(user).toLowerCase(),newestReply)}
+    if(newestReply){lsSet(seenKey(user),newestReply);lsSet('DPB_MSG_ADMIN_NOTIFIED_'+String(user).toLowerCase(),newestReply);api.adminMarkSeen(user,thr)}
     adminBadge();
   }
   async function adminBadge(){
