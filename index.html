@@ -11442,6 +11442,35 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // النسخ الاحتياطي: لو فيه رابط سكربت منفصل (DPB_BACKUP_URL_V1) بيروح له مباشرة، وإلا بيرجع للسكربت القديم
   window.DPB_backupUrl=function(){try{return String(localStorage.getItem("DPB_BACKUP_URL_V1")||"").trim()}catch(_){return ""}};
   // بيقبل الشكلين: DPB_backupPost(payload, ms) أو DPB_backupPost("saveBackup", payload, ms)
+  /* v167: keep-alive. While edits are still waiting for the server (online) or the Drive backup is uploading, ask the Android app to run a small foreground service
+     so the upload can finish even if the app is closed. It stops when everything is done. Does nothing outside the Android APK. */
+  (function(){
+    var MAXMS=20*60*1000, tags={}, running=false, startedAt=0, latch=false, plug=null, zero=0;
+    function P(){try{var C=window.Capacitor;if(!C||!C.isNativePlatform||!C.isNativePlatform())return null;if(plug)return plug;plug=(C.Plugins&&C.Plugins.DpbKeepAlive)||(C.registerPlugin&&C.registerPlugin("DpbKeepAlive"))||null;return plug;}catch(_){return null}}
+    function any(){for(var k in tags)if(tags[k])return true;return false}
+    function sync(){
+      var p=P();if(!p)return;
+      try{
+        if(any()&&!running&&!latch){running=true;startedAt=Date.now();Promise.resolve(p.start({text:"جاري رفع البيانات… ممكن تقفل التطبيق"})).catch(function(){running=false});}
+        else if(!any()&&running){running=false;Promise.resolve(p.stop()).catch(function(){});}
+      }catch(_){}
+    }
+    window.DPB_KA={
+      on:function(t){tags[t]=true;sync();},
+      off:function(t){tags[t]=false;sync();},
+      state:function(){return {running:running,tags:Object.assign({},tags),latch:latch};}
+    };
+    /* edits waiting for the server: counted only while the phone has internet; never longer than MAXMS in a row (then wait until the count reaches 0 again) */
+    setInterval(function(){
+      try{
+        var W=window.__dpbFs2W||{},n=Number(W.pending)||0,online=(navigator.onLine!==false);
+        if(n===0){zero++;latch=false;}else zero=0;
+        if(n>0&&online&&!latch){window.DPB_KA.on("pend");}
+        else if(n===0&&zero>=2||!online||latch){window.DPB_KA.off("pend");}
+        if(running&&Date.now()-startedAt>MAXMS){latch=true;tags={};sync();}
+      }catch(_){}
+    },3000);
+  })();
   window.DPB_backupPost=async function(a,b,c){
     let action="saveBackup",payload,ms;
     if(typeof a==="string"){action=a;payload=b;ms=c}else{payload=a;ms=b}
@@ -11463,6 +11492,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       }catch(e){return {err:String((e&&e.message)||e)}}
     };
     const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),ms);
+    try{ if(window.DPB_KA)window.DPB_KA.on("drive"); }catch(_){}
     try{
       const r=await fetch(u,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:bodyStr,signal:ctl.signal,redirect:"follow"});
       const txt=await r.text();
@@ -11484,7 +11514,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       const nd=n&&(n.unavailable?"native:none":(n.err?"native:"+n.err:"native:"+(n.status||"?")+" "+String(n.txt||"").slice(0,60)));
       return {ok:false,__reachable:false,__probe:probe,error:fetchErr,__detail:fetchErr+" | "+(nd||"")};
     }
-    finally{clearTimeout(t)}
+    finally{clearTimeout(t);try{if(window.DPB_KA)window.DPB_KA.off("drive");}catch(_){}}
   };
   function gsCall(action,data,timeoutMs){
     timeoutMs=timeoutMs||8000;
