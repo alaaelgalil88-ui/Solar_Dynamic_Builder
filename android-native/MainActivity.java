@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(DpbPrintPlugin.class);
         registerPlugin(DpbFolderPlugin.class);
+        registerPlugin(DpbKeepAlivePlugin.class);
         super.onCreate(savedInstanceState);
 
         // لما الأندرويد يقتل صفحة الـWebView عشان الذاكرة، نعمل reload بدل ما التطبيق يقفل.
@@ -37,5 +38,29 @@ public class MainActivity extends BridgeActivity {
                 }
             });
         }
+    }
+
+    // v167: while the keep-alive service is running, do not let the WebView freeze its timers/network when the screen is left,
+    // so the pending upload can finish. (Not tested on a real phone.)
+    private void keepWebViewAlive() {
+        try {
+            if (DpbKeepAliveService.running && getBridge() != null && getBridge().getWebView() != null) {
+                WebView w = getBridge().getWebView();
+                w.resumeTimers();
+                w.onResume();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        keepWebViewAlive();
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        keepWebViewAlive();
     }
 }
