@@ -11447,19 +11447,41 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     payload=(payload&&typeof payload==="object")?payload:{};
     ms=(Number(ms)>0)?Number(ms):90000;
     const u=window.DPB_backupUrl()||DPB_DEFAULT_SCRIPT_URL;
+    const bodyStr=JSON.stringify(Object.assign({},payload,{action:action}));
+    const parseRes=(txt)=>{try{return JSON.parse(txt)}catch(_){return {ok:false,error:"رد غير مفهوم من سكربت النسخ الاحتياطي — تأكد إن الرابط ينتهي بـ /exec وإن الوصول Anyone"}}};
+    /* v166: the phone's native HTTP (Capacitor) is used when the WebView's fetch cannot reach the script (it is not subject to the WebView's cross-origin rules) */
+    const nativeCall=async(method,body,timeout)=>{
+      const H=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.CapacitorHttp;
+      if(!H||typeof H.request!=="function")return {unavailable:true};
+      try{
+        const o={url:u,method:method,connectTimeout:30000,readTimeout:timeout,responseType:"text"};
+        if(method==="POST"){o.headers={"Content-Type":"text/plain;charset=utf-8"};o.data=body}
+        const r=await H.request(o);
+        const d=r&&r.data;const txt=(typeof d==="string")?d:JSON.stringify(d);
+        return {status:r&&r.status,txt:txt};
+      }catch(e){return {err:String((e&&e.message)||e)}}
+    };
     const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),ms);
     try{
-      const r=await fetch(u,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(Object.assign({},payload,{action:action})),signal:ctl.signal,redirect:"follow"});
+      const r=await fetch(u,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:bodyStr,signal:ctl.signal,redirect:"follow"});
       const txt=await r.text();
-      try{return JSON.parse(txt)}catch(_){return {ok:false,error:"رد غير مفهوم من سكربت النسخ الاحتياطي — تأكد إن الرابط ينتهي بـ /exec وإن الوصول Anyone"}}
+      return parseRes(txt);
     }catch(e){
-      // الرفع فشل: نفحص بـ GET هل الرابط نفسه شغال (يفرّق بين "الرابط/الوصول غلط" و"السكربت شغال بس الإذن ناقص")
+      const fetchErr=String((e&&e.name)||"")+": "+String((e&&e.message)||e);
+      // the WebView could not do it: try the phone's native HTTP before giving up
+      const n=await nativeCall("POST",bodyStr,ms);
+      if(n&&n.txt!==undefined&&(n.status===undefined||n.status<400)){const j=parseRes(n.txt);if(j&&j.ok)return j;if(j&&j.error)return Object.assign({},j,{__via:"native"})}
+      // still failing: does a plain GET of the link work (from the WebView, then natively)?
       let probe="";
       try{
         const c2=new AbortController(),t2=setTimeout(()=>c2.abort(),15000);
         try{const g=await fetch(u,{method:"GET",signal:c2.signal,redirect:"follow"});const j=JSON.parse(await g.text());probe=(j&&j.ok)?"get-ok":"get-bad"}finally{clearTimeout(t2)}
-      }catch(_){probe="get-fail"}
-      return {ok:false,__reachable:false,__probe:probe,error:String((e&&e.message)||e)};
+      }catch(_){
+        const g2=await nativeCall("GET",null,15000);
+        try{const j=JSON.parse(g2&&g2.txt||"");probe=(j&&j.ok)?"get-ok":"get-bad"}catch(__){probe="get-fail"}
+      }
+      const nd=n&&(n.unavailable?"native:none":(n.err?"native:"+n.err:"native:"+(n.status||"?")+" "+String(n.txt||"").slice(0,60)));
+      return {ok:false,__reachable:false,__probe:probe,error:fetchErr,__detail:fetchErr+" | "+(nd||"")};
     }
     finally{clearTimeout(t)}
   };

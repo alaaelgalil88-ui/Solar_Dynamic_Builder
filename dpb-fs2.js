@@ -1539,7 +1539,7 @@
     if (/Unknown action/i.test(raw)) return 'Code.gs المنشور ما فيهوش النسخ الاحتياطي — انشر نسخة جديدة (Deploy > Manage deployments > Version: New version)';
     if (/unauthorized|401/i.test(raw) || (res && res.code === 401)) return 'سجّل دخول من جديد (التوكن غير صالح)';
     if (res && res.__reachable === false && res.__probe === 'get-ok') return 'الرابط شغال لكن رفع النسخة اتمنع — في Apps Script: شغّل دالة authorizeBackup مرة واحدة ووافق على الصلاحيات، وبعدها Deploy > Manage deployments > Version: New version';
-    if (res && res.__reachable === false) return navigator.onLine === false ? 'لا يوجد اتصال بالإنترنت' : (ls('DPB_BACKUP_URL_V1', '') ? 'تعذّر الاتصال بسكربت النسخ الاحتياطي — افتح الرابط في المتصفح: لازم يظهر ok:true، وتأكد Who has access = Anyone' : 'تعذّر الاتصال بـ Apps Script');
+    if (res && res.__reachable === false) return navigator.onLine === false ? 'لا يوجد اتصال بالإنترنت' : ((ls('DPB_BACKUP_URL_V1', '') ? 'تعذّر الاتصال بسكربت النسخ الاحتياطي — افتح الرابط في المتصفح: لازم يظهر ok:true، وتأكد Who has access = Anyone' : 'تعذّر الاتصال بـ Apps Script') + (res.__detail ? '\n[تفاصيل: ' + String(res.__probe || '') + ' | ' + String(res.__detail).slice(0, 200) + ']' : ''));   /* v166: the real reason, so it is no longer hidden */
     return raw || 'فشل الرفع';
   }
   function bkDriveUpload(obj) {
