@@ -46,10 +46,12 @@ jobs:
       - name: Add notification permissions to AndroidManifest
         run: |
           M=android/app/src/main/AndroidManifest.xml
-          for P in POST_NOTIFICATIONS SCHEDULE_EXACT_ALARM RECEIVE_BOOT_COMPLETED; do
+          for P in POST_NOTIFICATIONS SCHEDULE_EXACT_ALARM RECEIVE_BOOT_COMPLETED FOREGROUND_SERVICE FOREGROUND_SERVICE_DATA_SYNC WAKE_LOCK; do
             grep -q "android.permission.$P" "$M" || sed -i "s|<application|<uses-permission android:name=\"android.permission.$P\" />\n    <application|" "$M"
           done
-          grep -n "uses-permission" "$M"
+          grep -q "DpbKeepAliveService" "$M" || sed -i 's|</application>|    <service android:name=".DpbKeepAliveService" android:exported="false" android:foregroundServiceType="dataSync" />\n    </application>|' "$M"
+          grep -n "uses-permission\|DpbKeepAliveService" "$M"
+          grep -q "DpbKeepAliveService" "$M"
 
       - name: Add print plugin
         run: |
