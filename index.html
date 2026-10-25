@@ -21177,7 +21177,7 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
      Set the Worker address once: window.DPB_PUSH_URL (dpb-config.js) or localStorage DPB_PUSH_URL_V1. Empty = no ping (the Worker's periodic scan still delivers). */
   function pingPush(dir,user){
     try{
-      var base=String(window.DPB_PUSH_URL||lsGet('DPB_PUSH_URL_V1')||'').trim().replace(/\/+$/,'');
+      var base=String(window.DPB_PUSH_URL||lsGet('DPB_PUSH_URL_V1')||'https://dpb-push.alaa-elgalil88.workers.dev').trim().replace(/\/+$/,'');
       if(!/^https:\/\//i.test(base))return;
       fetch(base+'/ping',{method:'POST',mode:'no-cors',keepalive:true,headers:{'Content-Type':'text/plain'},body:JSON.stringify({dir:dir,user:String(user||'')})}).catch(function(){});
     }catch(_){}
