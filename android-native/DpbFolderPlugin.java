@@ -76,9 +76,18 @@ public class DpbFolderPlugin extends Plugin {
         call.resolve(o);
     }
 
+    /** v167: tells the page this plugin can append (big backups are written in pieces). */
+    @PluginMethod
+    public void version(PluginCall call) {
+        JSObject o = new JSObject();
+        o.put("v", 2);
+        call.resolve(o);
+    }
+
     @PluginMethod
     public void write(PluginCall call) {
         JSObject o = new JSObject();
+        boolean append = Boolean.TRUE.equals(call.getBoolean("append"));
         String name = call.getString("name");
         String text = call.getString("text");
         String s = prefs().getString(KEY, null);
@@ -101,7 +110,7 @@ public class DpbFolderPlugin extends Plugin {
                 call.resolve(o);
                 return;
             }
-            OutputStream os = cr.openOutputStream(target, "wt");
+            OutputStream os = cr.openOutputStream(target, append ? "wa" : "wt");
             if (os == null) {
                 o.put("ok", false);
                 call.resolve(o);
