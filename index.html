@@ -11451,7 +11451,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     function P(){try{var C=window.Capacitor;if(!C||!C.isNativePlatform||!C.isNativePlatform())return null;if(plug)return plug;plug=(C.Plugins&&C.Plugins.DpbKeepAlive)||(C.registerPlugin&&C.registerPlugin("DpbKeepAlive"))||null;return plug;}catch(_){return null}}
     function any(){for(var k in tags)if(tags[k])return true;return false}
     /* v175: the notification says WHAT is being sent (edits to the server, and/or the Drive backup) */
-    function what(){var W=window.__dpbFs2W||{},a=[];if(tags.pend)a.push("إرسال "+(Number(W.pending)||0)+" تعديل للسيرفر");if(tags.drive)a.push("رفع النسخة الاحتياطية على Drive");return "جاري "+(a.join(" + ")||"رفع البيانات")+"… ممكن تقفل التطبيق"}
+    function what(){var W=window.__dpbFs2W||{},a=[];if(tags.pend)a.push("إرسال "+(Number(W.pending)||0)+" تعديل للسيرفر");if(tags.drive||tags.drive2)a.push("رفع النسخة الاحتياطية على Drive");return "جاري "+(a.join(" + ")||"رفع البيانات")+"… ممكن تقفل التطبيق"}
     function sync(){
       var p=P();if(!p)return;
       try{

@@ -1516,7 +1516,7 @@
     el.textContent = '';
     if (!driveOn()) { el.textContent = '☁️ رفع Drive متوقف'; return; }
     var run = Number(ls('dpb_fs2_bk_drive_run', '0')) || 0;
-    if (run && Date.now() - run < 6 * 60000) { el.textContent = '⏳ جاري الرفع إلى Google Drive من الساعة ' + new Date(run).toLocaleTimeString('ar-EG') + ' (' + Math.round((Date.now() - run) / 1000) + ' ث)…'; return; }
+    if (run && Date.now() - run < 10 * 60000) { el.textContent = '⏳ جاري الرفع إلى Google Drive من الساعة ' + new Date(run).toLocaleTimeString('ar-EG') + ' (' + Math.round((Date.now() - run) / 1000) + ' ث)' + (ls('dpb_fs2_bk_drive_prog', '') ? ' — رفعت ' + String(ls('dpb_fs2_bk_drive_prog', '')).replace('/', ' من ') + ' قطعة' : '') + '…'; return; }
     var x = null; try { x = JSON.parse(ls('dpb_fs2_bk_drive', 'null')); } catch (e) {}
     if (!x) { el.textContent = '☁️ لسه ما اترفعتش نسخة على Drive'; return; }
     var when = new Date(x.t).toLocaleString('ar-EG');
@@ -1590,6 +1590,43 @@
     return bkStreamBytes(bkFromB64(w.z), new DecompressionStream('gzip')).then(function (u) { return new TextDecoder().decode(u); });
   }
   window.DPB_FS2.bkPack = bkPack; window.DPB_FS2.bkUnpack = bkUnpack;
+  /* v177: Drive upload in small chunks with resume. The whole copy (~1.3 MB) in one request needs ~2 min on a slow phone link and any cut restarts it from zero.
+     Here it is cut into ~150 KB pieces; each piece is sent (and retried) on its own; if the upload stops, the next try asks the script which pieces it already has and sends only the missing ones.
+     Needs the new Backup.gs; with the old script (Unknown action) the caller falls back to the single request. deps = { post(payload, ms), ls, lsSet, progress(done, total) } */
+  var BK_CHUNK = 150000;
+  function bkSum(s) { var h = 5381, i, n = s.length; for (i = 0; i < n; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+  function bkSendChunks(packed, meta, deps) {
+    var total = packed.length, n = Math.ceil(total / BK_CHUNK), sig = bkSum(packed) + '_' + total;
+    var saved = null; try { saved = JSON.parse(deps.ls('dpb_fs2_bk_chunk', 'null')); } catch (e) {}
+    var resume = !!(saved && saved.sig === sig && saved.n === n && Date.now() - saved.t < 20 * 3600000);
+    var id = resume ? saved.id : (String(meta.ns || 'x').slice(0, 30) + '_' + Date.now().toString(36));
+    deps.lsSet('dpb_fs2_bk_chunk', JSON.stringify({ id: id, sig: sig, n: n, t: resume ? saved.t : Date.now() }));
+    function fail(r, step) { return { ok: false, error: step + ': ' + String((r && (r.__detail || r.error)) || 'فشل'), __reachable: r && r.__reachable, __probe: r && r.__probe, __detail: r && r.__detail }; }
+    function sendOne(i, tries) {
+      return Promise.resolve(deps.post({ action: 'saveChunk', kind: meta.kind, ns: meta.ns, uploadId: id, i: i, n: n, data: packed.slice(i * BK_CHUNK, (i + 1) * BK_CHUNK) }, 60000)).then(function (r) {
+        if (r && r.ok) return r;
+        if (tries > 1) return sendOne(i, tries - 1);
+        throw r || { ok: false, error: 'فشل' };
+      });
+    }
+    return Promise.resolve(deps.post({ action: 'chunkStatus', kind: meta.kind, ns: meta.ns, uploadId: id }, 30000)).then(function (st) {
+      if (!st || !st.ok) return (st && /Unknown action/i.test(String(st.error || ''))) ? { unsupported: true } : fail(st, 'chunkStatus');
+      var have = {}; (st.have || []).forEach(function (k) { have[k] = 1; });
+      var todo = []; for (var i = 0; i < n; i++) if (!have[i]) todo.push(i);
+      var done = n - todo.length; deps.progress(done, n);
+      var p = Promise.resolve();
+      todo.forEach(function (i) { p = p.then(function () { return sendOne(i, 3); }).then(function () { done++; deps.progress(done, n); }); });
+      return p.then(function () {
+        return Promise.resolve(deps.post({ action: 'finishChunks', kind: meta.kind, ns: meta.ns, uploadId: id, n: n, total: total, shareWith: meta.shareWith, createdAt: meta.createdAt }, 90000));
+      }).then(function (r) {
+        if (r && r.ok) { deps.lsSet('dpb_fs2_bk_chunk', ''); return r; }
+        if (r && r.reset) deps.lsSet('dpb_fs2_bk_chunk', '');
+        if (r && r.missing && r.missing.length) return { ok: false, error: 'قطع ناقصة (' + r.missing.length + ') — هتتكمل المرة الجاية', __reachable: true };
+        return r || { ok: false, error: 'فشل التجميع' };
+      }, function (e) { return fail(e, 'قطعة'); });
+    }, function (e) { return fail(e, 'chunkStatus'); });
+  }
+  window.DPB_FS2.bkSendChunks = bkSendChunks;
   /* v172: while a Drive upload is in progress the card says so (with the start time) instead of staying silent; the marker is ignored after 6 minutes in case the page was killed mid-upload */
   function bkDriveUpload(obj) {
     if (!driveOn()) return Promise.resolve({ skipped: true });
@@ -1604,7 +1641,14 @@
       if (typeof window.DPB_gsCall !== 'function') return { ok: false, error: 'الاتصال بالسحابة غير جاهز' };
       return bkPack(fullStr).then(function (packed) {
         fullStr = null; upMB = (bytesOf(packed) / 1048576).toFixed(2);
-        return (typeof window.DPB_backupPost === 'function' ? window.DPB_backupPost({ kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000) : window.DPB_gsCall('saveBackup', { kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000));
+        var single = function () { return (typeof window.DPB_backupPost === 'function' ? window.DPB_backupPost({ kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000) : window.DPB_gsCall('saveBackup', { kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000)); };
+        if (packed.length <= BK_CHUNK || typeof window.DPB_backupPost !== 'function') return single();
+        try { window.DPB_KA && window.DPB_KA.on('drive2'); } catch (e) {}
+        function endKA() { try { window.DPB_KA && window.DPB_KA.off('drive2'); } catch (e) {} try { localStorage.removeItem('dpb_fs2_bk_drive_prog'); } catch (e) {} }
+        return bkSendChunks(packed, { kind: 'firebase', ns: nsName(), shareWith: driveEmail(), createdAt: obj && obj.savedAt }, {
+          post: function (pl, ms) { return window.DPB_backupPost(pl, ms); }, ls: ls, lsSet: lsSet,
+          progress: function (d, t) { lsSet('dpb_fs2_bk_drive_prog', d + '/' + t); try { drivePaint(); } catch (e) {} }
+        }).then(function (r) { endKA(); return (r && r.unsupported) ? single() : r; }, function (e) { endKA(); throw e; });
       });
     }).then(function (res) {
       if (res && res.ok) { lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: true, via: res.__via || '', mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), url: res.url || '', owner: res.owner || '', sharedWith: res.sharedWith || '', shareError: res.shareError || '' })); try { localStorage.removeItem('dpb_fs2_bk_drive_pending'); } catch (e) {} return { ok: true }; }
