@@ -92,7 +92,7 @@
     // v126: when the SDK's write channel stays silent while the phone IS online (reads work, writes never get an answer), the same batch is sent
     // through a plain HTTPS request (`rescue`, one explicit request with its own timeout and a real error code). First try after 12 s; once a rescue
     // worked on this device the next ones start after 1.5 s. A definite refusal (HTTP 400/403/429...) stops the retries and is shown with its real reason.
-    var RESCUE_FIRST = deps.rescueFirst || 12000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_MAX = deps.rescueMax || 6;
+    var RESCUE_FIRST = deps.rescueFirst || 4000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_MAX = deps.rescueMax || 30;   /* v181: was 6 (gave up after ~2 min of no connection to Firebase and the write stayed "unconfirmed" until the app restarted); now keeps trying every 20 s for ~10 min */
     return function commitOrQueue(cp, rescue, pidArg) {
       return new Promise(function (res, rej) {
         var done = false, t = null, rt = null, t0 = now(), doneRes, doneRej, W = getW(), counted = true, settled = false, tries = 0, P = String(pidArg || '');
@@ -128,7 +128,7 @@
             });
           }, ms);
         }
-        armRescue((W.rescueOk && now() - W.rescueOk < 300000) ? RESCUE_FAST : RESCUE_FIRST);
+        armRescue((W.rescueOk && now() - W.rescueOk < 1800000) ? RESCUE_FAST : RESCUE_FIRST);
         t = setT(function () { onEvent('slow', 'no server answer after ' + (now() - t0) + 'ms (pending ' + W.pending + ')'); fin(res, { acked: false, done: dp }); }, online() ? 4000 : 300);
       });
     };

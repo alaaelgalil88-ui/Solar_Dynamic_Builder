@@ -21466,8 +21466,10 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
   async function adminBadge(){
     var n=0;
     for(var a of sups()){
-      var s=await rd(key('msgs_',a.name));if(!s||!Array.isArray(s.r))continue;
-      var seen=lsGet(seenKey(a.name))||'',fresh=s.r.filter(function(m){return m.t>seen});n+=fresh.length;
+      /* v180: a reply only counts as new if it is not hidden (deleted) by the admin and is newer than what the admin already saw. "Seen" is also read from the server (msga_<user>.seenS, written when the admin opens the chat), so a reinstall / cleared app data no longer turns every old reply into "رد جديد". */
+      var ab=await Promise.all([rd(key('msga_',a.name)),rd(key('msgs_',a.name))]),am=ab[0]||{},s=ab[1];if(!s||!Array.isArray(s.r))continue;
+      var hid=Array.isArray(am.hid)?am.hid:[],seen=lsGet(seenKey(a.name))||'',srvSeen=String(am.seenS||'');if(srvSeen>seen)seen=srvSeen;
+      var fresh=s.r.filter(function(m){return m.t>seen&&hid.indexOf(m.id)<0});n+=fresh.length;
       if(fresh.length){
         var last=fresh[fresh.length-1],nk='DPB_MSG_ADMIN_NOTIFIED_'+String(a.name).toLowerCase();
         if(last.t>(lsGet(nk)||'')){
