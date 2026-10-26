@@ -21468,7 +21468,10 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
     var n=0;
     for(var a of sups()){
       var s=await rd(key('msgs_',a.name));if(!s||!Array.isArray(s.r))continue;
-      var seen=lsGet(seenKey(a.name))||'',fresh=s.r.filter(function(m){return m.t>seen});n+=fresh.length;
+      var seen=lsGet(seenKey(a.name))||'',fresh=s.r.filter(function(m){return m.t>seen});
+      /* v178: replies the admin already deleted (hidden in msga_<user>.hid) are not "new". "seen" lives on this phone only, so after a reinstall every old reply looked unread and the badge counted deleted ones too. The extra read happens only when something looks unread. */
+      if(fresh.length){var ma=await rd(key('msga_',a.name)),hd=(ma&&Array.isArray(ma.hid))?ma.hid:[];if(hd.length)fresh=fresh.filter(function(m){return hd.indexOf(m.id)<0})}
+      n+=fresh.length;
       if(fresh.length){
         var last=fresh[fresh.length-1],nk='DPB_MSG_ADMIN_NOTIFIED_'+String(a.name).toLowerCase();
         if(last.t>(lsGet(nk)||'')){
