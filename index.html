@@ -21131,6 +21131,8 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
           p.addListener('registration',function(t){if(t&&t.value){lsSet('DPB_FCM_LOCAL_TOK_V1',t.value);if(cur)save(cur,t.value)}});
           p.addListener('registrationError',function(e){try{console.warn('push reg error',e)}catch(_){}});
           p.addListener('pushNotificationReceived',async function(n){
+              /* v173: a message push that arrives while the app is open refreshes the badge/thread right away (so the periodic check can be slow) */
+              try{if(n&&n.data&&n.data.ch==='dpb-messages'){setTimeout(function(){try{var m=window.dpbMsg;if(!m)return;if(window.dpbAdminDev&&window.dpbAdminDev()){if(m.adminPollNow)m.adminPollNow()}else if(m.pollNow)m.pollNow()}catch(_){}},900)}}catch(_){}
             /* app is open: Android does not show the system notification, so show it ourselves */
             try{if(window.dpbAdminDev&&window.dpbAdminDev()&&n&&((n.data&&n.data.ch==='dpb-reminders')||/من الأدمن/.test(String(n.title||''))))return;var l=LN();if(l&&n&&!(n.data&&n.data.ch==='dpb-messages'&&!document.hidden))await l.schedule({notifications:[{id:73000000+(Date.now()%900000),title:n.title||'DPB',body:n.body||'',channelId:(n.data&&n.data.ch)||'dpb-reminders',schedule:{at:new Date(Date.now()+300)}}]})}catch(_){}
           });
@@ -21495,7 +21497,8 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
     }
   });
   document.addEventListener('change',function(ev){if(ev.target&&ev.target.id==='dpbMsgUser')loadAdminThread()});
-  setInterval(function(){try{pollSup()}catch(_){}},45000);
+  /* v173: with real push registered on this phone the Worker delivers the notification and a push received while the app is open refreshes at once, so this check runs every 3 min instead of 45 s (each check reads 2 Firestore documents). Without push it stays at 45 s. */
+  (function pollLoop(){setTimeout(function(){try{pollSup()}catch(_){}pollLoop()},lsGet('DPB_FCM_TOKEN_SENT_V1')?180000:45000)})();
   setTimeout(function(){try{pollSup()}catch(_){}},5000);
   setInterval(function(){try{if(adminOpen())adminBadge()}catch(_){}},60000);
   setTimeout(function(){try{if(adminOpen())adminBadge()}catch(_){}},6000);
