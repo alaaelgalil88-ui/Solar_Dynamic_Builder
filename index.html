@@ -10300,9 +10300,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 #dpbBackupScreen .dpbBackupBox{max-height:calc(100vh - 28px);overflow-y:auto!important;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:16px 14px}
 #dpbBackupScreen .dpbBackupBox h2{font-size:26px;margin:0 0 12px}
 #dpbBackupScreenHost #dpbFs2Card{background:#0b1626;border:1px solid #243b57;border-radius:20px;padding:14px;color:#eaf2f8;margin:0}
-#dpbBackupScreen .dpbBackupHdr{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fff;margin:-16px -14px 10px;padding:12px 14px 8px}
-#dpbBackupScreen .dpbBackupHdr h2{margin:0}
-#dpbBackupScreen .dpbBackupX{flex:0 0 auto;width:42px;height:42px;min-height:0;padding:0;border-radius:50%;border:1px solid #ccd5df;background:#e7eef7;color:#123;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+#dpbBackupScreen .dpbBackupXbar{position:sticky;top:8px;height:0;z-index:5;overflow:visible}
+#dpbBackupScreen .dpbBackupX{position:absolute;left:0;top:0;width:42px;height:42px;min-height:0;padding:0;border-radius:50%;border:1px solid #ccd5df;background:#e7eef7;color:#123;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+#dpbBackupScreen .dpbBackupTitle{margin:0 0 10px;padding-left:54px}
 /* ثيم فاتح زي صورة ١ */
 #dpbBackupScreenHost #dpbFs2Card{background:#fff!important;border:1px solid #d7dde5!important;color:#17212b!important}
 #dpbBackupScreenHost #dpbFs2Card>h3{color:#17212b!important;font-size:20px}
@@ -10322,7 +10322,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
 </style>
 <div id="dpbBackupScreen" class="dpbBackupModal" aria-hidden="true">
   <div class="dpbBackupBox">
-    <div class="dpbBackupHdr"><h2>النسخ الاحتياطي 💾</h2><button id="dpbBackupScreenClose" class="dpbBackupX" type="button" aria-label="إغلاق" title="إغلاق">✕</button></div>
+    <div class="dpbBackupXbar"><button id="dpbBackupScreenClose" class="dpbBackupX" type="button" aria-label="إغلاق" title="إغلاق">✕</button></div>
+    <h2 class="dpbBackupTitle">النسخ الاحتياطي 💾</h2>
     <div id="dpbBackupScreenHost"></div>
   </div>
 </div>
@@ -11446,13 +11447,15 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   /* v167: keep-alive. While edits are still waiting for the server (online) or the Drive backup is uploading, ask the Android app to run a small foreground service
      so the upload can finish even if the app is closed. It stops when everything is done. Does nothing outside the Android APK. */
   (function(){
-    var MAXMS=5*60*1000, tags={}, running=false, startedAt=0, latch=false, plug=null, zero=0;
+    var MAXMS=5*60*1000, WAITMS=20*1000, tags={}, running=false, startedAt=0, latch=false, plug=null, zero=0, pendSince=0;
     function P(){try{var C=window.Capacitor;if(!C||!C.isNativePlatform||!C.isNativePlatform())return null;if(plug)return plug;plug=(C.Plugins&&C.Plugins.DpbKeepAlive)||(C.registerPlugin&&C.registerPlugin("DpbKeepAlive"))||null;return plug;}catch(_){return null}}
     function any(){for(var k in tags)if(tags[k])return true;return false}
+    /* v175: the notification says WHAT is being sent (edits to the server, and/or the Drive backup) */
+    function what(){var W=window.__dpbFs2W||{},a=[];if(tags.pend)a.push("إرسال "+(Number(W.pending)||0)+" تعديل للسيرفر");if(tags.drive)a.push("رفع النسخة الاحتياطية على Drive");return "جاري "+(a.join(" + ")||"رفع البيانات")+"… ممكن تقفل التطبيق"}
     function sync(){
       var p=P();if(!p)return;
       try{
-        if(any()&&!running&&!latch){running=true;startedAt=Date.now();Promise.resolve(p.start({text:"جاري رفع البيانات… ممكن تقفل التطبيق"})).catch(function(){running=false});}
+        if(any()&&!running&&!latch){running=true;startedAt=Date.now();Promise.resolve(p.start({text:what()})).catch(function(){running=false});}
         else if(!any()&&running){running=false;Promise.resolve(p.stop()).catch(function(){});}
       }catch(_){}
     }
@@ -11465,8 +11468,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     setInterval(function(){
       try{
         var W=window.__dpbFs2W||{},n=Number(W.pending)||0,online=(navigator.onLine!==false);
-        if(n===0){zero++;latch=false;}else zero=0;
-        if(n>0&&online&&!latch){window.DPB_KA.on("pend");}
+        if(n===0){zero++;latch=false;pendSince=0;}else{zero=0;if(!pendSince)pendSince=Date.now();}
+        /* v175: edits are normally acknowledged within seconds; the service (and its notification) only starts for edits that have been waiting 20 s or more, so opening the app no longer flashes it */
+        if(n>0&&online&&!latch&&Date.now()-pendSince>=WAITMS){window.DPB_KA.on("pend");}
         else if(n===0&&zero>=2||!online||latch){window.DPB_KA.off("pend");}
         if(running&&Date.now()-startedAt>MAXMS){latch=true;tags={};sync();}
       }catch(_){}
