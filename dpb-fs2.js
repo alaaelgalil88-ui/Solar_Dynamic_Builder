@@ -1610,7 +1610,9 @@
       });
     }
     return Promise.resolve(deps.post({ action: 'chunkStatus', kind: meta.kind, ns: meta.ns, uploadId: id }, 30000)).then(function (st) {
-      if (!st || !st.ok) return (st && /Unknown action/i.test(String(st.error || ''))) ? { unsupported: true } : fail(st, 'chunkStatus');
+      /* v178: any ANSWER from the script that is not a real chunkStatus reply (old script: "Unknown action", or one that treats every call as a save and says "النسخة فاضية") means it does not know chunks -> single upload as before.
+         Only a real network failure (__reachable === false) is reported as a failure. */
+      if (!st || !st.ok) return (st && st.__reachable !== false && !Array.isArray(st.have)) ? { unsupported: true } : fail(st, 'chunkStatus');
       var have = {}; (st.have || []).forEach(function (k) { have[k] = 1; });
       var todo = []; for (var i = 0; i < n; i++) if (!have[i]) todo.push(i);
       var done = n - todo.length; deps.progress(done, n);
