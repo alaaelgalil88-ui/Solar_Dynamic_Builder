@@ -92,7 +92,7 @@
     // v126: when the SDK's write channel stays silent while the phone IS online (reads work, writes never get an answer), the same batch is sent
     // through a plain HTTPS request (`rescue`, one explicit request with its own timeout and a real error code). First try after 12 s; once a rescue
     // worked on this device the next ones start after 1.5 s. A definite refusal (HTTP 400/403/429...) stops the retries and is shown with its real reason.
-    var RESCUE_FIRST = deps.rescueFirst || 4000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_MAX = deps.rescueMax || 30;   /* v181: was 6 (gave up after ~2 min of no connection to Firebase and the write stayed "unconfirmed" until the app restarted); now keeps trying every 20 s for ~10 min */
+    var RESCUE_FIRST = deps.rescueFirst || 12000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_MAX = deps.rescueMax || 6;
     return function commitOrQueue(cp, rescue, pidArg) {
       return new Promise(function (res, rej) {
         var done = false, t = null, rt = null, t0 = now(), doneRes, doneRej, W = getW(), counted = true, settled = false, tries = 0, P = String(pidArg || '');
@@ -128,7 +128,7 @@
             });
           }, ms);
         }
-        armRescue((W.rescueOk && now() - W.rescueOk < 1800000) ? RESCUE_FAST : RESCUE_FIRST);
+        armRescue((W.rescueOk && now() - W.rescueOk < 300000) ? RESCUE_FAST : RESCUE_FIRST);
         t = setT(function () { onEvent('slow', 'no server answer after ' + (now() - t0) + 'ms (pending ' + W.pending + ')'); fin(res, { acked: false, done: dp }); }, online() ? 4000 : 300);
       });
     };
@@ -603,31 +603,6 @@
     }
     return '';
   }
-  /* v179: the small orange badge could not be tapped (pointer-events:none) and its reason lived only in a tooltip, which a phone never shows.
-     Now a tap opens a panel with the full message plus the connection facts the app already keeps; tap the panel to close it. Display only: nothing about sending changes. */
-  function warnPanelText(t, net, W) {
-    var L = [String(t || '(لا توجد رسالة حاليًا)'), ''];
-    net = net || {}; W = W || {};
-    L.push('عدد الكتابات المعلّقة: ' + (net.pending || 0) + ' (للمشروع الحالي: ' + (net.pendingCur || 0) + ')');
-    L.push('معلّقة من: ' + Math.round((net.sinceMs || 0) / 1000) + ' ثانية');
-    L.push('النت: ' + (net.online ? 'شغال' : 'مقطوع') + ' | متصل بالمشروع: ' + (net.connected ? 'أيوه' : 'لأ') + ' | القناة: ' + (net.transport || '?'));
-    if (net.err) L.push('آخر خطأ اتصال: ' + String(net.err).slice(0, 200));
-    if (W.refused) L.push('رفض السيرفر: ' + String(W.refused).slice(0, 200));
-    if (net.rescueErr) L.push('فشل الطلب البديل: ' + String(net.rescueErr).slice(0, 200));
-    L.push('الطلب البديل نجح: ' + (net.rescued || 0) + ' مرة | إعادة فتح القناة: ' + (net.bounces || 0) + ' | أخطاء Firebase الداخلية: ' + (net.asserts || 0));
-    if (net.probe) { try { L.push('اختبار الاتصال: ' + JSON.stringify(net.probe).slice(0, 200)); } catch (e) {} }
-    L.push('', '(اضغط على الرسالة دي عشان تتقفل)');
-    return L.join('\n');
-  }
-  function warnPanelToggle() {
-    var old = document.getElementById('dpbFs2WarnPanel'); if (old) { old.remove(); return; }
-    var net = null; try { net = window.__dpbFs2Net && window.__dpbFs2Net(); } catch (e) {}
-    var d = document.createElement('div'); d.id = 'dpbFs2WarnPanel';
-    d.style.cssText = 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 34px);z-index:2147483001;background:rgba(20,24,34,.97);color:#fff;border:1px solid #ffb74d;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word;direction:rtl;text-align:right;unicode-bidi:plaintext;max-height:70vh;overflow:auto';
-    d.textContent = warnPanelText(window.__dpbFs2WarnFull, net, window.__dpbFs2W);
-    d.addEventListener('click', function () { d.remove(); });
-    document.body.appendChild(d);
-  }
   function warnNow() {
     try {
       var t = warnText(), el = document.getElementById('dpbFs2Warn');
@@ -636,8 +611,8 @@
       var big = /رفض حفظ|حصة Firebase/.test(t);
       var css = big
         ? 'position:fixed;left:8px;right:8px;bottom:70px;z-index:2147483000;background:rgba(120,60,0,.94);color:#fff;border:1px solid #ffb74d;border-radius:10px;padding:6px 10px;font-size:12px;text-align:center;pointer-events:none;direction:rtl'
-        : 'position:fixed;left:4px;top:calc(env(safe-area-inset-top,0px) + 2px);z-index:2147483000;background:rgba(120,60,0,.85);color:#fff;border:1px solid #ffb74d;border-radius:999px;padding:1px 8px;font-size:10px;line-height:1.5;opacity:.9;pointer-events:auto;cursor:pointer;direction:ltr;padding-top:7px;padding-bottom:7px';
-      if (!el) { el = document.createElement('div'); el.id = 'dpbFs2Warn'; el.addEventListener('click', function () { if (!/رفض حفظ|حصة Firebase/.test(window.__dpbFs2WarnFull || '')) warnPanelToggle(); }); document.body.appendChild(el); }
+        : 'position:fixed;left:4px;top:calc(env(safe-area-inset-top,0px) + 2px);z-index:2147483000;background:rgba(120,60,0,.85);color:#fff;border:1px solid #ffb74d;border-radius:999px;padding:1px 8px;font-size:10px;line-height:1.5;opacity:.9;pointer-events:none;direction:ltr';
+      if (!el) { el = document.createElement('div'); el.id = 'dpbFs2Warn'; document.body.appendChild(el); }
       el.style.cssText = css;
       var n = (t.match(/\d+/) || [''])[0];
       el.textContent = big ? t : (t.slice(0, 2) + (n ? ' ' + n : ''));
@@ -1541,7 +1516,7 @@
     el.textContent = '';
     if (!driveOn()) { el.textContent = '☁️ رفع Drive متوقف'; return; }
     var run = Number(ls('dpb_fs2_bk_drive_run', '0')) || 0;
-    if (run && Date.now() - run < 10 * 60000) { el.textContent = '⏳ جاري الرفع إلى Google Drive من الساعة ' + new Date(run).toLocaleTimeString('ar-EG') + ' (' + Math.round((Date.now() - run) / 1000) + ' ث)' + (ls('dpb_fs2_bk_drive_prog', '') ? ' — رفعت ' + String(ls('dpb_fs2_bk_drive_prog', '')).replace('/', ' من ') + ' قطعة' : '') + '…'; return; }
+    if (run && Date.now() - run < 6 * 60000) { var pg = String(ls('dpb_fs2_bk_drive_prog', '') || '').split('/'); el.textContent = '⏳ جاري الرفع إلى Google Drive من الساعة ' + new Date(run).toLocaleTimeString('ar-EG') + (pg.length === 2 && Number(pg[1]) > 0 ? ' — اترفع ' + pg[0] + ' من ' + pg[1] + ' جزء' : ' (' + Math.round((Date.now() - run) / 1000) + ' ث)') + '…'; return; }
     var x = null; try { x = JSON.parse(ls('dpb_fs2_bk_drive', 'null')); } catch (e) {}
     if (!x) { el.textContent = '☁️ لسه ما اترفعتش نسخة على Drive'; return; }
     var when = new Date(x.t).toLocaleString('ar-EG');
@@ -1615,50 +1590,77 @@
     return bkStreamBytes(bkFromB64(w.z), new DecompressionStream('gzip')).then(function (u) { return new TextDecoder().decode(u); });
   }
   window.DPB_FS2.bkPack = bkPack; window.DPB_FS2.bkUnpack = bkUnpack;
-  /* v177: Drive upload in small chunks with resume. The whole copy (~1.3 MB) in one request needs ~2 min on a slow phone link and any cut restarts it from zero.
-     Here it is cut into ~150 KB pieces; each piece is sent (and retried) on its own; if the upload stops, the next try asks the script which pieces it already has and sends only the missing ones.
-     Needs the new Backup.gs; with the old script (Unknown action) the caller falls back to the single request. deps = { post(payload, ms), ls, lsSet, progress(done, total) } */
-  var BK_CHUNK = 150000;
-  function bkSum(s) { var h = 5381, i, n = s.length; for (i = 0; i < n; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
-  function bkSendChunks(packed, meta, deps) {
-    var total = packed.length, n = Math.ceil(total / BK_CHUNK), sig = bkSum(packed) + '_' + total;
-    var saved = null; try { saved = JSON.parse(deps.ls('dpb_fs2_bk_chunk', 'null')); } catch (e) {}
-    var resume = !!(saved && saved.sig === sig && saved.n === n && Date.now() - saved.t < 20 * 3600000);
-    var id = resume ? saved.id : (String(meta.ns || 'x').slice(0, 30) + '_' + Date.now().toString(36));
-    deps.lsSet('dpb_fs2_bk_chunk', JSON.stringify({ id: id, sig: sig, n: n, t: resume ? saved.t : Date.now() }));
-    function fail(r, step) { return { ok: false, error: step + ': ' + String((r && (r.__detail || r.error)) || 'فشل'), __reachable: r && r.__reachable, __probe: r && r.__probe, __detail: r && r.__detail }; }
-    function sendOne(i, tries) {
-      return Promise.resolve(deps.post({ action: 'saveChunk', kind: meta.kind, ns: meta.ns, uploadId: id, i: i, n: n, data: packed.slice(i * BK_CHUNK, (i + 1) * BK_CHUNK) }, 60000)).then(function (r) {
+    /* ---- v177: chunked Drive upload with resume ----
+     The copy (~1.3 MB packed) used to go up as ONE request: on this phone's slow/unstable uplink it either needed ~2 min or died, and every failure started again from zero.
+     Now it goes up in ~90 KB pieces. The script keeps each piece (CacheService, 6 h); a piece that fails is retried alone, and if the whole upload stops, the next try asks the script
+     which pieces it already has and sends only the missing ones. The id comes from the content, so the same copy resumes the same upload even after the app is reopened.
+     An old script that does not know these actions answers "Unknown action": we then fall back to the old single request, so nothing breaks if the script is not redeployed. */
+  var BK_CH_MIN = 200000;
+  function bkHash(s) { var h = 2166136261, i, n = s.length; for (i = 0; i < n; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h.toString(36); }
+  function bkWait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function bkChunkUpload(packed, meta, post) {
+    var ascii = !/[^\x00-\x7f]/.test(packed), CH = ascii ? 90000 : 25000, total = Math.ceil(packed.length / CH);
+    var id = 'u' + bkHash(packed) + '_' + packed.length, T0 = Date.now(), DEADLINE = 8 * 60000;
+    var sent = {}, last = null, oldScript = false;
+    function nSent() { return Object.keys(sent).length; }
+    function prog() { lsSet('dpb_fs2_bk_drive_prog', nSent() + '/' + total); }
+    function unknown(r) { return !!(r && /Unknown action/i.test(String(r.error || ''))); }
+    function call(action, payload, ms) { return post(action, payload, ms, { noProbe: true }); }
+    function putOne(i) {
+      var data = packed.substr(i * CH, CH), tries = 0;
+      function go() {
+        if (oldScript || Date.now() - T0 > DEADLINE) return Promise.resolve(false);
+        tries++;
+        return call('chunkPut', { id: id, i: i, total: total, data: data }, 40000).then(function (r) {
+          if (r && r.ok) { sent[i] = 1; prog(); return true; }
+          if (unknown(r)) { oldScript = true; return false; }
+          last = r; if (tries >= 3) return false;
+          return bkWait(1500 * tries).then(go);
+        });
+      }
+      return go();
+    }
+    function sendAll(list) {
+      var idx = 0, ok = true;
+      function worker() {
+        if (idx >= list.length || !ok || oldScript) return Promise.resolve();
+        var i = list[idx++];
+        return putOne(i).then(function (g) { if (!g) ok = false; return worker(); });
+      }
+      return Promise.all([worker(), worker()]).then(function () { return ok; });
+    }
+    function fail() { return last || { ok: false, error: 'تعذّر رفع النسخة (' + nSent() + ' من ' + total + ' جزء اتبعتوا، والباقي هيتكمّل في المحاولة الجاية)' }; }
+    function commit(round) {
+      return call('chunkCommit', { id: id, total: total, len: packed.length, kind: meta.kind, ns: meta.ns, shareWith: meta.shareWith, createdAt: meta.createdAt }, 120000).then(function (r) {
         if (r && r.ok) return r;
-        if (tries > 1) return sendOne(i, tries - 1);
-        throw r || { ok: false, error: 'فشل' };
+        if (unknown(r)) { oldScript = true; return null; }
+        last = r || last;
+        if (r && r.__reachable === false && round < 3 && Date.now() - T0 < DEADLINE) return bkWait(2000).then(function () { return commit(round + 1); });   /* reply lost / link dropped: ask again (the script answers "already done" if it did write) */
+        if (r && r.missing && r.missing.length && round < 3) {
+          r.missing.forEach(function (i) { delete sent[i]; }); prog();
+          return sendAll(r.missing).then(function (g) { return oldScript ? null : (g ? commit(round + 1) : fail()); });
+        }
+        return r || fail();
       });
     }
-    return Promise.resolve(deps.post({ action: 'chunkStatus', kind: meta.kind, ns: meta.ns, uploadId: id }, 30000)).then(function (st) {
-      /* v178: any ANSWER from the script that is not a real chunkStatus reply (old script: "Unknown action", or one that treats every call as a save and says "النسخة فاضية") means it does not know chunks -> single upload as before.
-         Only a real network failure (__reachable === false) is reported as a failure. */
-      if (!st || !st.ok) return (st && st.__reachable !== false && !Array.isArray(st.have)) ? { unsupported: true } : fail(st, 'chunkStatus');
-      var have = {}; (st.have || []).forEach(function (k) { have[k] = 1; });
-      var todo = []; for (var i = 0; i < n; i++) if (!have[i]) todo.push(i);
-      var done = n - todo.length; deps.progress(done, n);
-      var p = Promise.resolve();
-      todo.forEach(function (i) { p = p.then(function () { return sendOne(i, 3); }).then(function () { done++; deps.progress(done, n); }); });
-      return p.then(function () {
-        return Promise.resolve(deps.post({ action: 'finishChunks', kind: meta.kind, ns: meta.ns, uploadId: id, n: n, total: total, shareWith: meta.shareWith, createdAt: meta.createdAt }, 90000));
-      }).then(function (r) {
-        if (r && r.ok) { deps.lsSet('dpb_fs2_bk_chunk', ''); return r; }
-        if (r && r.reset) deps.lsSet('dpb_fs2_bk_chunk', '');
-        if (r && r.missing && r.missing.length) return { ok: false, error: 'قطع ناقصة (' + r.missing.length + ') — هتتكمل المرة الجاية', __reachable: true };
-        return r || { ok: false, error: 'فشل التجميع' };
-      }, function (e) { return fail(e, 'قطعة'); });
-    }, function (e) { return fail(e, 'chunkStatus'); });
+    return call('chunkStatus', { id: id, total: total }, 30000).then(function (st) {
+      if (unknown(st)) { oldScript = true; return null; }
+      if (st && st.ok && st.done) { var res = st.result || {}; res.ok = true; res.duplicate = true; return res; }
+      if (st && st.ok && st.have) { st.have.forEach(function (i) { sent[i] = 1; }); }
+      prog();
+      var todo = []; for (var i = 0; i < total; i++) if (!sent[i]) todo.push(i);
+      return sendAll(todo).then(function (g) { return oldScript ? null : (g ? commit(1) : fail()); });
+    }).then(function (r) {
+      if (r && r.ok) r.__via = 'chunks';
+      return r;   // null = the script is old: the caller falls back to the single request
+    });
   }
-  window.DPB_FS2.bkSendChunks = bkSendChunks;
+
   /* v172: while a Drive upload is in progress the card says so (with the start time) instead of staying silent; the marker is ignored after 6 minutes in case the page was killed mid-upload */
   function bkDriveUpload(obj) {
     if (!driveOn()) return Promise.resolve({ skipped: true });
-    lsSet('dpb_fs2_bk_drive_run', String(Date.now())); try { drivePaint(); } catch (e) {}
-    function done() { try { localStorage.removeItem('dpb_fs2_bk_drive_run'); } catch (e) {} try { drivePaint(); } catch (e) {} }
+    lsSet('dpb_fs2_bk_drive_run', String(Date.now())); try { localStorage.removeItem('dpb_fs2_bk_drive_prog'); } catch (e) {} try { drivePaint(); } catch (e) {}
+    function done() { try { localStorage.removeItem('dpb_fs2_bk_drive_run'); localStorage.removeItem('dpb_fs2_bk_drive_prog'); } catch (e) {} try { drivePaint(); } catch (e) {} }
     return bkDriveUpload0(obj).then(function (r) { done(); return r; }, function (e) { done(); throw e; });
   }
   function bkDriveUpload0(obj) {
@@ -1668,14 +1670,14 @@
       if (typeof window.DPB_gsCall !== 'function') return { ok: false, error: 'الاتصال بالسحابة غير جاهز' };
       return bkPack(fullStr).then(function (packed) {
         fullStr = null; upMB = (bytesOf(packed) / 1048576).toFixed(2);
-        var single = function () { return (typeof window.DPB_backupPost === 'function' ? window.DPB_backupPost({ kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000) : window.DPB_gsCall('saveBackup', { kind: 'firebase', ns: nsName(), content: packed, shareWith: driveEmail(), createdAt: obj && obj.savedAt }, 120000)); };
-        if (packed.length <= BK_CHUNK || typeof window.DPB_backupPost !== 'function') return single();
-        try { window.DPB_KA && window.DPB_KA.on('drive2'); } catch (e) {}
-        function endKA() { try { window.DPB_KA && window.DPB_KA.off('drive2'); } catch (e) {} try { localStorage.removeItem('dpb_fs2_bk_drive_prog'); } catch (e) {} }
-        return bkSendChunks(packed, { kind: 'firebase', ns: nsName(), shareWith: driveEmail(), createdAt: obj && obj.savedAt }, {
-          post: function (pl, ms) { return window.DPB_backupPost(pl, ms); }, ls: ls, lsSet: lsSet,
-          progress: function (d, t) { lsSet('dpb_fs2_bk_drive_prog', d + '/' + t); try { drivePaint(); } catch (e) {} }
-        }).then(function (r) { endKA(); return (r && r.unsupported) ? single() : r; }, function (e) { endKA(); throw e; });
+        var meta = { kind: 'firebase', ns: nsName(), shareWith: driveEmail(), createdAt: obj && obj.savedAt };
+        function single() { return (typeof window.DPB_backupPost === 'function' ? window.DPB_backupPost({ kind: meta.kind, ns: meta.ns, content: packed, shareWith: meta.shareWith, createdAt: meta.createdAt }, 120000) : window.DPB_gsCall('saveBackup', { kind: meta.kind, ns: meta.ns, content: packed, shareWith: meta.shareWith, createdAt: meta.createdAt }, 120000)); }
+        if (packed.length > BK_CH_MIN && typeof window.DPB_backupPost === 'function') {
+          try { if (window.DPB_KA) window.DPB_KA.on('drivebk'); } catch (e) {}
+          var offKA = function () { try { if (window.DPB_KA) window.DPB_KA.off('drivebk'); } catch (e) {} };
+          return bkChunkUpload(packed, meta, window.DPB_backupPost).then(function (r) { return r || single(); }).then(function (r) { offKA(); return r; }, function (e) { offKA(); throw e; });
+        }
+        return single();
       });
     }).then(function (res) {
       if (res && res.ok) { lsSet('dpb_fs2_bk_drive', JSON.stringify({ ok: true, via: res.__via || '', mb: upMB, sec: Math.round((Date.now() - upT0) / 1000), t: Date.now(), url: res.url || '', owner: res.owner || '', sharedWith: res.sharedWith || '', shareError: res.shareError || '' })); try { localStorage.removeItem('dpb_fs2_bk_drive_pending'); } catch (e) {} return { ok: true }; }

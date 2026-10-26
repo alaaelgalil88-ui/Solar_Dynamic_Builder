@@ -11451,7 +11451,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     function P(){try{var C=window.Capacitor;if(!C||!C.isNativePlatform||!C.isNativePlatform())return null;if(plug)return plug;plug=(C.Plugins&&C.Plugins.DpbKeepAlive)||(C.registerPlugin&&C.registerPlugin("DpbKeepAlive"))||null;return plug;}catch(_){return null}}
     function any(){for(var k in tags)if(tags[k])return true;return false}
     /* v175: the notification says WHAT is being sent (edits to the server, and/or the Drive backup) */
-    function what(){var W=window.__dpbFs2W||{},a=[];if(tags.pend)a.push("إرسال "+(Number(W.pending)||0)+" تعديل للسيرفر");if(tags.drive||tags.drive2)a.push("رفع النسخة الاحتياطية على Drive");return "جاري "+(a.join(" + ")||"رفع البيانات")+"… ممكن تقفل التطبيق"}
+    function what(){var W=window.__dpbFs2W||{},a=[];if(tags.pend)a.push("إرسال "+(Number(W.pending)||0)+" تعديل للسيرفر");if(tags.drive)a.push("رفع النسخة الاحتياطية على Drive");return "جاري "+(a.join(" + ")||"رفع البيانات")+"… ممكن تقفل التطبيق"}
     function sync(){
       var p=P();if(!p)return;
       try{
@@ -11476,9 +11476,9 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       }catch(_){}
     },3000);
   })();
-  window.DPB_backupPost=async function(a,b,c){
-    let action="saveBackup",payload,ms;
-    if(typeof a==="string"){action=a;payload=b;ms=c}else{payload=a;ms=b}
+  window.DPB_backupPost=async function(a,b,c,d){
+    let action="saveBackup",payload,ms,opts={};
+    if(typeof a==="string"){action=a;payload=b;ms=c;opts=(d&&typeof d==="object")?d:{}}else{payload=a;ms=b}
     payload=(payload&&typeof payload==="object")?payload:{};
     ms=(Number(ms)>0)?Number(ms):90000;
     const u=window.DPB_backupUrl()||DPB_DEFAULT_SCRIPT_URL;
@@ -11511,6 +11511,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       if(n&&n.txt!==undefined&&(n.status===undefined||n.status<400)){const j=parseRes(n.txt);if(j&&j.ok)return Object.assign({},j,{__via:"native"});if(j&&j.error)return Object.assign({},j,{__via:"native"})}
       // still failing: does a plain GET of the link work (from the WebView, then natively)?
       let probe="";
+      if(opts.noProbe)return {ok:false,__reachable:false,__probe:"skipped",error:fetchErr,__detail:fetchErr+" | "+(n&&(n.unavailable?"native:none":(n.err?"native:"+n.err:"native:"+(n.status||"?")+" "+String(n.txt||"").slice(0,60)))||"")};   /* v177: a failing piece of a chunked upload is simply retried, no need to probe */
       try{
         const c2=new AbortController(),t2=setTimeout(()=>c2.abort(),15000);
         try{const g=await fetch(u,{method:"GET",signal:c2.signal,redirect:"follow"});const j=JSON.parse(await g.text());probe=(j&&j.ok)?"get-ok":"get-bad"}finally{clearTimeout(t2)}
@@ -21466,10 +21467,8 @@ window.dpbMarkAdminDev=function(){try{localStorage.setItem('DPB_ADMIN_DEVICE_V1'
   async function adminBadge(){
     var n=0;
     for(var a of sups()){
-      /* v180: a reply only counts as new if it is not hidden (deleted) by the admin and is newer than what the admin already saw. "Seen" is also read from the server (msga_<user>.seenS, written when the admin opens the chat), so a reinstall / cleared app data no longer turns every old reply into "رد جديد". */
-      var ab=await Promise.all([rd(key('msga_',a.name)),rd(key('msgs_',a.name))]),am=ab[0]||{},s=ab[1];if(!s||!Array.isArray(s.r))continue;
-      var hid=Array.isArray(am.hid)?am.hid:[],seen=lsGet(seenKey(a.name))||'',srvSeen=String(am.seenS||'');if(srvSeen>seen)seen=srvSeen;
-      var fresh=s.r.filter(function(m){return m.t>seen&&hid.indexOf(m.id)<0});n+=fresh.length;
+      var s=await rd(key('msgs_',a.name));if(!s||!Array.isArray(s.r))continue;
+      var seen=lsGet(seenKey(a.name))||'',fresh=s.r.filter(function(m){return m.t>seen});n+=fresh.length;
       if(fresh.length){
         var last=fresh[fresh.length-1],nk='DPB_MSG_ADMIN_NOTIFIED_'+String(a.name).toLowerCase();
         if(last.t>(lsGet(nk)||'')){
