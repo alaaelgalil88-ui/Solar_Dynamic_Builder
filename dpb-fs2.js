@@ -603,6 +603,31 @@
     }
     return '';
   }
+  /* v179: the small orange badge could not be tapped (pointer-events:none) and its reason lived only in a tooltip, which a phone never shows.
+     Now a tap opens a panel with the full message plus the connection facts the app already keeps; tap the panel to close it. Display only: nothing about sending changes. */
+  function warnPanelText(t, net, W) {
+    var L = [String(t || '(لا توجد رسالة حاليًا)'), ''];
+    net = net || {}; W = W || {};
+    L.push('عدد الكتابات المعلّقة: ' + (net.pending || 0) + ' (للمشروع الحالي: ' + (net.pendingCur || 0) + ')');
+    L.push('معلّقة من: ' + Math.round((net.sinceMs || 0) / 1000) + ' ثانية');
+    L.push('النت: ' + (net.online ? 'شغال' : 'مقطوع') + ' | متصل بالمشروع: ' + (net.connected ? 'أيوه' : 'لأ') + ' | القناة: ' + (net.transport || '?'));
+    if (net.err) L.push('آخر خطأ اتصال: ' + String(net.err).slice(0, 200));
+    if (W.refused) L.push('رفض السيرفر: ' + String(W.refused).slice(0, 200));
+    if (net.rescueErr) L.push('فشل الطلب البديل: ' + String(net.rescueErr).slice(0, 200));
+    L.push('الطلب البديل نجح: ' + (net.rescued || 0) + ' مرة | إعادة فتح القناة: ' + (net.bounces || 0) + ' | أخطاء Firebase الداخلية: ' + (net.asserts || 0));
+    if (net.probe) { try { L.push('اختبار الاتصال: ' + JSON.stringify(net.probe).slice(0, 200)); } catch (e) {} }
+    L.push('', '(اضغط على الرسالة دي عشان تتقفل)');
+    return L.join('\n');
+  }
+  function warnPanelToggle() {
+    var old = document.getElementById('dpbFs2WarnPanel'); if (old) { old.remove(); return; }
+    var net = null; try { net = window.__dpbFs2Net && window.__dpbFs2Net(); } catch (e) {}
+    var d = document.createElement('div'); d.id = 'dpbFs2WarnPanel';
+    d.style.cssText = 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 34px);z-index:2147483001;background:rgba(20,24,34,.97);color:#fff;border:1px solid #ffb74d;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word;direction:rtl;text-align:right;unicode-bidi:plaintext;max-height:70vh;overflow:auto';
+    d.textContent = warnPanelText(window.__dpbFs2WarnFull, net, window.__dpbFs2W);
+    d.addEventListener('click', function () { d.remove(); });
+    document.body.appendChild(d);
+  }
   function warnNow() {
     try {
       var t = warnText(), el = document.getElementById('dpbFs2Warn');
@@ -611,8 +636,8 @@
       var big = /رفض حفظ|حصة Firebase/.test(t);
       var css = big
         ? 'position:fixed;left:8px;right:8px;bottom:70px;z-index:2147483000;background:rgba(120,60,0,.94);color:#fff;border:1px solid #ffb74d;border-radius:10px;padding:6px 10px;font-size:12px;text-align:center;pointer-events:none;direction:rtl'
-        : 'position:fixed;left:4px;top:calc(env(safe-area-inset-top,0px) + 2px);z-index:2147483000;background:rgba(120,60,0,.85);color:#fff;border:1px solid #ffb74d;border-radius:999px;padding:1px 8px;font-size:10px;line-height:1.5;opacity:.9;pointer-events:none;direction:ltr';
-      if (!el) { el = document.createElement('div'); el.id = 'dpbFs2Warn'; document.body.appendChild(el); }
+        : 'position:fixed;left:4px;top:calc(env(safe-area-inset-top,0px) + 2px);z-index:2147483000;background:rgba(120,60,0,.85);color:#fff;border:1px solid #ffb74d;border-radius:999px;padding:1px 8px;font-size:10px;line-height:1.5;opacity:.9;pointer-events:auto;cursor:pointer;direction:ltr;padding-top:7px;padding-bottom:7px';
+      if (!el) { el = document.createElement('div'); el.id = 'dpbFs2Warn'; el.addEventListener('click', function () { if (!/رفض حفظ|حصة Firebase/.test(window.__dpbFs2WarnFull || '')) warnPanelToggle(); }); document.body.appendChild(el); }
       el.style.cssText = css;
       var n = (t.match(/\d+/) || [''])[0];
       el.textContent = big ? t : (t.slice(0, 2) + (n ? ' ' + n : ''));
