@@ -92,7 +92,14 @@
     // v126: when the SDK's write channel stays silent while the phone IS online (reads work, writes never get an answer), the same batch is sent
     // through a plain HTTPS request (`rescue`, one explicit request with its own timeout and a real error code). First try after 12 s; once a rescue
     // worked on this device the next ones start after 1.5 s. A definite refusal (HTTP 400/403/429...) stops the retries and is shown with its real reason.
-    var RESCUE_FIRST = deps.rescueFirst || 12000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_MAX = deps.rescueMax || 6;
+    var RESCUE_FIRST = deps.rescueFirst || 12000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_SLOW = deps.rescueSlow || 45000, RESCUE_QUOTA = deps.rescueQuota || 300000, RESCUE_MAX = deps.rescueMax || Infinity;
+    // v179: the rescue no longer gives up after 6 tries (the pending counter stayed stuck for good when the network was bad for ~2 minutes): it keeps trying every 20 s, then every 45 s,
+    // until the write is confirmed (or the server definitely refuses it). When the phone says it is back online / the app returns to the screen, every waiting rescue is retried at once.
+    var kicks = (makeCommitter._kicks = makeCommitter._kicks || []);
+    if (!makeCommitter._wired) {
+      makeCommitter._wired = true;
+      try { var kickAll = function () { var k = (makeCommitter._kicks || []).slice(); k.forEach(function (f) { try { f(); } catch (e) {} }); }; if (typeof window !== 'undefined' && window.addEventListener) { window.addEventListener('online', kickAll); } if (typeof document !== 'undefined' && document.addEventListener) { document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') kickAll(); }); } } catch (e) {}
+    }
     return function commitOrQueue(cp, rescue, pidArg) {
       return new Promise(function (res, rej) {
         var done = false, t = null, rt = null, t0 = now(), doneRes, doneRej, W = getW(), counted = true, settled = false, tries = 0, P = String(pidArg || '');
@@ -110,24 +117,30 @@
           if (done) { W.refused = code; W.refusedPid = P; W.refusedAt = now(); onEvent('rejected', code); doneRej(e); }
           else fin(rej, e);
         });
+        var busy = false;
         function armRescue(ms) {
           if (!rescue || settled || tries >= RESCUE_MAX) return;
+          clearT(rt);
           rt = setT(function () {
-            if (settled) return;
+            if (settled || busy) return;
             if (!online()) { armRescue(RESCUE_EVERY); return; }
-            tries++; onEvent('rescue-start', 'try ' + tries + ' after ' + (now() - t0) + 'ms');
+            busy = true; tries++; onEvent('rescue-start', 'try ' + tries + ' after ' + (now() - t0) + 'ms');
             var rp; try { rp = Promise.resolve(rescue()); } catch (e) { rp = Promise.reject(e); }
             rp.then(function () {
+              busy = false;
               if (settled) return; settled = true; release(); W.rescueOk = now(); W.rescued = (W.rescued || 0) + 1;
               onEvent('rescued', (now() - t0) + 'ms'); fin(res, { acked: true }); doneRes();
             }, function (e) {
+              busy = false;
               if (settled) return;
               var code = String(e && (e.code || e.message) || e); W.rescueErr = code; W.rescueErrAt = now(); onEvent('rescue-failed', code);
+              if (e && e.slow) { W.refused = code; W.refusedPid = P; W.refusedAt = now(); armRescue(RESCUE_QUOTA); return; }   // v179: daily quota: the server will accept it again later, keep trying slowly
               if (e && e.definite) { W.refused = code; W.refusedPid = P; W.refusedAt = now(); return; }   // the server answered "no": retrying the same thing changes nothing
-              armRescue(RESCUE_EVERY);
+              armRescue(tries < 6 ? RESCUE_EVERY : RESCUE_SLOW);
             });
           }, ms);
         }
+        if (rescue) { var kick = function () { if (!settled && !busy) armRescue(0); }; kicks.push(kick); var unkick = function () { var i = kicks.indexOf(kick); if (i >= 0) kicks.splice(i, 1); }; dp.then(unkick, unkick); }
         armRescue((W.rescueOk && now() - W.rescueOk < 300000) ? RESCUE_FAST : RESCUE_FIRST);
         t = setT(function () { onEvent('slow', 'no server answer after ' + (now() - t0) + 'ms (pending ' + W.pending + ')'); fin(res, { acked: false, done: dp }); }, online() ? 4000 : 300);
       });
@@ -183,9 +196,47 @@
     var j = null; try { j = JSON.parse(text); if (Array.isArray(j)) j = j[0]; } catch (e) {}
     var st = String((j && j.error && j.error.status) || status).toLowerCase().replace(/_/g, '-'), msg = String((j && j.error && j.error.message) || text || '').slice(0, 140);
     var err = new Error('HTTP ' + status + ' ' + st + (msg ? ': ' + msg : '')); err.code = st; err.status = status;
-    err.definite = status === 400 || status === 403 || status === 404 || status === 409 || status === 429;
+    // v179: only a refusal that retrying cannot fix is "definite" (400 bad data, 401/403 permission, 404 not found).
+    // 429 / resource-exhausted (daily quota) is NOT final: `slow` = keep trying every few minutes, the quota comes back by itself.
+    // 409 (aborted: two writers collided) and 5xx are plain retries.
+    err.slow = status === 429 || st === 'resource-exhausted';
+    err.definite = !err.slow && (status === 400 || status === 401 || status === 403 || status === 404);
     return err;
   }
+  /*V179-START*/
+  // Pure helpers (tested in Node). The REST rescue for one batch: permission error -> refresh the sign-in once and send again; bad data (400) -> cut the batch
+  // in halves until the one bad write is found, set ONLY that one aside and send the rest.
+  function makeRestCommit(d) {
+    function isAuth(e) { return /permission|unauth/i.test(String(e && (e.code || e.message) || '')) || (e && (e.status === 401 || e.status === 403)); }
+    function isBad(e) { return /invalid-argument/i.test(String(e && (e.code || e.message) || '')) || (e && e.status === 400); }
+    function go(chunk, authTried) {
+      return Promise.resolve().then(function () { return d.send(chunk); }).catch(function (e) {
+        if (isAuth(e) && !authTried) return Promise.resolve().then(function () { return d.reauth(); }).then(function () { return go(chunk, true); }, function () { throw e; });
+        if (isBad(e)) {
+          if (chunk.length <= 1) { d.quar(chunk[0], e); return true; }
+          var m = chunk.length >> 1;
+          return go(chunk.slice(0, m), authTried).then(function () { return go(chunk.slice(m), authTried); });
+        }
+        throw e;
+      });
+    }
+    return function (chunk) { return go(chunk, false); };
+  }
+  // same idea for the cell outbox: a failed batch with bad data is retried one cell at a time; txOne(unit) -> Promise(skipped); the cell the server refuses is set aside
+  function poisonSplit(chunk, txOne, onOk, onBad) {
+    var units = [], p = Promise.resolve(), other = null;
+    chunk.forEach(function (o) { Object.keys(o.cells).forEach(function (col) { var c = {}; c[col] = o.cells[col]; units.push({ t: 'f', path: o.path, base: o.base, cells: c, _col: col }); }); });
+    units.forEach(function (u) {
+      p = p.then(function () {
+        return txOne(u).then(function (sk) { onOk(u, sk || []); }, function (e) {
+          if (/invalid-argument/i.test(String(e && (e.code || e.message) || ''))) onBad(u, e); else other = other || e;
+        });
+      });
+    });
+    return p.then(function () { if (other) throw other; });
+  }
+  window.__dpbMakeRestCommit = makeRestCommit; window.__dpbPoisonSplit = poisonSplit;
+  /*V179-END*/
   window.__dpbRestWrites = restWrites; window.__dpbRestError = restError;
   // The app filters its local records by the active project (r.projectId). Map-engine marks are sent without one, so stamp it:
   // on the way in (stored in Firestore) and on the way out (older docs that were stored without it).
@@ -317,7 +368,17 @@
               function (e) { clearTimeout(tm); throw Object.assign(new Error(String(e && e.name === 'AbortError' ? 'rest-timeout (20s)' : (e && e.message) || e)), { code: e && e.name === 'AbortError' ? 'rest-timeout' : 'rest-network' }); });
         });
       }
-      function restCommit(chunk) { return restSend(restWrites(DOCS, chunk)); }
+      // v179: sign in again (fresh token, or a new anonymous/e-mail sign-in if the session was lost)
+      function reauth() {
+        try { var cu = auth.currentUser; if (cu) return cu.getIdToken(true); return (ac && ac.email && ac.password) ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : authM.signInAnonymously(auth); } catch (e) { return Promise.reject(e); }
+      }
+      // v179: a write the server refuses as invalid data is set aside (and counted) so it cannot block the good ones behind it
+      function quar(key, why) {
+        var W = window.__dpbFs2W = window.__dpbFs2W || {}; (W.quar = W.quar || []).push({ key: String(key), why: String((why && (why.message || why.code)) || why).slice(0, 120), at: Date.now() }); W.quarAt = Date.now();
+        try { dlog('quarantined', String(key)); } catch (e) {} try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (e) {}
+      }
+      var lastReauth = 0;
+      var restCommit = makeRestCommit({ send: function (ch) { return restSend(restWrites(DOCS, ch)); }, reauth: reauth, quar: function (op, e) { quar(op && op.path, e); } });
       function restProbe() {
         var dev = ls('dpb_fs2_dev', '') || 'dev';
         return restSend([{ update: { name: DOCS + '/dpb2/' + nsName() + '/kv/clock-' + dev, fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 't', setToServerValue: 'REQUEST_TIME' }] }]).then(function () { return 'ok'; }, function (e) { return String(e && (e.code || e.message) || e); });
@@ -392,6 +453,9 @@
           p = p.then(function () {
             if (queueRest) { chunk.forEach(function (o) { keys = keys.concat(obAdd(o)); }); return; }
             return txChunk(chunk).then(function (sk) { skippedAll = skippedAll.concat(sk); }, function (e) {
+              if (/invalid-argument/i.test(String(e && (e.code || e.message) || ''))) {   // v179: set aside only the refused cell, the others go through
+                return poisonSplit(chunk, function (u) { return txChunk([u]); }, function (u, sk) { skippedAll = skippedAll.concat(sk); }, function (u, ex) { quar(u.path + '|' + u._col, ex); });
+              }
               if (DEFINITE.test(String(e && (e.code || e.message) || e))) { refuse(e); throw e; }
               queueRest = true; chunk.forEach(function (o) { keys = keys.concat(obAdd(o)); });   // no answer from the server: keep it, send it later through the same check
             });
@@ -421,7 +485,14 @@
               return txChunk(chunk).then(function (sk) {
                 skippedAll = skippedAll.concat(sk);
                 chunk.forEach(function (o) { Object.keys(o.cells).forEach(function (col) { okKeys.push(o.path + '|' + col); }); });
-              }, function (e) { bad = true; if (!pj || pj === cur) failed = failed || e; else otherFail = otherFail || e; });
+              }, function (e) {
+                var fail = function (x) { bad = true; if (!pj || pj === cur) failed = failed || x; else otherFail = otherFail || x; };
+                if (!/invalid-argument/i.test(String(e && (e.code || e.message) || ''))) return fail(e);
+                // v179: bad data in one cell: send the cells one by one, set aside only the refused one
+                return poisonSplit(chunk, function (u) { return txChunk([u]); },
+                  function (u, sk) { skippedAll = skippedAll.concat(sk); okKeys.push(u.path + '|' + u._col); },
+                  function (u, ex) { var k = u.path + '|' + u._col; quar(k, ex); delete ob[k]; obSettle(k); }).catch(fail);
+              });
             });
           });
         });
@@ -431,7 +502,12 @@
           obSave();
           tellSkipped(skippedAll);
           draining = false;
-          if (refused) { refuse(failed); dlog('outbox-refused', String(failed.code || failed.message)); obLater(60000); }
+          var fcode = failed ? String(failed.code || failed.message || failed) : '';
+          if (refused && /permission|unauth/i.test(fcode) && Date.now() - lastReauth > 120000) {   // v179: first sign in again, then send once more
+            lastReauth = Date.now(); dlog('outbox-reauth', fcode);
+            reauth().then(function () { obLater(1500); }, function () { refuse(failed); obLater(60000); });
+          }
+          else if (refused) { refuse(failed); dlog('outbox-refused', fcode); obLater(/quota|resource-exhausted/i.test(fcode) ? 300000 : 60000); }
           else if (failed || otherFail) { failed = failed || otherFail; obBack = Math.min(obBack + 1, 4); dlog('outbox-retry', String(failed.code || failed.message)); obLater([3000, 5000, 10000, 15000, 15000][obBack]); }
           else { obBack = 0; dlog('outbox-delivered', okKeys.length + ' cell(s)'); kickPush(); if (obN()) obLater(500); }
           try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (e) {}
@@ -591,7 +667,8 @@
   function lasted(key, on, ms) { if (!on) { delete condSeen[key]; return false; } if (!condSeen[key]) condSeen[key] = Date.now(); return Date.now() - condSeen[key] >= ms; }
   function warnText() {
     var W = window.__dpbFs2W || {}, quota = /resource-exhausted|quota/i, newProj = window.__dpbProjBuilt === false;
-    if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000 && (!W.refusedPid || !pidS() || W.refusedPid === pidS())) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك بس ومش وصلت للسيرفر' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس';
+    if (W.quar && W.quar.length && Date.now() - (W.quarAt || 0) < 30 * 60 * 1000) return '⚠️ ' + W.quar.length + ' تعديل السيرفر رفضه (بيانات مش صالحة: ' + W.quar[W.quar.length - 1].why.slice(0, 50) + ') واتعزل — الباقي اتبعت عادي';
+    if (W.refused && Date.now() - (W.refusedAt || 0) < 10 * 60 * 1000 && (!W.refusedPid || !pidS() || W.refusedPid === pidS())) return quota.test(W.refused) ? '⚠️ حصة Firebase اليومية خلصت — تعديلاتك محفوظة عندك وهتتبعت لوحدها لما الحصة ترجع (حوالي 10 الصبح)' : (/permission|unauth/i.test(W.refused) ? '⚠️ السيرفر رفض الصلاحيات (' + W.refused + ') — جرّبت أسجّل دخول من جديد؛ لو فضل كده اخرج وادخل تاني أو راجع قواعد Firestore — تعديلاتك محفوظة عندك' : '⚠️ السيرفر رفض حفظ تعديلاتك (' + W.refused + ') — محفوظة عندك بس');
     var conn = !!(pidS() && !curStore() && lastErr);
     // v132: the "مش بتستقبل تعديلات الأجهزة التانية — بحاول أتصل تاني" message is removed (the app reconnects by itself); only the quota case still warns.
     if (lasted('conn', conn && !newProj && quota.test(lastErr), 20000)) return '⚠️ حصة Firebase اليومية خلصت — مش بتستقبل تعديلات الأجهزة التانية';
