@@ -688,12 +688,46 @@
       var big = /رفض حفظ|حصة Firebase/.test(t);
       var css = big
         ? 'position:fixed;left:8px;right:8px;bottom:70px;z-index:2147483000;background:rgba(120,60,0,.94);color:#fff;border:1px solid #ffb74d;border-radius:10px;padding:6px 10px;font-size:12px;text-align:center;pointer-events:none;direction:rtl'
-        : 'position:fixed;left:4px;top:calc(env(safe-area-inset-top,0px) + 2px);z-index:2147483000;background:rgba(120,60,0,.85);color:#fff;border:1px solid #ffb74d;border-radius:999px;padding:1px 8px;font-size:10px;line-height:1.5;opacity:.9;pointer-events:none;direction:ltr';
+        : 'position:fixed;left:4px;top:calc(env(safe-area-inset-top,0px) + 2px);z-index:2147483000;background:rgba(120,60,0,.85);color:#fff;border:1px solid #ffb74d;border-radius:999px;padding:3px 10px;font-size:11px;line-height:1.5;opacity:.95;pointer-events:auto;direction:ltr';
       if (!el) { el = document.createElement('div'); el.id = 'dpbFs2Warn'; document.body.appendChild(el); }
       el.style.cssText = css;
       var n = (t.match(/\d+/) || [''])[0];
       el.textContent = big ? t : (t.slice(0, 2) + (n ? ' ' + n : ''));
       el.title = t;
+      el.onclick = function () { showWarnBox(); };
+    } catch (e) {}
+  }
+  // v182: tap the small orange badge -> a box with the REAL reason (the same text that used to sit only in the hidden tooltip) + live numbers + a "test now" button
+  function warnDetail() {
+    var W = window.__dpbFs2W || {}, p = W.probe || null, L = [];
+    L.push(window.__dpbFs2WarnFull || 'مفيش تحذير دلوقتي');
+    L.push('');
+    L.push('كتابات مستنية تأكيد السيرفر: ' + curPend() + ' (كل المشاريع: ' + (W.pending || 0) + ')');
+    L.push('تعديلات خلايا في طابور الجهاز: ' + obN());
+    var since = curPendSince(); if (since) L.push('مستنية من: ' + Math.round((Date.now() - since) / 1000) + ' ثانية');
+    L.push('النت على الجهاز: ' + (navigator.onLine === false ? 'مقطوع' : 'شغال'));
+    L.push('نوع القناة: ' + ls('dpb_fs2_transport', 'lp'));
+    if (p) L.push('آخر اختبار (من ' + Math.round((Date.now() - (W.probeAt || 0)) / 1000) + ' ث): قراءة=' + p.read + ' | كتابة HTTPS=' + p.rest + ' | كتابة عادية=' + p.write);
+    else L.push('آخر اختبار: لسه ما اتعملش — دوس "اختبر الاتصال الآن"');
+    if (W.rescueErr) L.push('آخر خطأ في الإرسال البديل: ' + W.rescueErr + (W.rescueErrAt ? ' (من ' + Math.round((Date.now() - W.rescueErrAt) / 1000) + ' ث)' : ''));
+    if (W.refused) L.push('آخر رفض من السيرفر: ' + W.refused);
+    if (W.rescued) L.push('اتبعت بالطريق البديل بنجاح: ' + W.rescued + ' مرة');
+    return L.join('\n');
+  }
+  function showWarnBox() {
+    try {
+      var old = document.getElementById('dpbFs2WarnBox'); if (old) old.remove();
+      var box = document.createElement('div'); box.id = 'dpbFs2WarnBox';
+      box.style.cssText = 'position:fixed;left:10px;right:10px;top:calc(env(safe-area-inset-top,0px) + 34px);z-index:2147483001;background:#101c2b;color:#fff;border:1px solid #ffb74d;border-radius:14px;padding:12px;font:13px/1.7 sans-serif;direction:rtl;max-height:70vh;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.5)';
+      var pre = document.createElement('div'); pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text';
+      var row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;margin-top:10px';
+      function btn(txt, bg, fn) { var b = document.createElement('button'); b.textContent = txt; b.style.cssText = 'flex:1;padding:9px;border:0;border-radius:10px;color:#fff;font-size:13px;background:' + bg; b.onclick = fn; return b; }
+      function paint() { pre.textContent = warnDetail(); }
+      paint();
+      var tm = setInterval(function () { if (!document.getElementById('dpbFs2WarnBox')) { clearInterval(tm); return; } paint(); }, 2000);
+      var tb = btn('اختبر الاتصال الآن', '#1565c0', function () { tb.textContent = 'بيختبر… (لحد 20 ثانية)'; try { var W0 = window.__dpbFs2W || {}; probeBusy = false; runProbe().then(function () { tb.textContent = 'اختبر الاتصال الآن'; paint(); }); } catch (e) { tb.textContent = 'اختبر الاتصال الآن'; } try { OBF.run(); } catch (e) {} });
+      var cb = btn('✕ قفل', '#b71c1c', function () { clearInterval(tm); box.remove(); });
+      row.appendChild(tb); row.appendChild(cb); box.appendChild(pre); box.appendChild(row); document.body.appendChild(box);
     } catch (e) {}
   }
   window.__dpbFs2Warn = warnNow; setInterval(warnNow, 5000);
