@@ -11450,8 +11450,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     var MAXMS=5*60*1000, WAITMS=20*1000, tags={}, running=false, startedAt=0, latch=false, plug=null, zero=0, pendSince=0;
     function P(){try{var C=window.Capacitor;if(!C||!C.isNativePlatform||!C.isNativePlatform())return null;if(plug)return plug;plug=(C.Plugins&&C.Plugins.DpbKeepAlive)||(C.registerPlugin&&C.registerPlugin("DpbKeepAlive"))||null;return plug;}catch(_){return null}}
     function any(){for(var k in tags)if(tags[k])return true;return false}
+    /* v184: only map-cell edits waiting for the server count (not history/clock/token/message writes) */
+    function cellN(){try{return typeof window.__dpbFs2CellPending==="function"?(Number(window.__dpbFs2CellPending())||0):0}catch(_){return 0}}
     /* v175: the notification says WHAT is being sent (edits to the server, and/or the Drive backup) */
-    function what(){var W=window.__dpbFs2W||{},a=[];if(tags.pend)a.push("إرسال "+(Number(W.pending)||0)+" تعديل للسيرفر");if(tags.drive)a.push("رفع النسخة الاحتياطية على Drive");return "جاري "+(a.join(" + ")||"رفع البيانات")+"… ممكن تقفل التطبيق"}
+    function what(){var W=window.__dpbFs2W||{},a=[];if(tags.pend)a.push("إرسال "+(cellN())+" تعديل للسيرفر");if(tags.drive)a.push("رفع النسخة الاحتياطية على Drive");return "جاري "+(a.join(" + ")||"رفع البيانات")+"… ممكن تقفل التطبيق"}
     function sync(){
       var p=P();if(!p)return;
       try{
@@ -11467,7 +11469,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     /* edits waiting for the server: counted only while the phone has internet; never longer than MAXMS in a row (then wait until the count reaches 0 again) */
     setInterval(function(){
       try{
-        var W=window.__dpbFs2W||{},n=Number(W.pending)||0,online=(navigator.onLine!==false);
+        var W=window.__dpbFs2W||{},n=cellN(),online=(navigator.onLine!==false);
         if(n===0){zero++;latch=false;pendSince=0;}else{zero=0;if(!pendSince)pendSince=Date.now();}
         /* v175: edits are normally acknowledged within seconds; the service (and its notification) only starts for edits that have been waiting 20 s or more, so opening the app no longer flashes it */
         if(n>0&&online&&!latch&&Date.now()-pendSince>=WAITMS){window.DPB_KA.on("pend");}

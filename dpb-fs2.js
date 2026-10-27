@@ -100,13 +100,14 @@
       makeCommitter._wired = true;
       try { var kickAll = function () { var k = (makeCommitter._kicks || []).slice(); k.forEach(function (f) { try { f(); } catch (e) {} }); }; if (typeof window !== 'undefined' && window.addEventListener) { window.addEventListener('online', kickAll); } if (typeof document !== 'undefined' && document.addEventListener) { document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') kickAll(); }); } } catch (e) {}
     }
-    return function commitOrQueue(cp, rescue, pidArg) {
+    return function commitOrQueue(cp, rescue, pidArg, label, isRows) {
       return new Promise(function (res, rej) {
-        var done = false, t = null, rt = null, t0 = now(), doneRes, doneRej, W = getW(), counted = true, settled = false, tries = 0, P = String(pidArg || '');
+        var done = false, t = null, rt = null, t0 = now(), doneRes, doneRej, W = getW(), counted = true, settled = false, tries = 0, P = String(pidArg || ''), lid = (W.pls = (W.pls || 0) + 1), rowsW = !!isRows;   // v184: rowsW = this write carries map cells (rows/*)
+        W.pl = W.pl || {}; W.pl[lid] = { label: String(label || ''), t0: t0 };   // v183: what is waiting (shown when the badge is tapped)
         var dp = new Promise(function (a, b) { doneRes = a; doneRej = b; }); dp.catch(function () {});
         function fin(f, v) { if (done) return; done = true; clearT(t); f(v); }
-        function release() { if (!counted) return; counted = false; W.pending = Math.max(0, W.pending - 1); if (W.pend) { W.pend[P] = Math.max(0, (W.pend[P] || 1) - 1); if (!W.pend[P]) { delete W.pend[P]; if (W.pendSince) delete W.pendSince[P]; } } if (!W.pending) { W.since = 0; W.refused = ''; W.refusedPid = ''; } }
-        if (!W.pending) W.since = now(); W.pending++; W.pend = W.pend || {}; W.pendSince = W.pendSince || {}; W.pend[P] = (W.pend[P] || 0) + 1; if (W.pend[P] === 1) W.pendSince[P] = now();
+        function release() { try { if (W.pl) delete W.pl[lid]; } catch (e) {} if (!counted) return; counted = false; W.pending = Math.max(0, W.pending - 1); if (rowsW) W.pendRows = Math.max(0, (W.pendRows || 0) - 1); W.pendRows = Math.min(W.pendRows || 0, W.pending); if (W.pend) { W.pend[P] = Math.max(0, (W.pend[P] || 1) - 1); if (!W.pend[P]) { delete W.pend[P]; if (W.pendSince) delete W.pendSince[P]; } } if (!W.pending) { W.since = 0; W.refused = ''; W.refusedPid = ''; } }
+        if (!W.pending) W.since = now(); W.pending++; if (rowsW) W.pendRows = (W.pendRows || 0) + 1; W.pend = W.pend || {}; W.pendSince = W.pendSince || {}; W.pend[P] = (W.pend[P] || 0) + 1; if (W.pend[P] === 1) W.pendSince[P] = now();
         cp.then(function () {
           settled = true; clearT(rt); release();
           if (done) onEvent('ack-late', (now() - t0) + 'ms');
@@ -300,7 +301,7 @@
   function forgetProject(id) {
     var p = String(id || '').replace(/[^A-Za-z0-9_\-]/g, '_'), n = 0; if (!p) return 0;
     Object.keys(ob).forEach(function (k) { if (obPid(ob[k]) === p) { try { obSettle(k); } catch (e) {} delete ob[k]; n++; } });
-    obSave(); var W = window.__dpbFs2W; if (W && W.pend) { W.pending = Math.max(0, (W.pending || 0) - (W.pend[p] || 0)); delete W.pend[p]; if (W.pendSince) delete W.pendSince[p]; }
+    obSave(); var W = window.__dpbFs2W; if (W && W.pend) { W.pending = Math.max(0, (W.pending || 0) - (W.pend[p] || 0)); W.pendRows = Math.min(W.pendRows || 0, W.pending); delete W.pend[p]; if (W.pendSince) delete W.pendSince[p]; }
     try { dlog('forget-project', p + ' dropped ' + n); } catch (e) {} return n;
   }
   window.__dpbFs2Forget = forgetProject;
@@ -561,7 +562,7 @@
                 });
                 var cpid = ''; for (var ci = 0; ci < chunk.length && !cpid; ci++) { var co = chunk[ci], cb = (co.base && co.base.projectId) || (co.data && co.data.projectId) || ((/\/rows\/([A-Za-z0-9_\-]+?)__/.exec(String(co.path || '')) || [])[1]); if (cb) cpid = String(cb).replace(/[^A-Za-z0-9_\-]/g, '_'); }
                 if (!cpid) cpid = pidS();   // project-less batches (pointer docs) belong to the project that is open now
-                return commitOrQueue(b.commit(), function () { return restCommit(chunk); }, cpid).then(function (w) { ws.push(w); });
+                return commitOrQueue(b.commit(), function () { return restCommit(chunk); }, cpid, opsLabel(chunk), chunk.some(function (o) { return /\/rows\/(?!meta-)[^\/]+$/.test(String((o && o.path) || '')); })).then(function (w) { ws.push(w); });
               });
             });
             // {acked:true} = the server confirmed every batch; {acked:false, done} = at least one batch is only saved on the device so far
@@ -704,7 +705,10 @@
     L.push('');
     L.push('كتابات مستنية تأكيد السيرفر: ' + curPend() + ' (كل المشاريع: ' + (W.pending || 0) + ')');
     L.push('تعديلات خلايا في طابور الجهاز: ' + obN());
+    L.push('كتابات خلايا الخرائط المستنية: ' + (W.pendRows || 0));
     var since = curPendSince(); if (since) L.push('مستنية من: ' + Math.round((Date.now() - since) / 1000) + ' ثانية');
+    var pl = W.pl || {}, ks = Object.keys(pl);
+    if (ks.length) { L.push(''); L.push('اللي مستني بالاسم:'); ks.slice(0, 8).forEach(function (k) { L.push('• ' + (pl[k].label || 'عملية') + ' — من ' + Math.round((Date.now() - pl[k].t0) / 1000) + ' ث'); }); }
     L.push('النت على الجهاز: ' + (navigator.onLine === false ? 'مقطوع' : 'شغال'));
     L.push('نوع القناة: ' + ls('dpb_fs2_transport', 'lp'));
     if (p) L.push('آخر اختبار (من ' + Math.round((Date.now() - (W.probeAt || 0)) / 1000) + ' ث): قراءة=' + p.read + ' | كتابة HTTPS=' + p.rest + ' | كتابة عادية=' + p.write);
@@ -770,6 +774,8 @@
     window.addEventListener('offline', function () { dlog('offline', ''); });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { var W = window.__dpbFs2W || {}; try { window.__dpbFs2Tok && window.__dpbFs2Tok(true).catch(function () {}); } catch (e2) {} if (curPend() && curPendSince() && Date.now() - curPendSince() > 10000) bounceNow('app back on screen with ' + curPend() + ' pending'); }, 1500); });
   } catch (e) {}
+  // v184: what the keep-alive notification counts = map-cell edits still waiting for the server (the device queue + cell batches in flight). Nothing else (history, clock, tokens, messages, accounts).
+  window.__dpbFs2CellPending = function () { var W = window.__dpbFs2W || {}; return (Number(W.pendRows) || 0) + obN(); };
   window.__dpbFs2Net = function () { var W = window.__dpbFs2W || {}; return { pending: W.pending || 0, pendingCur: curPend(), pendByProject: JSON.parse(JSON.stringify(W.pend || {})), asserts: W.asserts || 0, sinceMs: W.since ? Date.now() - W.since : 0, probe: W.probe || null, probeAgeMs: W.probeAt ? Date.now() - W.probeAt : -1, bounces: bounces, rescued: W.rescued || 0, rescueErr: (W.rescueErr && Date.now() - (W.rescueErrAt || 0) < 600000) ? W.rescueErr : '', unacked: Object.keys(UN).length, connected: !!curStore(), err: String(lastErr || ''), online: navigator.onLine !== false, transport: ls('dpb_fs2_transport', 'lp') }; };
   window.__dpbFs2Bounce = function () { lastBounce = 0; return bounceNow('manual'); };
   // v124: true only when every write this device made has been ACKNOWLEDGED by the server (pending counter back to 0); false after ms if some are still waiting
@@ -833,6 +839,28 @@
   var U_KEY = 'users';
   var P_KEY = 'projects';   // the list of projects (id + name + small facts): lets any signed-in device find the projects without typing an ID
   // pure helper (also used by the Node test): cut a list of write ops into batches that stay far below Firestore's limit
+  // v183: a readable name for a batch of writes (what the app was saving), shown in the tap-box instead of just a number
+  function opsLabel(chunk) {
+    var names = [], seen = {};
+    (chunk || []).forEach(function (o) {
+      var pth = String((o && o.path) || ''), m = /\/kv\/([^\/]+)$/.exec(pth), k = m ? m[1].replace(/-p\d+$/, '') : '', n;
+      if (m) {
+        if (k === 'history') n = 'سجل الأحداث (دخول/حفظ…)';
+        else if (k === 'users') n = 'حسابات المستخدمين';
+        else if (k === 'projects') n = 'قايمة المشاريع';
+        else if (k === 'basecells') n = 'الحدود والألوان';
+        else if (k === 'buildresult' || k === 'buildmeta') n = 'نشر الخرايط';
+        else if (/^clock-/.test(k)) n = 'ساعة السيرفر';
+        else if (/^(msg[as]|fcm)_/.test(k)) n = 'رسائل/إشعارات';
+        else if (/^restidx$/.test(k) || /^rest/.test(k)) n = 'سجلات الإنتاج';
+        else n = 'kv/' + k;
+      } else if (/\/rows\/([^\/]+)$/.test(pth)) n = 'صف خريطة: ' + /\/rows\/([^\/]+)$/.exec(pth)[1];
+      else n = pth.split('/').slice(-2).join('/');
+      if (!seen[n]) { seen[n] = 1; names.push(n); }
+    });
+    return names.slice(0, 3).join(' + ') + (names.length > 3 ? ' +' + (names.length - 3) : '') + ' (' + (chunk ? chunk.length : 0) + ' مستند)';
+  }
+  window.__dpbOpsLabel = opsLabel;
   function cutOps(ops) {
     var chunks = [], cur = [], bytes = 0, cells = 0;
     ops.forEach(function (o) {
@@ -1136,7 +1164,7 @@
   // so a history entry arrives as action = "login" / "production_save" / ... with user + details and no username/password: recognise it by shape
   function isHistory(b) { return b.action === 'logHistory' || (b.details !== undefined && b.user !== undefined && b.username === undefined && b.password === undefined && b.records === undefined); }
   function sheetlessAction(body) {
-    if (isHistory(body)) { histAdd({ user: body.user || '', event: body.action === 'logHistory' ? '' : String(body.action || ''), details: body.details || '', time: body.time || nowIsoSrv() }); return Promise.resolve(jsonRes({ ok: true })); }
+    if (isHistory(body)) { if (/^(login|logout|open|app_open|session)/i.test(body.action === 'logHistory' ? String(body.event || '') : String(body.action || ''))) return Promise.resolve(jsonRes({ ok: true, skipped: 'login/open not logged' })); histAdd({ user: body.user || '', event: body.action === 'logHistory' ? '' : String(body.action || ''), details: body.details || '', time: body.time || nowIsoSrv() }); return Promise.resolve(jsonRes({ ok: true })); }
     switch (body.action) {
       case 'logProductivity': (body.entries || []).forEach(function (x) { histAdd({ action: 'productivity', entry: x, time: nowIsoSrv() }); }); return Promise.resolve(jsonRes({ ok: true }));
       case 'saveUnitMap': return Promise.resolve(jsonRes({ ok: true, skipped: 'not needed without the Sheet' }));
