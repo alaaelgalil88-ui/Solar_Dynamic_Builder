@@ -1468,26 +1468,46 @@
   // reads Firebase; if nothing changed since the current copy, nothing rotates (so pressing it twice never wipes the real "previous").
   // Unchanged -> { changed:false, current:null } (callers load the copy themselves only if they need it).
   function bkStep(x) { lsSet('dpb_fs2_bk_step', x + '@' + new Date().toLocaleTimeString('ar-EG')); }
+  // v181: the AUTOMATIC backup watches ONLY the vital data = the map cells (rows: every execution / delete / colour made from a map or a Production Entry card).
+  // Everything in kv (chat messages, ticks, reminders, supervisor accounts, names, FCM tokens, the per-device clock doc, build/meta stamps...) never starts an automatic backup:
+  // opening the app rewrites some of those documents (clock-*, fcm_* time, chat seenAt), which used to look like "something changed" and made a backup + Drive upload on every open.
+  // The Backup Now button still compares EVERYTHING (as before), and any copy that is made still contains everything.
+  function bkVfp(cur) { var fp = {}; Object.keys((cur && cur.rows) || {}).forEach(function (id) { if (id.indexOf('meta-') === 0) return; fp[id] = hashStr(stable(cur.rows[id])); }); return fp; }
   function bkBackupNow() {
+    var autoMode = !!bkAutoRun;
     return bkRead().then(function (cur) {
       bkStep('compare');
-      var obj = bkMake(cur), fp = bkFp(cur); cur = null;
+      var obj = bkMake(cur), vfp = bkVfp(cur), fp = autoMode ? null : bkFp(cur); cur = null;
       function rotate(old) {
         bkStep('save-in-app');
-        return Promise.resolve(old ? bkPut('previous', old).then(function () { return bkPut('previousmeta', bkMeta(old)); }) : null)
+        return Promise.resolve(autoMode ? bkFp(obj) : fp).then(function (full) { fp = full; return old ? bkPut('previous', old).then(function () { return bkPut('previousmeta', bkMeta(old)); }) : null; })
           .then(function () { return bkPut('current', obj); })
           .then(function () { return bkPut('currentmeta', bkMeta(obj)); })
           .then(function () { return bkPut('currentfp', fp); })
+          .then(function () { return bkPut('currentvfp', vfp); })
           .then(function () { return { changed: true, current: obj, previous: old || null }; });
+      }
+      if (autoMode) {
+        return bkGet('currentvfp').then(function (ov) {
+          if (ov) {
+            if (stable(ov) === stable(vfp)) { bkStep('done'); return { changed: false, current: null, previous: null }; }
+            return bkGet('current').then(rotate);
+          }
+          // first automatic run after this update: derive the vital fingerprint from the copy already stored, once
+          return bkGet('current').then(function (old) {
+            if (old && stable(bkVfp(old)) === stable(vfp)) return bkPut('currentvfp', vfp).then(function () { bkStep('done'); return { changed: false, current: null, previous: null }; });
+            return rotate(old);
+          });
+        });
       }
       return bkGet('currentfp').then(function (ofp) {
         if (ofp) {
-          if (stable(ofp) === stable(fp)) { bkStep('done'); return { changed: false, current: null, previous: null }; }
+          if (stable(ofp) === stable(fp)) { bkStep('done'); return bkPut('currentvfp', vfp).then(function () { return { changed: false, current: null, previous: null }; }); }
           return bkGet('current').then(rotate);
         }
         // first run after the update: the old copy has no fingerprint yet, compare the old way once
         return bkGet('current').then(function (old) {
-          if (old && bkSame(old, obj)) return bkPut('currentfp', fp).then(function () { return bkPut('currentmeta', bkMeta(old)); }).then(function () { bkStep('done'); return { changed: false, current: null, previous: null }; });
+          if (old && bkSame(old, obj)) return bkPut('currentfp', fp).then(function () { return bkPut('currentvfp', vfp); }).then(function () { return bkPut('currentmeta', bkMeta(old)); }).then(function () { bkStep('done'); return { changed: false, current: null, previous: null }; });
           return rotate(old);
         });
       });
