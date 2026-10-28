@@ -184,6 +184,7 @@
         if (!W.pending) W.since = now(); W.pending++; if (rowsW) W.pendRows = (W.pendRows || 0) + 1; W.pend = W.pend || {}; W.pendSince = W.pendSince || {}; W.pend[P] = (W.pend[P] || 0) + 1; if (W.pend[P] === 1) W.pendSince[P] = now();
         cp.then(function () {
           settled = true; clearT(rt); release();
+          if (!done && !(rescue && rescue.__fast)) W.wsGoodAt = now();   // v188: the normal channel answered inside 4 s = it is healthy (an HTTPS-first answer says nothing about it)
           if (done) onEvent('ack-late', (now() - t0) + 'ms');
           fin(res, { acked: true }); doneRes();
         }, function (e) {
@@ -203,7 +204,7 @@
             var rp; try { rp = Promise.resolve(rescue()); } catch (e) { rp = Promise.reject(e); }
             rp.then(function () {
               busy = false;
-              if (settled) return; settled = true; release(); W.rescueOk = now(); W.rescued = (W.rescued || 0) + 1;
+              if (settled) return; settled = true; release(); W.rescueOk = now(); W.rescued = (W.rescued || 0) + 1; if (!rescue.__fast) W.wsBadAt = now();   // v188: the normal channel stayed silent, only HTTPS got through
               onEvent('rescued', (now() - t0) + 'ms'); fin(res, { acked: true }); doneRes();
             }, function (e) {
               busy = false;
@@ -434,14 +435,15 @@
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
       // v126: one explicit HTTPS request (Firestore REST) with the signed-in user's token: used when the SDK write channel is silent, and by the connection test
       var DOCS = 'projects/' + conf.projectId + '/databases/(default)/documents';
-      function restSend(writes) {
+      function restSend(writes, noCount) {
         if (!auth.currentUser) return Promise.reject(Object.assign(new Error('no signed-in user'), { code: 'no-auth' }));
         return auth.currentUser.getIdToken().then(function (tok) {
-          var ctl = (typeof AbortController === 'function') ? new AbortController() : null, tm = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, 20000);
-          var rbody = JSON.stringify({ writes: writes }); useAdd('retry', 'up', rbody.length);
+          var rbody = JSON.stringify({ writes: writes }); if (!noCount) useAdd('retry', 'up', rbody.length);
+          var tmo = Math.max(20000, Math.min(120000, 20000 + Math.round(rbody.length / 20)));   // v188: ~20 KB/s is enough; a 0.8 MB document gets ~60 s instead of dying at 20 s and being sent again from zero
+          var ctl = (typeof AbortController === 'function') ? new AbortController() : null, tm = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, tmo);
           return prevFetch('https://firestore.googleapis.com/v1/' + DOCS + ':commit', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: rbody, signal: ctl ? ctl.signal : undefined })
             .then(function (r) { clearTimeout(tm); return r.text().then(function (t) { if (r.ok) return true; throw restError(r.status, t); }); },
-              function (e) { clearTimeout(tm); throw Object.assign(new Error(String(e && e.name === 'AbortError' ? 'rest-timeout (20s)' : (e && e.message) || e)), { code: e && e.name === 'AbortError' ? 'rest-timeout' : 'rest-network' }); });
+              function (e) { clearTimeout(tm); throw Object.assign(new Error(String(e && e.name === 'AbortError' ? 'rest-timeout (' + Math.round(tmo / 1000) + 's)' : (e && e.message) || e)), { code: e && e.name === 'AbortError' ? 'rest-timeout' : 'rest-network' }); });
         });
       }
       // v179: sign in again (fresh token, or a new anonymous/e-mail sign-in if the session was lost)
@@ -455,6 +457,18 @@
       }
       var lastReauth = 0;
       var restCommit = makeRestCommit({ send: function (ch) { return restSend(restWrites(DOCS, ch)); }, reauth: reauth, quar: function (op, e) { quar(op && op.path, e); } });
+      // v188: when the normal channel is known to be silent (a probe or an earlier write proved HTTPS works and the normal channel does not), a BIG document
+      // (map build result, Excel files, snapshots) goes straight through HTTPS: no 12 s wait, and it is NOT also handed to the normal channel, so the same
+      // megabytes are not sent twice. Small writes (cells, messages, alarms, notifications) never take this path.
+      var restCommitFast = makeRestCommit({ send: function (ch) { return restSend(restWrites(DOCS, ch), true); }, reauth: reauth, quar: function (op, e) { quar(op && op.path, e); } });
+      function wsBad() { var W = window.__dpbFs2W || {}, n = Date.now(); return !!(W.wsBadAt && n - W.wsBadAt < 1200000 && W.wsBadAt > (W.wsGoodAt || 0)); }
+      function fastEligible(chunk) {
+        if (navigator.onLine === false || !wsBad()) return false;
+        var W = window.__dpbFs2W || {}; if (W.restFailAt && Date.now() - W.restFailAt < 60000) return false;   // HTTPS just failed: do not insist
+        var bytes = 0;
+        for (var i = 0; i < chunk.length; i++) { var o = chunk[i]; if (!o || o.t !== 's' || /\/kv\/(msg[as]|fcm)_/.test(String(o.path || ''))) return false; bytes += jlen(o.data); }
+        return bytes >= 100000;
+      }
       function restProbe() {
         var dev = ls('dpb_fs2_dev', '') || 'dev';
         return restSend([{ update: { name: DOCS + '/dpb2/' + nsName() + '/kv/clock-' + dev, fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: 't', setToServerValue: 'REQUEST_TIME' }] }]).then(function () { return 'ok'; }, function (e) { return String(e && (e.code || e.message) || e); });
@@ -630,16 +644,30 @@
             var chunks = cutOps(ops), ws = [];
             chunks.forEach(function (chunk) {
               p = p.then(function () {
-                var b = fs.writeBatch(db);
-                chunk.forEach(function (o) {
-                  useAdd(useCatPath(o.path), 'up', o.t === 's' ? jlen(o.data) : (o.t === 'f' ? jlen(o.cells) + jlen(o.base) : 60));
-                  if (o.t === 's') b.set(dref(o.path), clean(o.data));
-                  else if (o.t === 'f') { var cells = clean(o.cells); b.set(dref(o.path), Object.assign({}, o.base, { cells: cells }), { mergeFields: Object.keys(o.base).concat(Object.keys(cells).map(function (k) { return 'cells.' + k; })) }); }
-                  else b.delete(dref(o.path));
-                });
+                chunk.forEach(function (o) { useAdd(useCatPath(o.path), 'up', o.t === 's' ? jlen(o.data) : (o.t === 'f' ? jlen(o.cells) + jlen(o.base) : 60)); });
+                var mk = function () {   // v188: the Firestore batch is built only when the normal channel is really used
+                  var b = fs.writeBatch(db);
+                  chunk.forEach(function (o) {
+                    if (o.t === 's') b.set(dref(o.path), clean(o.data));
+                    else if (o.t === 'f') { var cells = clean(o.cells); b.set(dref(o.path), Object.assign({}, o.base, { cells: cells }), { mergeFields: Object.keys(o.base).concat(Object.keys(cells).map(function (k) { return 'cells.' + k; })) }); }
+                    else b.delete(dref(o.path));
+                  });
+                  return b.commit();
+                };
                 var cpid = ''; for (var ci = 0; ci < chunk.length && !cpid; ci++) { var co = chunk[ci], cb = (co.base && co.base.projectId) || (co.data && co.data.projectId) || ((/\/rows\/([A-Za-z0-9_\-]+?)__/.exec(String(co.path || '')) || [])[1]); if (cb) cpid = String(cb).replace(/[^A-Za-z0-9_\-]/g, '_'); }
                 if (!cpid) cpid = pidS();   // project-less batches (pointer docs) belong to the project that is open now
-                return commitOrQueue(b.commit(), function () { return restCommit(chunk); }, cpid, opsLabel(chunk), chunk.some(function (o) { return /\/rows\/(?!meta-)[^\/]+$/.test(String((o && o.path) || '')); })).then(function (w) { ws.push(w); });
+                var fast = fastEligible(chunk), fastP = null, fastLive = false, cp;
+                if (fast) {
+                  fastLive = true; fastP = restCommitFast(chunk);
+                  var fastEnd = function () { fastLive = false; }; fastP.then(fastEnd, fastEnd);
+                  var W2 = window.__dpbFs2W = window.__dpbFs2W || {}; W2.fastN = (W2.fastN || 0) + 1;
+                  try { dlog('fast-https', opsLabel(chunk)); } catch (e) {}
+                  // HTTPS worked -> done, the normal channel is never used. HTTPS failed (not a definite refusal) -> hand the write to the normal channel so it is
+                  // kept on the device, exactly as before, and do not try the fast path again for a minute.
+                  cp = fastP.then(function () { return true; }, function (e) { W2.restFailAt = Date.now(); if (e && e.definite) throw e; return mk(); });
+                } else cp = mk();
+                var resc = function () { return (fastLive && fastP) ? fastP : restCommit(chunk); }; resc.__fast = !!fast;
+                return commitOrQueue(cp, resc, cpid, opsLabel(chunk), chunk.some(function (o) { return /\/rows\/(?!meta-)[^\/]+$/.test(String((o && o.path) || '')); })).then(function (w) { ws.push(w); });
               });
             });
             // {acked:true} = the server confirmed every batch; {acked:false, done} = at least one batch is only saved on the device so far
@@ -721,7 +749,7 @@
   function runProbe() {
     if (probeBusy) return Promise.resolve(); probeBusy = true; probeAt = Date.now();
     var W = window.__dpbFs2W = window.__dpbFs2W || {};
-    return getAdapter().then(function (a) { return a.probe ? a.probe() : null; }).then(function (r) { W.probe = r; W.probeAt = Date.now(); }, function (e) { W.probe = { read: String(e && (e.code || e.message) || e), write: '-' }; W.probeAt = Date.now(); }).then(function () { probeBusy = false; try { dlog('probe', 'read=' + (W.probe && W.probe.read) + ' write=' + (W.probe && W.probe.write)); } catch (e) {} warnNow(); });
+    return getAdapter().then(function (a) { return a.probe ? a.probe() : null; }).then(function (r) { W.probe = r; W.probeAt = Date.now(); if (r && r.write === 'ok') W.wsGoodAt = Date.now(); else if (r && r.rest === 'ok' && navigator.onLine !== false) W.wsBadAt = Date.now(); }, function (e) { W.probe = { read: String(e && (e.code || e.message) || e), write: '-' }; W.probeAt = Date.now(); }).then(function () { probeBusy = false; try { dlog('probe', 'read=' + (W.probe && W.probe.read) + ' write=' + (W.probe && W.probe.write)); } catch (e) {} warnNow(); });
   }
   function diag() {
     var W = window.__dpbFs2W || {}, p = W.probe; if (!p || Date.now() - (W.probeAt || 0) > 90 * 1000) return '';
@@ -793,6 +821,7 @@
     if (W.rescueErr) L.push('آخر خطأ في الإرسال البديل: ' + W.rescueErr + (W.rescueErrAt ? ' (من ' + Math.round((Date.now() - W.rescueErrAt) / 1000) + ' ث)' : ''));
     if (W.refused) L.push('آخر رفض من السيرفر: ' + W.refused);
     if (W.rescued) L.push('اتبعت بالطريق البديل بنجاح: ' + W.rescued + ' مرة');
+    if (W.fastN) L.push('كتابات كبيرة اتبعتت HTTPS مباشرة: ' + W.fastN + ' مرة');
     return L.join('\n');
   }
   function showWarnBox() {
@@ -2011,6 +2040,14 @@
       '#dpbFs2Card .fs2Num.fs2Time{width:140px}' +
       '#dpbFs2Card .fs2Num:disabled,#dpbFs2Card .fs2OptS select:disabled{opacity:.5}' +
       '#dpbFs2Card .fs2Tiny{font-size:10.5px;opacity:.75;margin-top:4px}' +
+      '#dpbFs2Card .fs2Sched .fs2Row{flex-direction:column;align-items:stretch;justify-content:flex-start;gap:10px;padding:12px}' +
+      '#dpbFs2Card .fs2RowHead{display:flex;align-items:center;justify-content:space-between;gap:12px}' +
+      '#dpbFs2Card .fs2RowBody{display:flex;align-items:center;gap:10px;margin:0;flex-wrap:nowrap}' +
+      '#dpbFs2Card .fs2Lab{flex:0 0 auto;font-size:12.5px;font-weight:700}' +
+      '#dpbFs2Card .fs2RowBody .fs2Num{margin:0;height:40px;min-height:40px;width:92px;flex:0 0 92px}' +
+      '#dpbFs2Card .fs2RowBody .fs2Num.fs2Time{width:auto;flex:1 1 0;min-width:0;max-width:none;padding:6px 6px;font-size:14px}' +
+      '#dpbFs2Card .fs2RowBody select{flex:1 1 96px;width:auto!important;min-width:0;margin:0!important;height:40px;padding:0 10px!important;font-size:14px!important;font-weight:700}' +
+      '#dpbFs2Card .fs2Row .fs2Tiny{margin:-2px 2px 0;font-size:11px}' +
       '#dpbFs2Card .fs2SchNext{font-size:11.5px;line-height:1.85;color:#9db2c7;padding:0 4px 8px;white-space:pre-line;background:transparent!important;border:0!important;margin:0!important}' +
       '#dpbBackupScreenHost #dpbFs2Card .fs2Grp{background:#f7f9fc!important;border:1px solid #ccd5df!important}' +
       '#dpbBackupScreenHost #dpbFs2Card .fs2GrpT{color:#17212b!important}' +
@@ -2111,10 +2148,11 @@
     c.setAttribute('data-v110', '1');   // v186: this card is built here in its final layout; the old tidy-up script in index.html must not rebuild it
     var swH = function (id) { return '<label class="fs2Sw"><input type="checkbox" id="' + id + '"><span class="fs2SwTrack"></span></label>'; };
     var optH = function (title, sub, id) { return '<div class="fs2Opt"><div class="fs2OptTxt"><div class="fs2OptT">' + title + '</div><div class="fs2OptS">' + sub + '</div></div>' + swH(id) + '</div>'; };
+    var rowH = function (title, body, id, extra) { return '<div class="fs2Opt fs2Row"><div class="fs2RowHead"><div class="fs2OptT">' + title + '</div>' + swH(id) + '</div><div class="fs2OptS fs2RowBody">' + body + '</div>' + (extra || '') + '</div>'; };   // v187: title + switch on one line, the controls on their own line under it
     var schedH = function (p) {
       return '<div class="fs2Sched" id="dpbFs2' + p + 'Sched">' +
-        optH('⏱️ كل فترة', 'كل <input type="number" inputmode="numeric" min="1" max="9999" id="dpbFs2' + p + 'N" class="fs2Num"><select id="dpbFs2' + p + 'U"><option value="m">دقايق</option><option value="h">ساعات</option><option value="d">أيام</option></select><div class="fs2Tiny">أقل مدة 5 دقايق</div>', 'dpbFs2' + p + 'Iv') +
-        optH('⏰ وقت يومي ثابت', 'كل يوم الساعة <input type="time" id="dpbFs2' + p + 'T" class="fs2Num fs2Time">', 'dpbFs2' + p + 'At') +
+        rowH('⏱️ كل فترة', '<span class="fs2Lab">كل</span><input type="number" inputmode="numeric" min="1" max="9999" id="dpbFs2' + p + 'N" class="fs2Num"><select id="dpbFs2' + p + 'U"><option value="m">دقايق</option><option value="h">ساعات</option><option value="d">أيام</option></select>', 'dpbFs2' + p + 'Iv', '<div class="fs2Tiny">أقل مدة 5 دقايق</div>') +
+        rowH('⏰ وقت يومي ثابت', '<span class="fs2Lab">الساعة</span><input type="time" id="dpbFs2' + p + 'T" class="fs2Num fs2Time">', 'dpbFs2' + p + 'At') +
         '<div class="hint fs2SchNext" id="dpbFs2' + p + 'Next"></div></div>';
     };
     var fldH = function (label, inner) { return '<div class="fs2Fld"><div class="fs2Lbl">' + label + '</div>' + inner + '</div>'; };
