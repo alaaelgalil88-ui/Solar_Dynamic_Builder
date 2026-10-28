@@ -21896,3 +21896,93 @@ body.print-activity #dpbBottomBar{display:none!important}
   window.dpbCloseConflicts=function(){clearInterval(timer);var o=document.getElementById('dpbCfOv');if(o)o.remove();};
 })();
 </script>
+
+<style id="dpbCfMapCss">
+#excelMapShell td.me-u[data-cf]{position:relative}
+#excelMapShell td.me-u[data-cf]::after{content:attr(data-cf);position:absolute;top:0;left:0;font:900 8px/1 system-ui,sans-serif;color:#fff;background:#c62828;padding:1px 2px;border-radius:0 0 3px 0;pointer-events:none;z-index:3;white-space:nowrap;letter-spacing:0}
+#mapLegend .cfKey{display:block;width:100%;margin-top:6px;font-size:12px;color:#dceafa;line-height:2}
+#mapLegend .cfKey b{color:#ff9a9a;margin-inline-end:6px}
+#mapLegend .cfKey .cfN{display:inline-block;margin-inline-end:10px;font-weight:700}
+#mapLegend .cfKey .cfN i{font-style:normal;background:#c62828;color:#fff;border-radius:3px;padding:0 4px;margin-inline-end:4px;font-weight:900}
+#mapLegend .cfKey .cfTgl{background:#10283d;border:1px solid #27506f;color:#dceafa;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700}
+#mapDetail .cfDet{margin-top:8px;padding:8px 10px;border:1px solid #7a2a2a;background:rgba(122,31,31,.18);border-radius:10px;font-size:12px;line-height:1.8;direction:rtl}
+#mapDetail .cfDet b{color:#ff9a9a}
+#mapDetail .cfDet .ok{color:#59d98e;font-weight:800}
+#mapDetail .cfDet .no{color:#ff7a7a;font-weight:800}
+#mapDetail .cfDet .sub{color:#9eb2c7;font-size:11px}
+@media print{#excelMapShell td.me-u[data-cf]::after{display:none!important}#mapLegend .cfKey{display:none!important}}
+</style>
+<script id="dpbCfMapJs">
+/* v194: أرقام التناقض على الخريطة. الخلية اللي فيها تناقض بس بتاخد رقم صغير في ركنها = رقم العملية الناقصة (المفتاح تحت الخريطة).
+   المشرف يشوف أرقام اللي الناقص فيها عمليته بس، والبيلدر والأدمن يشوفوا الكل. بتتحدّث مع كل إدخال (حتى أوفلاين). الضغط على الخلية بيضيف تفاصيل التناقض لكارت التفاصيل. */
+(function(){
+  var KEY='dpb_cf_map',on=true,seq=0,sig='',node=null,cache={byCell:null,names:null},obs=null,obsFor=null,tmr=0;
+  try{if(localStorage.getItem(KEY)==='off')on=false;}catch(e){}
+  function esc(x){return String(x==null?'':x).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function fmt(t){if(!t)return '';var d=new Date(t);if(isNaN(d.getTime()))return '';var p=function(n){return n<10?'0'+n:''+n;};return p(d.getDate())+'/'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes());}
+  function M(){return window.DPBMap||null;}
+  function shell(){return document.getElementById('excelMapShell');}
+  function isSup(){var s=shell();return !!(s&&s.closest&&s.closest('#dpbSupMapCanvas'));}
+  function mine(){var vp=[];try{vp=(window.__dpbSupVisibleProcs&&window.__dpbSupVisibleProcs())||[];}catch(e){}return vp.map(function(p){return p.name;});}
+  function eligible(){var m=M(),st=m&&m.state,l=st&&st.last;if(!l||!l.spec||!l.model||!l.model.ok)return null;if(l.spec.mode!=='dynamic'||!l.spec.op||l.spec.op.kind==='notstarted')return null;return l;}
+  function clear(){var s=shell();if(s)s.querySelectorAll('td[data-cf]').forEach(function(t){t.removeAttribute('data-cf');});var lg=document.getElementById('mapLegend');if(lg)lg.querySelectorAll('.cfKey').forEach(function(e){e.remove();});var b=document.getElementById('mapDetail');if(b)b.querySelectorAll('.cfDet').forEach(function(e){e.remove();});sig='';node=null;cache.byCell=null;}
+  function legend(names){
+    var lg=document.getElementById('mapLegend');if(!lg)return;lg.querySelectorAll('.cfKey').forEach(function(e){e.remove();});
+    var d=document.createElement('div');d.className='cfKey';
+    d.innerHTML='<b>⚠ تناقض</b>'+(on?names.map(function(n,i){return '<span class="cfN"><i>'+(i+1)+'</i>'+esc(n)+'</span>';}).join(''):'')+'<button type="button" class="cfTgl">'+(on?'إخفاء الأرقام':'إظهار أرقام التناقض')+'</button>';
+    lg.appendChild(d);
+  }
+  function who(x){return x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'من الإكسل':(x.kind==='none'?'بدون سجل':esc(x.who||'—')));}
+  function detail(){
+    var box=document.getElementById('mapDetail'),m=M();if(!box||!m||!cache.byCell||!on)return;
+    if(box.querySelector('.cfDet'))return;
+    var st=m.state,l=st&&st.last,id=st&&st.selected;if(!l||id==null||!l.model.unitById)return;
+    var u=l.model.unitById.get(id);if(!u)return;
+    var r=cache.byCell.get(u.r1+'|'+u.c1);if(!r)return;
+    var h='<b>⚠ تناقض في الخلية دي</b>'+r.done.map(function(x){var t=(x.kind==='user'||x.kind==='auto')?fmt(x.when):'';return '<div><span class="ok">✔ '+esc(x.name)+'</span> <span class="sub">'+who(x)+(t?' — '+t:'')+'</span></div>';}).join('')+r.missing.map(function(n){return '<div><span class="no">✘ '+esc(n)+' ناقصة</span></div>';}).join('');
+    var d=document.createElement('div');d.className='cfDet';d.innerHTML=h;box.appendChild(d);
+  }
+  function watch(){var box=document.getElementById('mapDetail');if(!box||box===obsFor)return;if(obs)obs.disconnect();obsFor=box;try{obs=new MutationObserver(function(){detail();});obs.observe(box,{childList:true});}catch(e){}}
+  async function paint(){
+    var s=shell();if(!s||!s.offsetParent)return;
+    var l=eligible(),m=M();
+    if(!l){if(s.querySelector('td[data-cf]')||document.querySelector('#mapLegend .cfKey'))clear();return;}
+    var my=++seq,sup=isSup(),data=null;
+    try{data=await m.conflicts(sup?{mineNames:mine()}:{});}catch(e){data=null;}
+    if(my!==seq)return;
+    if(!data||!data.rows||!data.rows.length){clear();return;}
+    var names=data.names||[],byCell=new Map();data.rows.forEach(function(r){byCell.set(r.r1+'|'+r.c1,r);});
+    cache.byCell=byCell;cache.names=names;
+    if(!on){s.querySelectorAll('td[data-cf]').forEach(function(t){t.removeAttribute('data-cf');});legend(names);return;}
+    var full=l.spec.id+'|'+names.join(',')+'|'+(sup?'s':'b')+'|'+data.rows.length+'|'+data.rows.map(function(r){return r.r1+','+r.c1+':'+r.missing.join('.')+r.done.length;}).join(';');
+    var lg=document.getElementById('mapLegend');
+    if(full===sig&&node===s.firstElementChild&&s.querySelector('td[data-cf]')&&lg&&lg.querySelector('.cfKey')){detail();return;}
+    sig=full;node=s.firstElementChild;
+    s.querySelectorAll('td[data-cf]').forEach(function(t){t.removeAttribute('data-cf');});
+    var idx=new Map();s.querySelectorAll('td[data-u]').forEach(function(t){idx.set(t.getAttribute('data-u'),t);});
+    l.model.units.forEach(function(u){
+      var r=byCell.get(u.r1+'|'+u.c1);if(!r)return;
+      var td=idx.get(String(u.id));if(!td)return;
+      var nums=r.missing.map(function(n){return names.indexOf(n)+1;}).filter(function(x){return x>0;}).sort(function(a,b){return a-b;});
+      td.setAttribute('data-cf',nums.slice(0,2).join('·')+(nums.length>2?'+':''));
+    });
+    legend(names);
+    var b=document.getElementById('mapDetail');if(b)b.querySelectorAll('.cfDet').forEach(function(e){e.remove();});
+    detail();
+  }
+  function soon(){clearTimeout(tmr);tmr=setTimeout(function(){paint();},250);}
+  function hook(){
+    var m=M();
+    if(m&&!m.__cfWrapped&&typeof m.applyLiveDiff==='function'){var o=m.applyLiveDiff;m.applyLiveDiff=function(){var r=o.apply(this,arguments);soon();return r;};m.__cfWrapped=1;}
+    if(!window.__cfRenderWrapped){var o2=window.dpbOnMapRendered;window.dpbOnMapRendered=function(){try{if(typeof o2==='function')o2.apply(this,arguments);}finally{soon();}};window.__cfRenderWrapped=1;}
+  }
+  document.addEventListener('click',function(e){
+    var b=e.target.closest&&e.target.closest('#mapLegend .cfTgl');if(!b)return;
+    on=!on;try{localStorage.setItem(KEY,on?'on':'off');}catch(_){}
+    sig='';paint();
+  });
+  hook();watch();
+  setInterval(function(){hook();watch();paint();},3000);
+  window.dpbCfMapPaint=paint;
+})();
+</script>
