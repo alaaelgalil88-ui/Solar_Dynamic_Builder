@@ -3774,6 +3774,7 @@ if ("serviceWorker" in navigator && !window.__DPB_NATIVE) {
       <input id="dpbBuilderTrackerFilterInput" type="text" inputmode="numeric" enterkeyhint="done" pattern="[0-9,- ]*" autocomplete="off" placeholder="Tracker: 1-2-3">
       <button type="button" class="btn" onclick="resetBuilderTrackerFilter()">↺ Reset</button>
     </div>
+    <button type="button" class="btn dpbCfBtn" onclick="dpbOpenConflicts('builder')">🔍 تناقضات العمليات</button>
     <div class="activity-table-wrap" style="margin-top:12px">
       <table id="activityTable" tabindex="-1"><thead><tr><th><svg class="sIco" aria-hidden="true"><use href="#si-tracker"/></svg>Tracker</th><th><svg class="sIco" aria-hidden="true"><use href="#si-ramming"/></svg>Ramming</th><th><svg class="sIco" aria-hidden="true"><use href="#si-saddle"/></svg>Saddle</th><th><svg class="sIco" aria-hidden="true"><use href="#si-bearing"/></svg>Bearing</th><th><svg class="sIco" aria-hidden="true"><use href="#si-torque"/></svg>Torque Tube</th><th>Overall Stage</th></tr></thead><tbody id="productionBody2"></tbody></table>
     </div>
@@ -4960,6 +4961,7 @@ function ownDone(op,u){
 function isDone(op,u){
   if(ownDone(op,u))return true;
   if(!op.grouped)return false;
+  if(!(window.dpbCascadeOn&&window.dpbCascadeOn()))return false;   // v192: a later operation never completes an earlier one (maps are independent)
   const k=Number(op.code);if(!(Number.isFinite(k)&&k>0))return false;
   const later=_laterOps(k);
   for(let i=0;i<later.length;i++)if(ownDone(later[i],u))return true;
@@ -5510,6 +5512,7 @@ async function kvCall(payload){
 }
 function currentUser(){try{const s=window.__dpbSupervisorState;return(s&&s.user)?String(s.user):'Admin';}catch(_){return'Admin';}}
 async function loadLocks(useLocal){
+  if(!(window.dpbCascadeOn&&window.dpbCascadeOn())){mark.locks=new Map();try{renderMarkBar();}catch(_){}return;}   // v190: no delete lock, maps are independent
   const spec=markableSpec();
   if(!spec||!spec.op.grouped){mark.locks=new Map();return;}
   if(mark.locksFor!==spec.id){mark.locks=new Map();mark.locksFor=spec.id;}
@@ -5721,7 +5724,7 @@ async function obPump(){
         }
       }catch(_){}
       const done=[];
-      for(const e of (job.earlier||[])){
+      for(const e of ((window.dpbCascadeOn&&window.dpbCascadeOn())?(job.earlier||[]):[])){
         try{
           const g=await fetchGridFor(e.name);if(!g)continue;
           const missing=job.units.filter(u=>{const v=((g.values||[])[u.r1]||[])[u.c1];return!(Number.isFinite(Number(v))&&Number(v)>0);});
@@ -5753,7 +5756,7 @@ async function applyMark(){
   const job={jid:'j'+Date.now()+'_'+Math.random().toString(36).slice(2,6),opName:spec.op.name,records,grouped:spec.op.grouped?groupedProcessNames():[],user:currentUser(),rammingExtra,
     units:units.map(u=>({r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2,label:u.label||'',rowLabel:u.rowLabel||'',post:u.post||''})),
     uids:units.map(u=>u.id),
-    earlier:spec.op.grouped?groupedOps().filter(o=>Number(o.code)<Number(spec.op.code)).map(o=>({name:o.name,code:o.code})):[]};
+    earlier:(spec.op.grouped&&window.dpbCascadeOn&&window.dpbCascadeOn())?groupedOps().filter(o=>Number(o.code)<Number(spec.op.code)).map(o=>({name:o.name,code:o.code})):[]};
   const q=obLoad();q.push(job);obSave(q);
   clearMarkSelection();obPaint();obBadge();
   toast('اتسجلت '+records.length+' خلية على الجهاز — بتتبعت للسيرفر',2500);
@@ -5767,6 +5770,7 @@ setInterval(()=>{if(obLoad().some(j=>!j.failed))obPump();},20000);
    (مش من قراءة الشيت اللي ممكن تفشل)، والسيرفر بيعيد التحقق برضه. */
 function dpbStageCodes(){const m={};groupedOps().forEach(o=>{m[String(o.name).trim().toLowerCase()]=Number(o.code)||0;});return m;}
 function dpbBlockedUnitsByLater(units,all,laterNames,codeByName){
+  if(!(window.dpbCascadeOn&&window.dpbCascadeOn()))return {blocked:[],free:(units||[]).slice()};   // v190
   const later=new Set((laterNames||[]).map(n=>String(n).trim().toLowerCase()));
   const hit=new Map();
   // v73: a record counts only when it reaches its stage's code (same as the overlay), so a leftover 1/2 in Bearing no longer blocks
@@ -6054,6 +6058,63 @@ function reportData(){
   procs.sort((a,b)=>a.code-b.code);
   return{procs};
 }
+
+/* v192: operations that do not add up. Grouped operations are ordered by code (1 -> 2 -> 3 ...). A cell is a CONFLICT when a later operation is done on it
+   while an earlier one (that also has this cell) is not. Each operation answers only for its OWN records (no cascade). Cells are matched across the
+   operations by their anchor coordinates. opts.mineNames = lower-case names of the viewer's operations: only conflicts whose MISSING operation is one
+   of them are returned (null = everything, for Builder/admin). Works from the local data, so it updates with every entry, online or not. */
+async function conflictsData(opts){
+  opts=opts||{};
+  const c=currentCatalog();if(!c)return null;
+  const lc=x=>String(x==null?'':x).trim().toLowerCase();
+  const maps=[];
+  for(const m of c.maps){
+    if(m.mode!=='dynamic'||!m.op||m.op.kind==='notstarted'||!m.op.grouped)continue;
+    const code=Number(m.op.code);if(!(code>0))continue;
+    const model=modelForKey(m.snap);if(!model||!model.ok)continue;
+    if(progressInfoOfModel(model))continue;
+    maps.push({op:m.op,code,model});
+  }
+  maps.sort((a,b)=>a.code-b.code);
+  const names=maps.map(x=>x.op.name);
+  if(maps.length<2)return{rows:[],names,total:0,shown:0};
+  let recs=null;try{recs=await dpbStoreRecords();}catch(_){recs=null;}
+  if(!recs){try{recs=window.dpbAllProductionRecords?window.dpbAllProductionRecords():[];}catch(_){recs=[];}}
+  const rec=new Map();   // latest live record per operation + cell
+  for(const r of recs||[]){
+    if(!r||r.del||!(Number(r.code)>0))continue;
+    const k=lc(r.process)+'|'+Number(r.r1)+'|'+Number(r.c1),o=rec.get(k);
+    if(!o||String(r.time||'')>=String(o.time||''))rec.set(k,r);
+  }
+  const per=maps.map(x=>{const mp=new Map();for(const u of x.model.units)mp.set(u.r1+'|'+u.c1,u);return mp;});
+  const keys=new Set();per.forEach(mp=>mp.forEach((u,k)=>keys.add(k)));
+  const mine=opts.mineNames?new Set(opts.mineNames.map(lc)):null;
+  const rows=[];
+  for(const k of keys){
+    const st=maps.map((x,i)=>{const u=per[i].get(k);return u?{u,done:!!ownDone(x.op,u)}:null;});
+    let h=-1;st.forEach((x,i)=>{if(x&&x.done)h=i;});
+    if(h<1)continue;
+    const miss=[];for(let i=0;i<h;i++)if(st[i]&&!st[i].done)miss.push(i);
+    if(!miss.length)continue;
+    if(mine&&!miss.some(i=>mine.has(lc(maps[i].op.name))))continue;
+    const any=st.find(Boolean).u;
+    const done=[];
+    st.forEach((x,i)=>{
+      if(!x||!x.done)return;
+      const r=rec.get(lc(maps[i].op.name)+'|'+x.u.r1+'|'+x.u.c1);
+      let who='',when='',kind='user';
+      if(!r)kind='none';
+      else if(r.source==='SheetImport'||String(r.id||'').indexOf('sheet_')===0)kind='excel';
+      else if(r.source==='Cascade'||r.source==='MapEngine'||/^(cascade_|mapeng_)/.test(String(r.id||'')))kind='auto';
+      if(r){who=String(r.editedBy||r.user||r.owner||'');when=kind==='excel'?'':String(r.time||'');}
+      done.push({name:maps[i].op.name,who,when,kind});
+    });
+    rows.push({tracker:String(any.label||''),row:String(any.rowLabel||''),cell:String(any.post||''),r1:any.r1,c1:any.c1,done,missing:miss.map(i=>maps[i].op.name)});
+  }
+  const num=x=>Number(String(x).replace(/[^0-9]/g,''))||0;
+  rows.sort((a,b)=>num(a.tracker)-num(b.tracker)||num(a.row)-num(b.row)||a.r1-b.r1||a.c1-b.c1);
+  return{rows,names,total:rows.length,shown:rows.length};
+}
 /* Print range (admin map print): rows and trackers of the map that is ON SCREEN (each process has its own sheet/rows), in west->east order */
 function printData(){
   const s=state.last;if(!s||!s.model||!s.model.ok)return null;
@@ -6176,7 +6237,7 @@ window.__dpbExcelUnitCells=function(){
     }
     // قاعدة التكميل (العمليات المجمّعة): الخلية المنفّذة في مرحلة متأخرة اتنفّذت في كل اللي قبلها (3 = 1+2+3، و2 = 1+2). التطابق بين التابات بالإحداثيات:
     // كل وحدة في تاب المرحلة الأقدم بتتغطّى ولو جزء منها بوحدة منفّذة في المرحلة الأحدث (الدمج ممكن يختلف من تاب لتاني). الكود المحفوظ هو كود المرحلة نفسها.
-    const grp=out.filter(x=>x._g&&Number.isFinite(x._code));
+    const grp=(window.dpbCascadeOn&&window.dpbCascadeOn())?out.filter(x=>x._g&&Number.isFinite(x._code)):[];   // v191: no completion between the maps' Excel tabs (each map is independent); rollback: dpb_cascade='on'
     for(const E of grp){
       const at=new Map();E._u.forEach((u,i)=>{for(let r=u.r1;r<=u.r2;r++)for(let c=u.c1;c<=u.c2;c++)at.set(r+','+c,i);});
       const have=new Set(E.cells.map(c=>c.r+','+c.c));
@@ -6193,7 +6254,7 @@ window.__dpbExcelUnitCells=function(){
   }catch(err){try{console.warn('__dpbExcelUnitCells',err);}catch(_){}}
   return out;
 };
-window.DPBMap={refresh,renderNow,applyLiveDiff,select,sync,publish,options,processNames,model:buildModel,pack,unpack,state,exportCellValue,reportData,printData,drawStatusMaps,
+window.DPBMap={refresh,renderNow,applyLiveDiff,select,sync,publish,options,processNames,model:buildModel,pack,unpack,state,exportCellValue,reportData,printData,conflicts:conflictsData,drawStatusMaps,
   summary(){const s=state.last;if(!s)return null;const m=s.model;return{view:s.spec.id,mode:s.spec.mode,color:s.spec.color,site:m.siteName,base:m.siteBase,areas:m.siteAreas,bounds:m.bounds,units:m.units.length,trackers:m.trackers.size,types:m.types,siteCodes:[...m.siteCodes]};}};
 })();
 </script>
@@ -15305,13 +15366,13 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           <button class="dpbSupNavCard" id="dpbSupGoProduction">
             <strong>● Production Entry</strong><span>Touch-first production selection</span>
           </button>
+          <button class="dpbSupNavCard dpbSupMapNavCard" id="dpbSupGoMaps"><strong>🗺️ Project Maps</strong><span>عرض وتحديد وتطبيق وحذف وتحديث الخلايا من نفس الخريطة</span></button>
           <button class="dpbSupNavCard" id="dpbSupGoHistory">
             <strong>📊 Production Reports</strong><span>تقارير وكميات الإنتاج + سجل إدخالات هذا المشرف</span>
           </button>
           <button class="dpbSupNavCard" id="dpbSupGoMyEdits">
             <strong>✎ Records</strong><span>Your own entries · undo any operation</span>
           </button>
-          <button class="dpbSupNavCard dpbSupMapNavCard" id="dpbSupGoMaps"><strong>🗺️ Project Maps</strong><span>عرض وتحديد وتطبيق وحذف وتحديث الخلايا من نفس الخريطة</span></button>
         </div>
       </section>
 
@@ -16003,6 +16064,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const procs=state.processes||[];
     return allowed.includes("*") ? procs : procs.filter(p=>allowed.includes(String(p.id)));
   }
+  window.__dpbSupVisibleProcs=function(){try{return visibleProcesses();}catch(_){return [];}};
   function uniqueRows(){
     const seen=new Set(), out=[];
     state.trackers.forEach(t=>{
@@ -16903,6 +16965,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
               <input id="dpbSupervisorTrackerFilterInput" type="text" inputmode="numeric" pattern="[0-9,- ]*" autocomplete="off" placeholder="Tracker: 1-2-3">
               <button type="button" class="btn" onclick="resetSupervisorTrackerFilter()">↺ Reset</button>
             </div>
+            <button type="button" class="btn dpbCfBtn" onclick="dpbOpenConflicts('sup')">🔍 تناقضات العمليات</button>
             <div class="dpbRpLegend"><span class="dpbRpC0">● 0</span><span class="dpbRpC1">● جاري</span><span class="dpbRpC2">● مكتمل</span></div>
             <div class="dpbSupActivityTableWrap" dir="ltr"><table class="dpbSupActivityTable" tabindex="-1" data-fst=""><thead></thead><tbody></tbody></table></div>
             <div class="dpbRpCount" id="dpbRpCount"></div>
@@ -17022,6 +17085,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
               <input id="dpbSupervisorTrackerFilterInput" type="text" inputmode="numeric" pattern="[0-9,- ]*" autocomplete="off" placeholder="Tracker: 1-2-3">
               <button type="button" class="btn" onclick="resetSupervisorTrackerFilter()">↺ Reset</button>
             </div>
+            <button type="button" class="btn dpbCfBtn" onclick="dpbOpenConflicts('sup')">🔍 تناقضات العمليات</button>
             ${projectTableHtmlFn()||'<span class="hint">لا توجد بيانات إنتاج للمشروع حتى الآن.</span>'}
           </div>
         </div>`;
@@ -17461,7 +17525,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       <div class="dpbRpHead"><div class="dpbRpTitle">📋 حالة التراكرات <small id="dpbMsProc"></small></div><button type="button" id="dpbMsRefresh" class="dpbRpRefresh" aria-label="تحديث">🔄</button></div>
       <div class="dpbRpProcs" id="dpbMsProcs" dir="ltr">${procs.map(p=>`<button type="button" data-p="${escapeHtml(String(p.id))}">${escapeHtml(p.name)}</button>`).join("")}${procs.length>1?'<button type="button" data-p="__all">الكل</button>':""}</div>
       <div class="dpbRpSeg" id="dpbMsSeg"></div>
-      <div class="dpbTrackerFilter" dir="ltr" style="margin-top:8px"><select id="dpbMsRow" class="dpbSupSelect"></select><input id="dpbMsSearch" type="text" inputmode="numeric" pattern="[0-9,- ]*" autocomplete="off" placeholder="Tracker: 1-2-3"><button type="button" class="btn" id="dpbMsReset">↺ Reset</button></div>
+      <div class="dpbTrackerFilter" dir="ltr" style="margin-top:8px"><select id="dpbMsRow" class="dpbSupSelect"></select><input id="dpbMsSearch" type="text" inputmode="numeric" pattern="[0-9,- ]*" autocomplete="off" placeholder="Tracker: 1-2-3"><button type="button" class="btn" id="dpbMsReset">↺ Reset</button></div><button type="button" class="btn dpbCfBtn" onclick="dpbOpenConflicts('sup')">🔍 تناقضات العمليات</button>
       <div class="dpbRpLegend"><span class="dpbRpC0">● 0</span><span class="dpbRpC1">● جاري</span><span class="dpbRpC2">● مكتمل</span></div>
       <div class="dpbSupActivityTableWrap" dir="ltr"><table class="dpbSupActivityTable" tabindex="-1" data-fst=""><thead></thead><tbody></tbody></table></div>
       <div class="dpbRpCount" id="dpbMsCount"></div>
@@ -21675,3 +21739,126 @@ body.print-activity #dpbBottomBar{display:none!important}
 @media print{#dpbBottomBar{display:none!important}body{padding-bottom:0!important}}
 </style>
 <div id="dpbBottomBar" aria-hidden="true"></div>
+<script id="dpbCascadeFlag">window.dpbCascadeOn=function(){try{return localStorage.getItem('dpb_cascade')==='on';}catch(_){return false;}};</script>
+<style id="dpbAutoFitCss">
+/* v189: long names / titles never leave their box: one line, shrink to fit, then "..." */
+#dpbSupOverlay .dpbSupTitle b{white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;max-width:100%}
+#dpbSupOverlay .dpbSupHero h2,#dpbSupOverlay .dpbSupNavCard strong{overflow-wrap:anywhere}
+#dpbSupOverlay .dpbSupActions #dpbSupGoProduction{grid-column:1/-1}
+</style>
+<script id="dpbAutoFitJs">
+(function(){
+  var SEL=['#dpbSupOverlay #dpbSupTopTitle','#dpbSupOverlay .dpbSupNavCard[data-proj] strong'], MIN=13;
+  function fit(el){
+    try{
+      if(!el||!el.clientWidth)return;
+      el.style.setProperty('white-space','nowrap','important');el.style.setProperty('overflow','hidden','important');el.style.setProperty('text-overflow','ellipsis','important');
+      el.style.removeProperty('font-size');
+      var fs=parseFloat(getComputedStyle(el).fontSize)||20;
+      while(el.scrollWidth>el.clientWidth+1&&fs>MIN){fs-=1;el.style.setProperty('font-size',fs+'px','important');}
+    }catch(e){}
+  }
+  function run(){SEL.forEach(function(s){try{document.querySelectorAll(s).forEach(fit);}catch(e){}});}
+  window.__dpbAutoFit=run;
+  var pend=0;function soon(){if(pend)return;pend=setTimeout(function(){pend=0;run();},60);}
+  try{new MutationObserver(soon).observe(document.documentElement,{childList:true,characterData:true,subtree:true});}catch(e){}
+  window.addEventListener('resize',soon);window.addEventListener('orientationchange',soon);
+  setInterval(function(){var o=document.getElementById('dpbSupOverlay');if(o&&o.clientWidth)run();},1500);
+  if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);
+})();
+</script>
+<style id="dpbCfCss">
+.dpbCfBtn{width:100%;margin-top:8px}
+#dpbCfOv{position:fixed;inset:0;z-index:2147483000;background:#06121d;color:#e6eef7;overflow:auto;direction:rtl;-webkit-overflow-scrolling:touch;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}
+#dpbCfOv .cfTop{position:sticky;top:0;background:#0b1f31;border-bottom:1px solid #1d3b57;padding:10px 12px;display:flex;align-items:center;gap:10px;z-index:2}
+#dpbCfOv .cfTop b{flex:1;font-size:16px}
+#dpbCfOv .cfX{background:#7a1f1f;color:#fff;border:0;border-radius:10px;padding:8px 14px;font-weight:800}
+#dpbCfOv .cfBody{padding:10px 12px}
+#dpbCfOv .cfNote{font-size:12px;color:#9eb2c7;margin:4px 0 8px}
+#dpbCfOv .cfSum{font-size:15px;font-weight:800;margin:6px 0}
+#dpbCfOv .cfChips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}
+#dpbCfOv .cfChip{background:#10283d;border:1px solid #27506f;color:#dceafa;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700}
+#dpbCfOv .cfChip.on{background:#1b5d8f;border-color:#55b3ff}
+#dpbCfOv input{width:100%;box-sizing:border-box;background:#0d2233;border:1px solid #27506f;color:#fff;border-radius:10px;padding:9px 11px;font-size:14px;direction:ltr}
+#dpbCfOv .cfWrap{overflow-x:auto;margin-top:10px;border:1px solid #1d3b57;border-radius:12px}
+#dpbCfOv table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:12px}
+#dpbCfOv th{background:#0f2a40;color:#9eb2c7;text-align:right;padding:8px;position:sticky;top:0;font-weight:700}
+#dpbCfOv td{padding:7px 8px;border-top:1px solid #16314a;vertical-align:top}
+#dpbCfOv td.pos{font-weight:800;line-height:1.7;word-break:break-word}
+#dpbCfOv td.pos span{display:block;font-weight:700;color:#cfe0f0}
+#dpbCfOv th:nth-child(1){width:26%}#dpbCfOv th:nth-child(3){width:25%}
+#dpbCfOv td{word-break:break-word}
+#dpbCfOv .ok{color:#59d98e;font-weight:800}
+#dpbCfOv .no{color:#ff7a7a;font-weight:800}
+#dpbCfOv .sub{color:#9eb2c7;font-size:11px;display:block}
+#dpbCfOv .empty{padding:22px 10px;text-align:center;color:#9eb2c7}
+</style>
+<script id="dpbCfJs">
+(function(){
+  var cur=null,timer=0,sig='',filt={txt:'',miss:''},MAXROWS=300;
+  function esc(x){return String(x==null?'':x).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function fmt(t){if(!t)return '';var d=new Date(t);if(isNaN(d.getTime()))return '';var p=function(n){return n<10?'0'+n:''+n;};return p(d.getDate())+'/'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes());}
+  function trackerTest(txt){
+    var parts=String(txt||'').split(/[\s,]+/).filter(Boolean),rs=[];
+    parts.forEach(function(t){var m=/^(\d+)-(\d+)$/.exec(t);if(m)rs.push([+m[1],+m[2]]);else if(/^\d+$/.test(t))rs.push([+t,+t]);});
+    if(!rs.length)return null;
+    return function(label){var n=Number(String(label).replace(/[^0-9]/g,''))||0;return rs.some(function(r){return n>=Math.min(r[0],r[1])&&n<=Math.max(r[0],r[1]);});};
+  }
+  async function load(){
+    var opts={};
+    if(cur==='sup'){var vp=[];try{vp=(window.__dpbSupVisibleProcs&&window.__dpbSupVisibleProcs())||[];}catch(e){}opts.mineNames=vp.map(function(p){return p.name;});}
+    return (window.DPBMap&&window.DPBMap.conflicts)?await window.DPBMap.conflicts(opts):null;
+  }
+  function doneCell(d){
+    return d.map(function(x){
+      var w=x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'من الإكسل':(x.kind==='none'?'بدون سجل':esc(x.who||'—')));
+      var t=(x.kind==='user'||x.kind==='auto')?fmt(x.when):'';
+      return '<div><span class="ok">✔ '+esc(x.name)+'</span><span class="sub">'+w+(t?' — '+t:'')+'</span></div>';
+    }).join('');
+  }
+  function paint(data){
+    var ov=document.getElementById('dpbCfOv');if(!ov)return;
+    var body=ov.querySelector('.cfBody');
+    if(!data){body.innerHTML='<div class="empty">لا توجد بيانات خرائط لهذا المشروع بعد.</div>';return;}
+    var test=trackerTest(filt.txt),rows=data.rows.filter(function(r){
+      if(test&&!test(r.tracker))return false;
+      if(filt.miss&&r.missing.indexOf(filt.miss)<0)return false;
+      return true;
+    });
+    var counts={};data.rows.forEach(function(r){r.missing.forEach(function(m){counts[m]=(counts[m]||0)+1;});});
+    var chips='<span class="cfChip'+(filt.miss?'':' on')+'" data-m="">الكل '+data.rows.length+'</span>'+Object.keys(counts).map(function(m){return '<span class="cfChip'+(filt.miss===m?' on':'')+'" data-m="'+esc(m)+'">'+esc(m)+' ناقصة: '+counts[m]+'</span>';}).join('');
+    var shown=rows.slice(0,MAXROWS);
+    var tbl=shown.length?('<div class="cfWrap"><table><thead><tr><th>مكان الخلية</th><th>اللي خلصت (مين / امتى)</th><th>اللي ناقصة</th></tr></thead><tbody>'+shown.map(function(r){
+      return '<tr><td class="pos"><span>تراكر '+esc(r.tracker)+'</span><span>'+esc(r.row)+'</span><span>خلية '+esc(r.cell||(r.r1+'/'+r.c1))+'</span></td><td>'+doneCell(r.done)+'</td><td>'+r.missing.map(function(m){return '<div class="no">✘ '+esc(m)+'</div>';}).join('')+'</td></tr>';
+    }).join('')+'</tbody></table></div>'+(rows.length>shown.length?'<div class="cfNote">معروض '+shown.length+' من '+rows.length+' — ضيّق بالفلتر.</div>':''))
+      :'<div class="empty">'+(data.rows.length?'مفيش نتايج بالفلتر ده.':'✅ مفيش تناقضات.')+'</div>';
+    var inp=body.querySelector('input'),keep=inp&&document.activeElement===inp;
+    if(!body.querySelector('.cfList')){
+      body.innerHTML='<div class="cfNote" id="cfNote"></div><input id="cfTxt" inputmode="numeric" autocomplete="off" placeholder="Tracker: 1-2-3"><div class="cfSum" id="cfSum"></div><div class="cfChips" id="cfChips"></div><div class="cfList" id="cfList"></div>';
+      body.querySelector('#cfTxt').addEventListener('input',function(e){filt.txt=e.target.value;sig='';refresh(true);});
+      body.querySelector('#cfChips').addEventListener('click',function(e){var c=e.target.closest('.cfChip');if(!c)return;filt.miss=c.getAttribute('data-m')||'';sig='';refresh(true);});
+    }
+    body.querySelector('#cfNote').textContent=cur==='sup'?'بتشوف التناقضات اللي الناقص فيها عملياتك بس. العملية اللي خلصت بدون اللي قبلها بتبان هنا.':'كل التناقضات: عملية متأخرة خلصت واللي قبلها ما خلصتش.';
+    body.querySelector('#cfSum').textContent=rows.length+' خلية فيها تناقض'+(rows.length!==data.rows.length?' (من '+data.rows.length+')':'');
+    body.querySelector('#cfChips').innerHTML=chips;
+    body.querySelector('#cfList').innerHTML=tbl;
+  }
+  async function refresh(force){
+    var data=null;try{data=await load();}catch(e){data=null;}
+    var s=data?(data.rows.length+'|'+data.rows.map(function(r){return r.r1+','+r.c1+':'+r.done.length+r.missing.length;}).join(';')):'none';
+    s+='|'+filt.txt+'|'+filt.miss;
+    if(!force&&s===sig)return;sig=s;paint(data);
+  }
+  window.dpbOpenConflicts=function(role){
+    cur=role==='sup'?'sup':'builder';filt={txt:'',miss:''};sig='';
+    var old=document.getElementById('dpbCfOv');if(old)old.remove();
+    var ov=document.createElement('div');ov.id='dpbCfOv';
+    ov.innerHTML='<div class="cfTop"><b>🔍 تناقضات العمليات</b><button type="button" class="cfX">✕ قفل</button></div><div class="cfBody"><div class="empty">جاري الحساب…</div></div>';
+    document.body.appendChild(ov);
+    ov.querySelector('.cfX').onclick=function(){window.dpbCloseConflicts();};
+    refresh(true);
+    clearInterval(timer);timer=setInterval(function(){if(!document.getElementById('dpbCfOv')){clearInterval(timer);return;}refresh(false);},2500);
+  };
+  window.dpbCloseConflicts=function(){clearInterval(timer);var o=document.getElementById('dpbCfOv');if(o)o.remove();};
+})();
+</script>

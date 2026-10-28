@@ -690,6 +690,7 @@
   /* Shared time reference: the offset between this device's clock and the Firestore server clock is measured in the BACKGROUND (never awaited,
      so opening is not slowed down), saved on the device, and used for every stored time. Until the first measurement, or with no network,
      the last saved offset is used (0 on a device that never measured). Re-measured every 30 minutes while the app stays open. */
+  function cascadeOn() { try { return localStorage.getItem('dpb_cascade') === 'on'; } catch (e) { return false; } }   // v190: default OFF - maps are independent
   function clockOff() { var v = parseInt(ls('dpb_fs2_clock_off', '0'), 10); return isFinite(v) ? v : 0; }
   var clockT = null;
   function syncClock(a) {
@@ -891,7 +892,7 @@
     var forPid = pidS();
     if (!forPid) return Promise.reject(new Error('لسه مفيش مشروع مفتوح — الخرائط بتتربط بعد ما تفتح مشروع'));
     creating = getAdapter().then(function (a) {
-      var s = CORE.create(a, { ns: nsName(), pid: forPid, offset: clockOff, onError: function (e) {
+      var s = CORE.create(a, { ns: nsName(), pid: forPid, offset: clockOff, cascade: cascadeOn, onError: function (e) {
         // the live listener died (token refresh, quota, rules, network): this device would stop receiving other devices' edits silently. Drop the store and rebuild it.
         if (store !== s) return;
         lastErr = permHint(e); dlog('listener-dead', (e && e.code ? e.code + ' ' : '') + lastErr); dropStore(); failedAt = 0; paintState(); warnNow(); rebuildLater();
@@ -1407,7 +1408,7 @@
         grp.forEach(function (g) { var c = Number(codes[String(g).trim().toLowerCase()]) || 0; if (CORE.slug(g) === sl) own = c; });
         if (own > 0) grp.forEach(function (g) { var c = Number(codes[String(g).trim().toLowerCase()]) || 0; if (c > own) later.push({ slug: CORE.slug(g), code: c }); });
       }
-      if (own > 0 && later.length) {
+      if (cascadeOn() && own > 0 && later.length) {
         all.forEach(function (d) {
           var ds = CORE.slug(d.process), L = null; for (var i = 0; i < later.length; i++) if (later[i].slug === ds) L = later[i];
           if (!L) return;
@@ -2273,6 +2274,10 @@
         lsSet(s.n, String(v)); lsSet(s.u, u.value); n.value = String(v); say('اتحفظ التايمر: كل ' + v + ' ' + UNIT_AR[u.value] + note + '.'); schPaint();
       }
       n.addEventListener('change', fixNum); n.addEventListener('blur', fixNum); u.addEventListener('change', fixNum);
+      // v189: tapping the number selects it all, so typing a new value replaces the old one (no need to delete first)
+      var nJust = false;
+      n.addEventListener('focus', function () { nJust = true; try { n.select(); } catch (e) {} setTimeout(function () { try { n.select(); } catch (e) {} }, 30); setTimeout(function () { nJust = false; }, 400); });
+      n.addEventListener('mouseup', function (e) { if (nJust) e.preventDefault(); });
       tm.addEventListener('change', function () {
         if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(tm.value)) { tm.value = schT(k); return; }
         lsSet(s.t, tm.value); lsSet(s.day, ''); say('اتحفظ الوقت اليومي: ' + tm.value + '.'); schPaint();

@@ -6,6 +6,9 @@
   function slug(s) { return String(s == null ? '' : s).trim().toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g, '-'); }
   var EPOCH_MARGIN_MS = 10 * 60 * 1000; // records older than (epoch - 10 min) are leftovers from the old system, never written
   function create(adapter, o) {
+    // v190: the cascade (writing the earlier operations of a group automatically) and the delete lock are OFF by default. Every map is independent.
+    // Switch back on only for a rollback: localStorage dpb_cascade = 'on'.
+    function cascadeOn() { try { return !!(o && o.cascade && o.cascade()); } catch (e) { return false; } }
     o = o || {};
     var ns = o.ns || 'test', cache = {}, subs = [], broken = null;
     // project scope: every row doc belongs to ONE project (id prefix + projectId field), the listener only sees that project's docs,
@@ -133,7 +136,7 @@
         if (!(key in before)) before[key] = cache[key];
         pending[key] = d;
         ops.push(cw(rec.process, rec.r1, rec.c1, d));
-        if (me && code >= me.code && rec.source !== 'Cascade') st.forEach(function (e) {
+        if (cascadeOn() && me && code >= me.code && rec.source !== 'Cascade') st.forEach(function (e) {
           if (e.code >= me.code) return;
           var k = id(e.name, rec.r1, rec.c1), c2 = pending[k] || get(k);
           if (live(c2) && Number(c2.code) >= e.code) return;
@@ -153,7 +156,7 @@
       var st = norm(stages), ops = [], blocked = [], deleted = 0, gone = [], before = {};
       keys().forEach(function (k) {
         var d = get(k); if (isMeta(k) || !live(d) || !want[d.id] && !want[k]) return;
-        var lk = lockOf(st, d.process, d.r1, d.c1, want);
+        var lk = cascadeOn() ? lockOf(st, d.process, d.r1, d.c1, want) : null;
         if (lk) { lk.id = d.id; blocked.push(lk); return; }
         var tomb = { del: true, id: d.id, process: d.process, r1: d.r1, c1: d.c1, code: 0, time: nowIso() };
         before[k] = cache[k];
