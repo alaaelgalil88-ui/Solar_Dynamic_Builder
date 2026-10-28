@@ -21792,10 +21792,13 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbCfOv .no{color:#ff7a7a;font-weight:800}
 #dpbCfOv .sub{color:#9eb2c7;font-size:11px;display:block}
 #dpbCfOv .empty{padding:22px 10px;text-align:center;color:#9eb2c7}
+#dpbCfOv .cfMore{display:flex;gap:8px;margin:8px 0 14px}
+#dpbCfOv .cfMore button{flex:1;background:#10283d;border:1px solid #27506f;color:#dceafa;border-radius:10px;padding:10px 8px;font-size:13px;font-weight:800}
+#dpbCfOv .cfP{background:#1b5d8f;color:#fff;border:0;border-radius:10px;padding:8px 12px;font-weight:800}
 </style>
 <script id="dpbCfJs">
 (function(){
-  var cur=null,timer=0,sig='',filt={txt:'',miss:''},MAXROWS=300;
+  var cur=null,timer=0,sig='',filt={txt:'',miss:'',lim:300},STEP=300,lastRows=[],lastData=null;
   function esc(x){return String(x==null?'':x).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function fmt(t){if(!t)return '';var d=new Date(t);if(isNaN(d.getTime()))return '';var p=function(n){return n<10?'0'+n:''+n;};return p(d.getDate())+'/'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes());}
   function trackerTest(txt){
@@ -21827,35 +21830,66 @@ body.print-activity #dpbBottomBar{display:none!important}
     });
     var counts={};data.rows.forEach(function(r){r.missing.forEach(function(m){counts[m]=(counts[m]||0)+1;});});
     var chips='<span class="cfChip'+(filt.miss?'':' on')+'" data-m="">الكل '+data.rows.length+'</span>'+Object.keys(counts).map(function(m){return '<span class="cfChip'+(filt.miss===m?' on':'')+'" data-m="'+esc(m)+'">'+esc(m)+' ناقصة: '+counts[m]+'</span>';}).join('');
-    var shown=rows.slice(0,MAXROWS);
+    lastRows=rows;lastData=data;var shown=rows.slice(0,filt.lim);
     var tbl=shown.length?('<div class="cfWrap"><table><thead><tr><th>مكان الخلية</th><th>اللي خلصت (مين / امتى)</th><th>اللي ناقصة</th></tr></thead><tbody>'+shown.map(function(r){
       return '<tr><td class="pos"><span>تراكر '+esc(r.tracker)+'</span><span>'+esc(r.row)+'</span><span>خلية '+esc(r.cell||(r.r1+'/'+r.c1))+'</span></td><td>'+doneCell(r.done)+'</td><td>'+r.missing.map(function(m){return '<div class="no">✘ '+esc(m)+'</div>';}).join('')+'</td></tr>';
-    }).join('')+'</tbody></table></div>'+(rows.length>shown.length?'<div class="cfNote">معروض '+shown.length+' من '+rows.length+' — ضيّق بالفلتر.</div>':''))
+    }).join('')+'</tbody></table></div>'+(rows.length>shown.length?'<div class="cfNote">معروض '+shown.length+' من '+rows.length+'</div><div class="cfMore"><button type="button" data-more="step">عرض '+Math.min(STEP,rows.length-shown.length)+' كمان</button><button type="button" data-more="all">عرض الكل ('+rows.length+')</button></div>':''))
       :'<div class="empty">'+(data.rows.length?'مفيش نتايج بالفلتر ده.':'✅ مفيش تناقضات.')+'</div>';
     var inp=body.querySelector('input'),keep=inp&&document.activeElement===inp;
     if(!body.querySelector('.cfList')){
       body.innerHTML='<div class="cfNote" id="cfNote"></div><input id="cfTxt" inputmode="numeric" autocomplete="off" placeholder="Tracker: 1-2-3"><div class="cfSum" id="cfSum"></div><div class="cfChips" id="cfChips"></div><div class="cfList" id="cfList"></div>';
-      body.querySelector('#cfTxt').addEventListener('input',function(e){filt.txt=e.target.value;sig='';refresh(true);});
-      body.querySelector('#cfChips').addEventListener('click',function(e){var c=e.target.closest('.cfChip');if(!c)return;filt.miss=c.getAttribute('data-m')||'';sig='';refresh(true);});
+      body.querySelector('#cfTxt').addEventListener('input',function(e){filt.txt=e.target.value;filt.lim=STEP;sig='';refresh(true);});
+      body.querySelector('#cfList').addEventListener('click',function(e){var b=e.target.closest('[data-more]');if(!b)return;filt.lim=b.getAttribute('data-more')==='all'?1e9:filt.lim+STEP;paint(lastData);});
+      body.querySelector('#cfChips').addEventListener('click',function(e){var c=e.target.closest('.cfChip');if(!c)return;filt.miss=c.getAttribute('data-m')||'';filt.lim=STEP;sig='';refresh(true);});
     }
     body.querySelector('#cfNote').textContent=cur==='sup'?'بتشوف التناقضات اللي الناقص فيها عملياتك بس. العملية اللي خلصت بدون اللي قبلها بتبان هنا.':'كل التناقضات: عملية متأخرة خلصت واللي قبلها ما خلصتش.';
     body.querySelector('#cfSum').textContent=rows.length+' خلية فيها تناقض'+(rows.length!==data.rows.length?' (من '+data.rows.length+')':'');
     body.querySelector('#cfChips').innerHTML=chips;
     body.querySelector('#cfList').innerHTML=tbl;
   }
+
+  /* طباعة كل التناقضات (بعد الفلتر الحالي، من غير حد 300) بنفس شكل Activity Report: صفحة A4 بيضا، هيدر، مربعات ملخّص، جدول، ترقيم صفحات */
+  function printAll(){
+    var rows=lastRows;if(!rows||!rows.length){alert('مفيش تناقضات للطباعة.');return;}
+    var area=document.getElementById('printActivityArea');if(!area){alert('منطقة الطباعة مش موجودة.');return;}
+    var who=function(x){return x.kind==='auto'?'Auto (old)':(x.kind==='excel'?'Excel':(x.kind==='none'?'No record':(x.who||'-')));};
+    var data=rows.map(function(r,i){
+      var done=r.done.map(function(x){var t=(x.kind==='user'||x.kind==='auto')?fmt(x.when):'';return x.name+' - '+who(x)+(t?' - '+t:'');});
+      return {n:i+1,tr:String(r.tracker),row:String(r.row),cell:String(r.cell||(r.r1+'/'+r.c1)),done:done,miss:r.missing.join(', ')};
+    });
+    var heights=data.map(function(d){var lines=Math.max(1,d.done.length,Math.ceil(d.miss.length/26));return 2.81+1.7*(lines-1);});
+    var idx=window.dpbPaginate(heights),pages=idx.length,n=rows.length;
+    var counts={};rows.forEach(function(r){r.missing.forEach(function(m){counts[m]=(counts[m]||0)+1;});});
+    var summary=[['Cells with conflict',n,'100%']].concat(Object.keys(counts).map(function(m){return [m+' missing',counts[m],Math.round(counts[m]*100/n)+'%'];}));
+    var d=new Date(),p2=function(x){return x<10?'0'+x:''+x;},stamp=p2(d.getDate())+'/'+p2(d.getMonth()+1)+'/'+d.getFullYear();
+    var fl=(filt.txt?' · Tracker filter: '+filt.txt:'')+(filt.miss?' · Missing: '+filt.miss:'');
+    var scope=cur==='sup'?'My Operations':'All Operations';
+    var head=['#','TRACKER','ROW','CELL','DONE (operation - who - when)','MISSING'];
+    var colgroup='<colgroup><col style="width:5%"><col style="width:9%"><col style="width:10%"><col style="width:7%"><col style="width:47%"><col style="width:22%"></colgroup>';
+    area.innerHTML=idx.map(function(ids,i){
+      return '<div class="print-report-page"><div class="print-report-head"><h2 style="margin:0 0 1mm;font-size:13px">Operations Conflicts Report — '+esc(scope)+'</h2><div style="font-size:7px;color:#555">Page '+(i+1)+' of '+pages+' · '+ids.length+' Cells · '+stamp+esc(fl)+'</div></div>'+
+      '<div class="print-summary">'+summary.map(function(x){return '<div class="box"><div class="k">'+esc(x[0])+'</div><div class="v">'+x[1]+'</div><div class="pct">'+x[2]+'</div></div>';}).join('')+'</div>'+
+      '<div class="print-panel-grid"><table class="print-panel">'+colgroup+'<thead><tr>'+head.map(function(h){return '<th>'+esc(h)+'</th>';}).join('')+'</tr></thead><tbody>'+
+      ids.map(function(k){var r=data[k];return '<tr><td>'+r.n+'</td><td>'+esc(r.tr)+'</td><td>'+esc(r.row)+'</td><td>'+esc(r.cell)+'</td><td class="hasop">'+(r.done.length?r.done.map(esc).join('<br>'):'-')+'</td><td class="hasop">'+esc(r.miss)+'</td></tr>';}).join('')+
+      '</tbody></table></div><div class="print-page-number">Page '+(i+1)+' of '+pages+'</div></div>';
+    }).join('');
+    document.body.classList.add('print-activity');
+    setTimeout(function(){window.print();},80);
+  }
   async function refresh(force){
     var data=null;try{data=await load();}catch(e){data=null;}
     var s=data?(data.rows.length+'|'+data.rows.map(function(r){return r.r1+','+r.c1+':'+r.done.length+r.missing.length;}).join(';')):'none';
-    s+='|'+filt.txt+'|'+filt.miss;
+    s+='|'+filt.txt+'|'+filt.miss+'|'+filt.lim;
     if(!force&&s===sig)return;sig=s;paint(data);
   }
   window.dpbOpenConflicts=function(role){
-    cur=role==='sup'?'sup':'builder';filt={txt:'',miss:''};sig='';
+    cur=role==='sup'?'sup':'builder';filt={txt:'',miss:'',lim:STEP};sig='';
     var old=document.getElementById('dpbCfOv');if(old)old.remove();
     var ov=document.createElement('div');ov.id='dpbCfOv';
-    ov.innerHTML='<div class="cfTop"><b>🔍 تناقضات العمليات</b><button type="button" class="cfX">✕ قفل</button></div><div class="cfBody"><div class="empty">جاري الحساب…</div></div>';
+    ov.innerHTML='<div class="cfTop"><b>🔍 تناقضات العمليات</b><button type="button" class="cfP">🖨 PDF</button><button type="button" class="cfX">✕ قفل</button></div><div class="cfBody"><div class="empty">جاري الحساب…</div></div>';
     document.body.appendChild(ov);
     ov.querySelector('.cfX').onclick=function(){window.dpbCloseConflicts();};
+    ov.querySelector('.cfP').onclick=function(){printAll();};
     refresh(true);
     clearInterval(timer);timer=setInterval(function(){if(!document.getElementById('dpbCfOv')){clearInterval(timer);return;}refresh(false);},2500);
   };
