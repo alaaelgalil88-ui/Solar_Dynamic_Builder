@@ -61,6 +61,80 @@
   function rc(kind, n) { rcLoad(); RC[kind] = (RC[kind] || 0) + (n || 0); rcDirty = true; }
   function rcToday() { rcLoad(); return { day: RC.d, listen: RC.listen, get: RC.get, backup: RC.backup, total: RC.listen + RC.get + RC.backup }; }
   window.DPB_FS2_reads = rcToday;
+
+  /* ---- v185: data-usage report (separate admin tab). Counts the size of the DATA the app sends/receives, per kind of work, saved on the device per day.
+     It is an estimate of the payload (JSON size); the network envelope (headers/TLS) and images/fonts are not included. ---- */
+  var UKEY = 'dpb_usage_v1', UD = null, uDirty = false, USES = {}, USTART = Date.now();
+  function uDay() { try { return new Date().toLocaleDateString('en-CA'); } catch (e) { return new Date().toISOString().slice(0, 10); } }
+  function uTot(c, k) { var s = 0; Object.keys(c || {}).forEach(function (x) { s += (c[x][k] || 0); }); return s; }
+  function uLoad() {
+    var d = uDay();
+    if (UD && UD.d === d) return UD;
+    var old = UD; if (!old) { try { old = JSON.parse(localStorage.getItem(UKEY) || 'null'); } catch (e) { old = null; } }
+    if (old && old.d === d) { UD = old; return UD; }
+    var hist = (old && old.hist) || []; if (old && old.d) hist.push({ d: old.d, up: uTot(old.c, 'up'), dn: uTot(old.c, 'dn') });
+    UD = { d: d, c: {}, hist: hist.slice(-7) }; uDirty = true; return UD;
+  }
+  function jlen(o) { try { return JSON.stringify(o == null ? '' : o).length; } catch (e) { return 0; } }
+  function useAdd(cat, dir, bytes) {
+    bytes = Number(bytes) || 0; if (bytes <= 0) return;
+    var u = uLoad(), o = u.c[cat] = u.c[cat] || { up: 0, dn: 0, n: 0 }; o[dir] = (o[dir] || 0) + bytes; o.n++;
+    var s = USES[cat] = USES[cat] || { up: 0, dn: 0, n: 0 }; s[dir] += bytes; s.n++; uDirty = true;
+  }
+  function useCatKey(k) {
+    k = String(k || '').split('__').pop().replace(/-p\d+$/, '');
+    if (/^history$/.test(k)) return 'hist';
+    if (/^(users|projects)$/.test(k)) return 'users';
+    if (/^basecells$/.test(k)) return 'base';
+    if (/^master$/.test(k)) return 'master';
+    if (/^(msga_|msgs_|fcm_)/.test(k)) return 'msg';
+    if (/^(buildresult|buildmeta|mapcat)/.test(k)) return 'build';
+    if (/^(xlfile_|mapsnap_)/.test(k)) return 'xl';
+    if (/^rest/.test(k)) return 'rest';
+    return 'other';
+  }
+  function useCatPath(p) { p = String(p || ''); if (/\/rows(\/|$)/.test(p)) return 'cells'; var m = /\/kv\/([^\/]+)$/.exec(p); return m ? useCatKey(m[1]) : 'other'; }
+  window.DPB_USAGE = { add: useAdd, get: function () { return { today: uLoad(), session: USES, since: USTART }; }, reset: function () { UD = { d: uDay(), c: {}, hist: (UD && UD.hist) || [] }; USES = {}; USTART = Date.now(); uDirty = true; try { localStorage.setItem(UKEY, JSON.stringify(UD)); } catch (e) {} } };
+  setInterval(function () { if (uDirty) { uDirty = false; try { localStorage.setItem(UKEY, JSON.stringify(uLoad())); } catch (e) {} } }, 5000);
+  var UV = 'today';
+  var ULBL = { cells: ['🗺️', 'تعديلات الخرائط والكروت'], drive: ['☁️', 'رفع النسخة على Drive'], backup: ['💾', 'قراءة السيرفر للنسخة الاحتياطية'], base: ['📊', 'خلايا الإكسل المنفّذة (basecells)'], xl: ['📁', 'ملفات الإكسل ولقطات الخرائط'], build: ['🧱', 'نشر الخرايط وبنائها'], master: ['🏢', 'الشركات والمشغّلين'], msg: ['💬', 'الرسايل والإشعارات'], hist: ['📝', 'سجل الأحداث'], users: ['👤', 'الحسابات والمشاريع'], rest: ['📋', 'سجلات الإنتاج الأخرى'], retry: ['🔁', 'إعادة إرسال (طريق HTTPS بديل)'], script: ['📜', 'سكربت Google القديم'], other: ['•', 'أخرى'] };
+  function fmtB(n) { n = Number(n) || 0; if (n < 1024) return Math.round(n) + ' B'; if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB'; return (n / 1048576).toFixed(n < 10485760 ? 2 : 1) + ' MB'; }
+  function fb(n) { return '<span dir="ltr" style="unicode-bidi:isolate">' + fmtB(n) + '</span>'; }
+  function escH(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+  function usageRender() {
+    var host = document.getElementById('dpbUsageHost'); if (!host || !host.getClientRects().length) return;
+    if (!host.__ub) {
+      host.__ub = 1;
+      host.addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('[data-uv],[data-ua]') : null; if (!b) return;
+        if (b.getAttribute('data-uv')) { UV = b.getAttribute('data-uv'); usageRender(); }
+        else if (b.getAttribute('data-ua') === 'reset') { if (confirm('تصفير عدّاد الاستهلاك؟')) { window.DPB_USAGE.reset(); usageRender(); } }
+      });
+    }
+    var d = window.DPB_USAGE.get(), c = (UV === 'today') ? d.today.c : d.session;
+    var keys = Object.keys(c).sort(function (a, b) { return ((c[b].up || 0) + (c[b].dn || 0)) - ((c[a].up || 0) + (c[a].dn || 0)); });
+    var up = uTot(c, 'up'), dn = uTot(c, 'dn'), mx = 1; keys.forEach(function (k) { mx = Math.max(mx, (c[k].up || 0) + (c[k].dn || 0)); });
+    var sg = function (v, t) { return '<button type="button" data-uv="' + v + '" style="flex:1;padding:9px 6px;border-radius:10px;border:1px solid ' + (UV === v ? '#4d8dff' : '#243b57') + ';background:' + (UV === v ? '#12315f' : '#0b1626') + ';color:#eaf2f8;font-weight:800;font-size:12.5px">' + t + '</button>'; };
+    var h = '<div style="direction:rtl;text-align:right;color:#eaf2f8">';
+    h += '<div style="font-size:16px;font-weight:900;margin:2px 0 4px">📊 تقرير استهلاك النت</div>';
+    h += '<div style="font-size:11.5px;color:#8fa7c2;line-height:1.7;margin-bottom:10px">تقدير لحجم البيانات اللي التطبيق بعتها واستقبلها (من غير غلاف الشبكة والصور والخطوط). بيتحفظ على الجهاز ومبيختفيش لما تقفل التطبيق. القراءة من ذاكرة الجهاز مش محسوبة.</div>';
+    h += '<div style="display:flex;gap:8px;margin-bottom:10px">' + sg('today', 'النهاردة (' + escH(d.today.d) + ')') + sg('session', 'من فتح التطبيق') + '</div>';
+    h += '<div style="display:flex;gap:8px;margin-bottom:10px">' + [['⬆️ رفع', up], ['⬇️ تنزيل', dn], ['المجموع', up + dn]].map(function (x, i) { return '<div style="flex:1;background:#091827;border:1px solid #243b57;border-radius:12px;padding:9px 6px;text-align:center"><div style="font-size:11px;color:#8fa7c2">' + x[0] + '</div><div style="font-size:' + (i === 2 ? 17 : 15) + 'px;font-weight:900;margin-top:3px">' + fb(x[1]) + '</div></div>'; }).join('') + '</div>';
+    if (!keys.length) h += '<div style="background:#091827;border:1px solid #243b57;border-radius:12px;padding:14px;font-size:12.5px;color:#8fa7c2;text-align:center">لسه مفيش استهلاك متسجّل ' + (UV === 'today' ? 'النهاردة' : 'من فتح التطبيق') + '.</div>';
+    keys.forEach(function (k) {
+      var o = c[k], l = ULBL[k] || ['•', k], tot = (o.up || 0) + (o.dn || 0), w = Math.max(3, Math.round(tot / mx * 100));
+      h += '<div style="background:#091827;border:1px solid #243b57;border-radius:12px;padding:9px 11px;margin-bottom:7px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><b style="font-size:13px">' + l[0] + ' ' + escH(l[1]) + '</b><b style="font-size:13px">' + fb(tot) + '</b></div>'
+        + '<div style="height:6px;border-radius:4px;background:#13263d;margin:7px 0 6px;overflow:hidden"><div style="height:100%;width:' + w + '%;background:linear-gradient(90deg,#4d8dff,#2fd0a6)"></div></div>'
+        + '<div style="font-size:11.5px;color:#8fa7c2;display:flex;justify-content:space-between"><span>⬆️ ' + fb(o.up || 0) + '  ⬇️ ' + fb(o.dn || 0) + '</span><span>' + (o.n || 0) + ' مرة</span></div></div>';
+    });
+    var hist = (d.today.hist || []).slice().reverse();
+    if (hist.length) { h += '<div style="font-size:12px;font-weight:800;margin:12px 2px 6px;color:#8fa7c2">آخر الأيام</div>'; hist.forEach(function (x) { h += '<div style="display:flex;justify-content:space-between;background:#091827;border:1px solid #243b57;border-radius:10px;padding:7px 11px;margin-bottom:5px;font-size:12px"><span>' + escH(x.d) + '</span><span>' + fb((x.up || 0) + (x.dn || 0)) + '</span></div>'; }); }
+    h += '<button type="button" data-ua="reset" style="width:100%;margin-top:10px;padding:10px;border-radius:12px;border:1px solid #243b57;background:#0b1626;color:#eaf2f8;font-weight:800;font-size:12.5px">🗑️ تصفير العدّاد</button></div>';
+    if (host.__last !== h) { host.__last = h; host.innerHTML = h; }
+  }
+  setInterval(usageRender, 1500);
+  try { document.addEventListener('click', function (e) { if (e.target && e.target.closest && e.target.closest('[data-tab="usage"]')) setTimeout(usageRender, 60); }); } catch (e) {}
+  try { document.addEventListener('visibilitychange', function () { if (document.hidden && uDirty) { uDirty = false; try { localStorage.setItem(UKEY, JSON.stringify(uLoad())); } catch (e) {} } }); } catch (e) {}
   setInterval(function () {
     if (rcDirty) { rcDirty = false; try { localStorage.setItem('dpb_fs2_reads', JSON.stringify(RC)); } catch (e) {} }
     var t = rcToday(), sig = Math.floor(t.total / 500);
@@ -364,7 +438,8 @@
         if (!auth.currentUser) return Promise.reject(Object.assign(new Error('no signed-in user'), { code: 'no-auth' }));
         return auth.currentUser.getIdToken().then(function (tok) {
           var ctl = (typeof AbortController === 'function') ? new AbortController() : null, tm = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, 20000);
-          return prevFetch('https://firestore.googleapis.com/v1/' + DOCS + ':commit', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ writes: writes }), signal: ctl ? ctl.signal : undefined })
+          var rbody = JSON.stringify({ writes: writes }); useAdd('retry', 'up', rbody.length);
+          return prevFetch('https://firestore.googleapis.com/v1/' + DOCS + ':commit', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }, body: rbody, signal: ctl ? ctl.signal : undefined })
             .then(function (r) { clearTimeout(tm); return r.text().then(function (t) { if (r.ok) return true; throw restError(r.status, t); }); },
               function (e) { clearTimeout(tm); throw Object.assign(new Error(String(e && e.name === 'AbortError' ? 'rest-timeout (20s)' : (e && e.message) || e)), { code: e && e.name === 'AbortError' ? 'rest-timeout' : 'rest-network' }); });
         });
@@ -397,7 +472,7 @@
             var ctl = (typeof AbortController === 'function') ? new AbortController() : null, tm = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, 30000);
             var url = 'https://firestore.googleapis.com/v1/' + DOCS + '/' + path + '?pageSize=200' + (token ? '&pageToken=' + encodeURIComponent(token) : '');
             return prevFetch(url, { headers: { 'Authorization': 'Bearer ' + tok }, signal: ctl ? ctl.signal : undefined }).then(
-              function (r) { clearTimeout(tm); return r.text().then(function (t) { if (!r.ok) throw restError(r.status, t); return JSON.parse(t); }); },
+              function (r) { clearTimeout(tm); return r.text().then(function (t) { useAdd('backup', 'dn', t.length); if (!r.ok) throw restError(r.status, t); return JSON.parse(t); }); },
               function (e) { clearTimeout(tm); throw Object.assign(new Error(e && e.name === 'AbortError' ? 'rest-timeout (30s)' : String((e && e.message) || e)), { code: e && e.name === 'AbortError' ? 'rest-timeout' : 'rest-network' }); });
           }).catch(function (e) {
             if (tries > 0 && !(e && e.definite)) return pause(900).then(function () { return page(tries - 1); });
@@ -411,7 +486,7 @@
         }
         return page(2);
       }
-      function sdkList(path) { var col = fs.collection.apply(null, [db].concat(path.split('/'))); return (fs.getDocsFromServer ? fs.getDocsFromServer(col) : fs.getDocs(col)).then(function (q) { rc('backup', q.docs.length); return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }); }
+      function sdkList(path) { var col = fs.collection.apply(null, [db].concat(path.split('/'))); return (fs.getDocsFromServer ? fs.getDocsFromServer(col) : fs.getDocs(col)).then(function (q) { rc('backup', q.docs.length); var bb = 0; q.docs.forEach(function (d) { bb += jlen(d.data()); }); useAdd('backup', 'dn', bb); return q.docs.map(function (d) { return { id: d.id, data: d.data() }; }); }); }
       function listAll(path) {
         return sdkList(path).catch(function (e) {
           var c = String((e && (e.code || e.message)) || e);
@@ -423,6 +498,7 @@
       // ---- v127 cell writes: transaction (server compare) online, outbox otherwise ----
       function txChunk(chunk) {
         var skipped = [];
+        try { chunk.forEach(function (o) { useAdd('cells', 'up', jlen(o.cells) + jlen(o.base)); }); } catch (e) {}
         return Promise.race([
           fs.runTransaction(db, function (tx) {
             skipped = [];
@@ -529,8 +605,8 @@
             function wait(p, ms) { return Promise.race([p.then(function () { return 'ok'; }, function (e) { return String(e && e.code || e && e.message || e); }), new Promise(function (res) { setTimeout(function () { res('timeout'); }, ms); })]); }
             return wait(fs.getDocFromServer(r), 8000).then(function (a) { out.read = a; return restProbe(); }).then(function (rr) { out.rest = rr; return wait(fs.setDoc(r, { t: fs.serverTimestamp() }), 8000); }).then(function (b) { out.write = b; return out; });
           },
-          get: function (path) { return fs.getDoc(dref(path)).then(function (x) { try { if (!x.metadata.fromCache) rc('get', 1); } catch (e) {} return x.exists() ? x.data() : null; }); },
-          listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { try { if (!q.metadata.fromCache) rc('listen', q.docChanges().length); } catch (e) {} cb(q.docChanges().map(function (c) { return c.type === 'removed' ? { id: c.doc.id, removed: true } : { id: c.doc.id, data: c.doc.data() }; }), null, true); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
+          get: function (path) { return fs.getDoc(dref(path)).then(function (x) { try { if (!x.metadata.fromCache) { rc('get', 1); useAdd(useCatPath(path), 'dn', x.exists() ? jlen(x.data()) : 60); } } catch (e) {} return x.exists() ? x.data() : null; }); },
+          listen: function (path, cb, opts) { var col = fs.collection.apply(null, [db].concat(path.split('/'))), q0 = (opts && opts.where) ? fs.query(col, fs.where(opts.where[0], opts.where[1], opts.where[2])) : col; return fs.onSnapshot(q0, function (q) { try { if (!q.metadata.fromCache) { rc('listen', q.docChanges().length); var lb = 0; q.docChanges().forEach(function (c) { if (c.type !== 'removed') lb += jlen(c.doc.data()); }); useAdd(useCatPath(path), 'dn', lb); } } catch (e) {} cb(q.docChanges().map(function (c) { return c.type === 'removed' ? { id: c.doc.id, removed: true } : { id: c.doc.id, data: c.doc.data() }; }), null, true); }, function (e) { console.warn('dpb-fs2 listen', e); cb(null, e); }); },
           // every document of a collection, read from the SERVER (never the local cache), so a backup is exactly what Firestore holds
           list: function (path) { return listAll(path); },
           // v160: read what this phone already holds (no network, no quota). null = not supported / nothing there
@@ -556,6 +632,7 @@
               p = p.then(function () {
                 var b = fs.writeBatch(db);
                 chunk.forEach(function (o) {
+                  useAdd(useCatPath(o.path), 'up', o.t === 's' ? jlen(o.data) : (o.t === 'f' ? jlen(o.cells) + jlen(o.base) : 60));
                   if (o.t === 's') b.set(dref(o.path), clean(o.data));
                   else if (o.t === 'f') { var cells = clean(o.cells); b.set(dref(o.path), Object.assign({}, o.base, { cells: cells }), { mergeFields: Object.keys(o.base).concat(Object.keys(cells).map(function (k) { return 'cells.' + k; })) }); }
                   else b.delete(dref(o.path));
@@ -1262,6 +1339,19 @@
       return prevFetch(input, init);
     } catch (e) { return prevFetch(input, init); }
   };
+  /* v185: count what goes to / comes back from the Google scripts (Drive upload and the old Apps Script) for the usage tab */
+  (function () {
+    var f2 = window.fetch;
+    window.fetch = function (input, init) {
+      var url = ''; try { url = (typeof input === 'string') ? input : String((input && input.url) || ''); } catch (e) {}
+      if (!/^https:\/\/script\.(google|googleusercontent)\.com\//.test(url)) return f2.apply(this, arguments);
+      var cat = 'script';
+      try { var bu = window.DPB_backupUrl && window.DPB_backupUrl(); if (bu && url.split('?')[0] === String(bu).split('?')[0]) cat = 'drive'; } catch (e) {}
+      try { var bd = init && init.body; useAdd(cat, 'up', url.length + (typeof bd === 'string' ? bd.length : 0)); } catch (e) {}
+      return f2.apply(this, arguments).then(function (r) { try { r.clone().arrayBuffer().then(function (ab) { useAdd(cat, 'dn', ab.byteLength); }, function () {}); } catch (e) {} return r; });
+    };
+  })();
+
   // the record of one map cell exactly as Firestore holds it right now (null if the layer is off / not connected yet) - the map's Cell Details card reads this so it never waits for the next full pull
   function recordAt(process, r, c) {
     try { var st0 = curStore(); if (!st0) return null; var s = CORE.slug(process); var hit = st0.all().filter(function (d) { return CORE.slug(d.process) === s && Number(d.r1) === Number(r) && Number(d.c1) === Number(c); })[0]; return hit ? stamp(Object.assign({ recordId: hit.id }, hit)) : null; } catch (e) { return null; }
@@ -1575,11 +1665,12 @@
       });
     });
   }
-  // external copy first, then the Drive upload - one after the other, so two huge strings never exist at the same time
+  // v186: the phone copy and the Google Drive upload are two separate jobs with separate switches, timers and daily times.
+  // bkPublish only writes the phone copy (it returns [w, {skipped}] so the old callers keep working); the Drive upload is driveUploadFresh() below.
   function bkPublish(r) {
     bkStep('phone-copy');
     return bkSaveExternal(r.current, r.previous, false).then(function (w) { bkNoteExt(w); return w; }, function () { return 'fail'; })
-      .then(function (w) { bkStep('drive'); return bkDriveUpload(r.current).then(function (d) { bkStep('done'); return [w, d]; }); });
+      .then(function (w) { bkStep('done'); return [w, { skipped: true }]; });
   }
   function bkPerm(h, ask) {
     return Promise.resolve().then(function () {
@@ -1859,74 +1950,205 @@
     return '\nGoogle Drive: ✔ نجح الساعة ' + t + (x.mb ? ' (' + x.mb + ' MB في ' + x.sec + ' ث)' : '') + (x.sharedWith ? ' — مشاركة مع ' + x.sharedWith + ' ✔' : (x.shareError ? ' — ⚠ تعذّرت المشاركة: ' + x.shareError : (driveEmail() ? '' : ' — اكتب إيميل Drive عشان النسخة تظهر عنده'))) + (x.owner ? '\nالملف محفوظ في حساب: ' + x.owner : '');
   }
 
-  /* ---- automatic backup: every N minutes, only when the data changed since the last one (each run reads every document once, so it is meant for ONE device - the admin's) ---- */
-  var bkBusy = false, bkLastVer = null;
+  /* ---- v186: automatic jobs. TWO independent jobs, each with its own master switch, its own "every N minutes/hours/days" timer and its own fixed daily time:
+       bk = copy on the phone (current + previous),   dr = upload to Google Drive.
+     Both only act when the map cells changed (rows), and only on the admin device. Minimum for a timer: 5 minutes. ---- */
+  var bkBusy = false, bkLastVer = null, drLastVer = null;
+  var SCH = {
+    bk: { on: 'dpb_fs2_bk_auto', iv: 'dpb_fs2_bk_iv', n: 'dpb_fs2_bk_n', u: 'dpb_fs2_bk_u', at: 'dpb_fs2_bk_at_on', t: 'dpb_fs2_bk_at', day: 'dpb_fs2_bk_at_day', last: 'dpb_fs2_bk_last', defN: function () { return String(Number(ls('dpb_fs2_bk_min', '30')) || 30); }, defT: '20:00' },
+    dr: { on: 'DPB_BACKUP_DRIVE_V1', iv: 'dpb_fs2_dr_iv', n: 'dpb_fs2_dr_n', u: 'dpb_fs2_dr_u', at: 'dpb_fs2_dr_at_on', t: 'dpb_fs2_dr_at', day: 'dpb_fs2_dr_at_day', last: 'dpb_fs2_dr_last', defN: function () { return '30'; }, defT: '22:00' }
+  };
+  var UNIT_MIN = { m: 1, h: 60, d: 1440 }, UNIT_AR = { m: 'دقيقة', h: 'ساعة', d: 'يوم' }, MIN_MINUTES = 5;
+  function schOn(k) { return k === 'dr' ? driveOn() : ls(SCH.bk.on, 'off') === 'on'; }
+  function schN(k) { var n = Math.floor(Number(ls(SCH[k].n, SCH[k].defN()))); return n >= 1 ? n : Number(SCH[k].defN()); }
+  function schU(k) { var u = ls(SCH[k].u, 'm'); return UNIT_MIN[u] ? u : 'm'; }
+  function schT(k) { var v = String(ls(SCH[k].t, SCH[k].defT) || ''); return /^([01]?\d|2[0-3]):[0-5]\d$/.test(v) ? v : SCH[k].defT; }
+  function schMinutes(k) { return Math.max(MIN_MINUTES, schN(k) * UNIT_MIN[schU(k)]); }
+  function schEvery(k) { return ls(SCH[k].iv, 'on') === 'on' ? schMinutes(k) : 0; }          // minutes, 0 = the timer is stopped
+  function schAtMin(k) { if (ls(SCH[k].at, 'off') !== 'on') return null; var m = /^(\d+):(\d+)$/.exec(schT(k)); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }
+  function dayStr(d) { d = d || new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+  function schDailyDue(k) { var a = schAtMin(k); if (a == null) return false; var d = new Date(); return (d.getHours() * 60 + d.getMinutes() >= a) && ls(SCH[k].day, '') !== dayStr(d); }
+  function schMarkDay(k) { lsSet(SCH[k].day, dayStr()); }
   function bkAdminDev() { try { return localStorage.getItem('DPB_ADMIN_DEVICE_V1') === '1' || localStorage.getItem('dpb_fs2_bk_admin') === '1'; } catch (e) { return false; } }
+  // one place decides if an automatic job is due: -> { ok, iv, at }  (iv = the timer fired, at = the daily time fired)
+  function schDue(k) {
+    var ev = schEvery(k), last = Number(ls(SCH[k].last, '0')) || 0, iv = ev > 0 && (Date.now() - last) >= ev * 60000, at = schDailyDue(k);
+    return { ok: iv || at, iv: iv, at: at, ev: ev, since: Date.now() - last };
+  }
+  function nextText(k) {
+    if (!schOn(k)) return k === 'dr' ? 'الرفع التلقائي متوقف — زرار Upload Now لسه شغّال.' : 'النسخ التلقائي متوقف — زرارات Backup Now و Export لسه شغّالة.';
+    var ev = schEvery(k), a = schAtMin(k);
+    if (!ev && a == null) return 'مفيش جدول شغّال — شغّل "كل فترة" أو "وقت يومي".';
+    var parts = []; if (ev) parts.push('كل ' + schN(k) + ' ' + UNIT_AR[schU(k)]); if (a != null) parts.push('يوميًا ' + schT(k));
+    var now = Date.now(), best = Infinity, last = Number(ls(SCH[k].last, '0')) || 0;
+    if (ev) best = Math.min(best, last + ev * 60000);
+    if (a != null) { var d = new Date(); d.setHours(Math.floor(a / 60), a % 60, 0, 0); if (!(d.getTime() > now) && ls(SCH[k].day, '') === dayStr()) d.setDate(d.getDate() + 1); best = Math.min(best, d.getTime()); }
+    var wait = best - now, s = 'الجدول: ' + parts.join(' + ') + ' — بس لو في تغيير في الخرائط.\n';
+    s += wait <= 0 ? 'الجاية: في أول فحص (كل دقيقة)' : (wait < 3600000 ? 'الجاية: بعد ' + Math.max(1, Math.ceil(wait / 60000)) + ' دقيقة' : 'الجاية: ' + new Date(best).toLocaleString('ar-EG', { weekday: 'short', hour: '2-digit', minute: '2-digit' }));
+    if (!bkAdminDev()) s += '\n⚠ الجهاز ده مش جهاز الأدمن، فالتلقائي مش هيشتغل عليه.';
+    return s;
+  }
+  function schPaint() {
+    [['Bk', 'bk'], ['Dr', 'dr']].forEach(function (x) {
+      var p = x[0], k = x[1], sc = document.getElementById('dpbFs2' + p + 'Sched'); if (!sc) return;
+      var g = function (i) { return document.getElementById('dpbFs2' + p + i); }, master = schOn(k);
+      sc.classList.toggle('fs2Dim', !master);
+      if (g('N')) { g('N').disabled = g('U').disabled = !master || ls(SCH[k].iv, 'on') !== 'on'; g('T').disabled = !master || ls(SCH[k].at, 'off') !== 'on'; g('Iv').disabled = g('At').disabled = !master; }
+      var el = g('Next'); if (el) el.textContent = nextText(k);
+    });
+  }
+  function injectBkCss() {
+    if (document.getElementById('dpbFs2BkCss')) return;
+    var s = document.createElement('style'); s.id = 'dpbFs2BkCss';
+    s.textContent =
+      '#dpbFs2Card .fs2Grp{margin:14px 0 0;border:1px solid #2a4568;border-radius:16px;background:#0a1a2c;padding:12px 12px 6px}' +
+      '#dpbFs2Card .fs2GrpT{font-size:15px;font-weight:900;color:#eef5ff;margin:0 2px 10px}' +
+      '#dpbFs2Card .fs2Grp .fs2Btns{margin:2px 0 8px}' +
+      '#dpbFs2Card .fs2Sched{margin:2px 0 10px;padding:8px 8px 0;border:1px dashed #2f4d70;border-radius:14px;transition:opacity .15s}' +
+      '#dpbFs2Card .fs2Sched.fs2Dim{opacity:.45}' +
+      '#dpbFs2Card .fs2Sched .fs2Opt{background:#0d2033;margin-bottom:8px}' +
+      '#dpbFs2Card .fs2Num{width:84px;box-sizing:border-box;padding:6px 8px;border-radius:9px;border:1px solid #3a5878;background:#0d1b2e;color:#fff;font-size:15px;font-weight:800;text-align:center;direction:ltr;margin:0 4px;min-height:34px}' +
+      '#dpbFs2Card .fs2Num.fs2Time{width:140px}' +
+      '#dpbFs2Card .fs2Num:disabled,#dpbFs2Card .fs2OptS select:disabled{opacity:.5}' +
+      '#dpbFs2Card .fs2Tiny{font-size:10.5px;opacity:.75;margin-top:4px}' +
+      '#dpbFs2Card .fs2SchNext{font-size:11.5px;line-height:1.85;color:#9db2c7;padding:0 4px 8px;white-space:pre-line;background:transparent!important;border:0!important;margin:0!important}' +
+      '#dpbBackupScreenHost #dpbFs2Card .fs2Grp{background:#f7f9fc!important;border:1px solid #ccd5df!important}' +
+      '#dpbBackupScreenHost #dpbFs2Card .fs2GrpT{color:#17212b!important}' +
+      '#dpbBackupScreenHost #dpbFs2Card .fs2Sched{border-color:#b9c5d3!important}' +
+      '#dpbBackupScreenHost #dpbFs2Card .fs2Sched .fs2Opt{background:#eef1f5!important}' +
+      '#dpbBackupScreenHost #dpbFs2Card .fs2Num{background:#fff!important;color:#123!important;border:1px solid #ccd5df!important}' +
+      '#dpbBackupScreenHost #dpbFs2Card .fs2SchNext{color:#5c6672!important}';
+    document.head.appendChild(s);
+  }
+  // ---- job 1: the copy on the phone ----
   function bkAutoTick(force) {
-    if (!on() || (!force && (ls('dpb_fs2_bk_auto', 'off') !== 'on' || !bkAdminDev())) || bkBusy) return Promise.resolve('skip');
-    var min = Number(ls('dpb_fs2_bk_min', '30')) || 30, last = Number(ls('dpb_fs2_bk_last', '0')) || 0, since = Date.now() - last;
+    if (!on() || bkBusy) return Promise.resolve('skip');
+    var due = { ok: true, iv: true, at: false, ev: 0, since: 0 };
     if (!force) {
-      // v161: the backup is made from the phone's own copy (no reads), so the gap is just the minutes the user chose. Only a fallback to the server is rate-limited (see bkRead).
-      if (since < min * 60000) return Promise.resolve('skip');
+      if (ls(SCH.bk.on, 'off') !== 'on' || !bkAdminDev()) return Promise.resolve('skip');
+      due = schDue('bk'); if (!due.ok) return Promise.resolve('skip');
       if (Date.now() < Number(ls('dpb_fs2_bk_quota_until', '0'))) return Promise.resolve('skip');
       // with a project open the listener tells us when something changed (own edits AND other devices' edits); with no project open nothing can tell,
-      // so the namespace is looked at no more than once an hour (every look reads each document once)
-      if (curStore()) { if (bkLastVer === version) return Promise.resolve('skip'); }
-      else if (since < Math.max(min, 60) * 60000) return Promise.resolve('skip');
+      // so the namespace is looked at no more than once an hour (every look reads each document once) - a daily time is allowed to look once
+      if (curStore()) { if (bkLastVer === version) { if (due.at) schMarkDay('bk'); return Promise.resolve('skip'); } }
+      else if (!due.at && due.since < Math.max(due.ev, 60) * 60000) return Promise.resolve('skip');
     }
     bkBusy = true; bkAutoRun = !force; var ver = version;
     return bkBackupNow().then(function (r) {
-      bkLastVer = ver; lsSet('dpb_fs2_bk_last', String(Date.now()));
-      if (!r.changed) {
-        if (driveOn() && ls('dpb_fs2_bk_drive_pending', '')) return bkGet('current').then(function (c) { return c ? bkDriveUpload(c) : null; }).then(function () { return 'same'; });
-        return 'same';
-      }
+      bkLastVer = ver; lsSet(SCH.bk.last, String(Date.now())); if (due.at) schMarkDay('bk');
+      if (!r.changed) return 'same';
       return bkPublish(r).then(function (x) { return 'saved:' + x[0]; });
     }).catch(function (e) {
-      if (e && e.code === 'bk-skip') { bkLastVer = ver; lsSet('dpb_fs2_bk_last', String(Date.now())); return 'skip-server'; }   // v161: phone copy not usable and the server was read recently: wait for the next change / interval instead of retrying every minute
+      if (e && e.code === 'bk-skip') { bkLastVer = ver; lsSet(SCH.bk.last, String(Date.now())); return 'skip-server'; }   // v161: phone copy not usable and the server was read recently: wait for the next change / interval instead of retrying every minute
       if (/resource-exhausted|quota/i.test(String(e && (e.code || e.message || e)))) lsSet('dpb_fs2_bk_quota_until', String(Date.now() + 3 * 3600000)); return 'error';
     }).then(function (x) { bkBusy = false; bkAutoRun = false; bkPaint(); return x; });
   }
-  if (typeof setInterval === 'function') setInterval(function () { bkAutoTick(false); }, 60000);
+  // ---- job 2: the upload to Google Drive (its own fresh snapshot of the phone's data; it never touches the phone copy) ----
+  function driveUploadFresh(manual) {
+    return bkRead().then(function (cur) {
+      var vfp = bkVfp(cur);
+      return bkGet('drivevfp').then(function (ov) {
+        var pend = !!ls('dpb_fs2_bk_drive_pending', '');
+        if (!manual && ov && !pend && stable(ov) === stable(vfp)) return { skipped: true, same: true };
+        var obj = bkMake(cur); cur = null;
+        return bkDriveUpload(obj).then(function (d) { return (d && d.ok) ? bkPut('drivevfp', vfp).then(function () { return d; }) : d; });
+      });
+    });
+  }
+  function drAutoTick(force) {
+    if (!on() || !driveOn() || bkBusy) return Promise.resolve('skip');
+    var due = { ok: true, at: false, ev: 0, since: 0 };
+    if (!force) {
+      if (!bkAdminDev()) return Promise.resolve('skip');
+      due = schDue('dr'); if (!due.ok) return Promise.resolve('skip');
+      if (Date.now() < Number(ls('dpb_fs2_bk_quota_until', '0'))) return Promise.resolve('skip');
+      var pend = !!ls('dpb_fs2_bk_drive_pending', '');
+      if (!pend) {
+        if (curStore()) { if (drLastVer === version) { if (due.at) schMarkDay('dr'); return Promise.resolve('skip'); } }
+        else if (!due.at && due.since < Math.max(due.ev, 60) * 60000) return Promise.resolve('skip');
+      }
+    }
+    bkBusy = true; var ver = version;
+    return driveUploadFresh(false).then(function (d) {
+      drLastVer = ver; lsSet(SCH.dr.last, String(Date.now())); if (due.at) schMarkDay('dr');
+      return d && d.same ? 'same' : (d && d.ok ? 'uploaded' : 'drive-fail');
+    }).catch(function (e) {
+      if (e && e.code === 'bk-skip') { drLastVer = ver; lsSet(SCH.dr.last, String(Date.now())); return 'skip-server'; }
+      if (/resource-exhausted|quota/i.test(String(e && (e.code || e.message || e)))) lsSet('dpb_fs2_bk_quota_until', String(Date.now() + 3 * 3600000)); return 'error';
+    }).then(function (x) { bkBusy = false; try { bkPaint(); } catch (e) {} return x; });
+  }
+  function bothTick(force) { return bkAutoTick(force).then(function (a) { return drAutoTick(force).then(function (b) { return a === 'skip' ? b : a; }); }); }
+  if (typeof setInterval === 'function') setInterval(function () { bothTick(false); }, 60000);
   // Android freezes the page's timers while the app is in the background: when the admin comes back, check right away instead of waiting for the next minute
-  try { document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { bkAutoTick(false); }, 4000); }); } catch (e) {}
-  window.DPB_FS2.autoTick = bkAutoTick;
+  try { document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(function () { bothTick(false); }, 4000); }); } catch (e) {}
+  window.DPB_FS2.autoTick = bothTick; window.DPB_FS2.driveNow = function () { return driveUploadFresh(true); };
   /* v172: the status card refreshes itself while it is open (it used to show whatever it showed when it was opened) */
-  try { setInterval(function () { if (!document.hidden && document.getElementById('dpbFs2DriveInfo')) bkPaint(); }, 3000); } catch (e) {}
+  try { setInterval(function () { if (!document.hidden && document.getElementById('dpbFs2DriveInfo')) { bkPaint(); schPaint(); } }, 3000); } catch (e) {}
   window.DPB_FS2.status = function () { return { on: on(), ns: nsName(), connected: !!curStore(), failed: !!failedAt, err: String(lastErr || '') }; };
   window.DPB_FS2.backupNow = bkBackupNow; window.DPB_FS2.saveExternal = bkSaveExternal;
 
   /* ---- Admin card (Admin > sync tab): on/off, live status, counts, import ---- */
   function paintState() {
     var el = document.getElementById('dpbFs2State'); if (!el) return;
-    if (!on()) { el.textContent = 'الحالة: متقفلة (النظام القديم شغّال)'; return; }
+    if (!on()) { setState(el, 'الحالة: متقفلة (النظام القديم شغّال)'); return; }
     var st2 = curStore();
-    if (st2) { var c = st2.counts(), t = procs().map(function (n) { var k = Object.keys(c).filter(function (x) { return CORE.slug(x) === CORE.slug(n); })[0]; return n + ': ' + (k ? c[k] : 0); }).join(' | '); el.textContent = 'الحالة: شغّالة ومتصلة ✅ — منفّذ دلوقتي: ' + t; return; }
-    el.textContent = failedAt ? ('الحالة: شغّالة لكن مش متصلة ❌ — ' + lastErr) : 'الحالة: بتتصل بـ Firestore…';
+    if (st2) { var c = st2.counts(), t = procs().map(function (n) { var k = Object.keys(c).filter(function (x) { return CORE.slug(x) === CORE.slug(n); })[0]; return n + ': ' + (k ? c[k] : 0); }).join(' | '); setState(el, 'الحالة: شغّالة ومتصلة ✅ — منفّذ دلوقتي: ' + t); return; }
+    setState(el, failedAt ? ('الحالة: شغّالة لكن مش متصلة ❌ — ' + lastErr) : 'الحالة: بتتصل بـ Firestore…');
+  }
+  // the counters line "… — منفّذ دلوقتي: A: 1 | B: 2" is drawn as small cards, one per process
+  function setState(el, text) {
+    var k = text.indexOf('منفّذ دلوقتي:');
+    if (k < 0) { el.textContent = text; return; }
+    var head = text.slice(0, k).replace(/[\s—\-]+$/, ''), list = text.slice(k + 'منفّذ دلوقتي:'.length).split('|');
+    var chips = list.map(function (x) { x = x.trim(); var j = x.lastIndexOf(':'); return j < 0 ? '' : '<span class="fs2Chip">' + escH(x.slice(0, j).trim()) + ' <i>' + escH(x.slice(j + 1).trim()) + '</i></span>'; }).join('');
+    el.innerHTML = '<div class="fs2StHead">' + escH(head) + '</div><div class="fs2Sec" style="margin:8px 0 0">منفّذ دلوقتي</div><div class="fs2Chips" style="margin-top:6px">' + chips + '</div>';
   }
   function mountCard() {
     var host = document.getElementById('dpbBackupScreenHost');
     if (!host || document.getElementById('dpbFs2Card')) return;
     var c = document.createElement('section'); c.className = 'dpbAdminCard'; c.id = 'dpbFs2Card';
+    injectBkCss();
+    c.setAttribute('data-v110', '1');   // v186: this card is built here in its final layout; the old tidy-up script in index.html must not rebuild it
+    var swH = function (id) { return '<label class="fs2Sw"><input type="checkbox" id="' + id + '"><span class="fs2SwTrack"></span></label>'; };
+    var optH = function (title, sub, id) { return '<div class="fs2Opt"><div class="fs2OptTxt"><div class="fs2OptT">' + title + '</div><div class="fs2OptS">' + sub + '</div></div>' + swH(id) + '</div>'; };
+    var schedH = function (p) {
+      return '<div class="fs2Sched" id="dpbFs2' + p + 'Sched">' +
+        optH('⏱️ كل فترة', 'كل <input type="number" inputmode="numeric" min="1" max="9999" id="dpbFs2' + p + 'N" class="fs2Num"><select id="dpbFs2' + p + 'U"><option value="m">دقايق</option><option value="h">ساعات</option><option value="d">أيام</option></select><div class="fs2Tiny">أقل مدة 5 دقايق</div>', 'dpbFs2' + p + 'Iv') +
+        optH('⏰ وقت يومي ثابت', 'كل يوم الساعة <input type="time" id="dpbFs2' + p + 'T" class="fs2Num fs2Time">', 'dpbFs2' + p + 'At') +
+        '<div class="hint fs2SchNext" id="dpbFs2' + p + 'Next"></div></div>';
+    };
+    var fldH = function (label, inner) { return '<div class="fs2Fld"><div class="fs2Lbl">' + label + '</div>' + inner + '</div>'; };
+    var boxH = function (title, id, txt) { return '<div class="fs2Box"><div class="fs2BoxT">' + title + '</div><div class="hint" id="' + id + '">' + (txt || '') + '</div></div>'; };
     c.innerHTML = '<h3>🧩 الطبقة الجديدة (كل الخرائط)</h3>' +
       '<div class="hint">مصدر واحد للخلايا في Firestore. مفيش حاجة بتتغيّر إلا لما تشغّلها. بتتكتب في مكان جديد منفصل عن بياناتك القديمة، وإيقافها بيرجّعك للنظام القديم فورًا.</div>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="dpbAdminBtn" id="dpbFs2Backup">💾 نسخة احتياطية الآن</button><button type="button" class="dpbAdminBtn" id="dpbFs2Ext">📤 حفظ برّه التطبيق</button><button type="button" class="dpbAdminBtn" id="dpbFs2Dir" style="display:none">📁 مكان الحفظ</button></div>' +
-      '<label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="dpbFs2Auto"> نسخة تلقائية كل <select id="dpbFs2AutoMin"><option value="5">5</option><option value="15">15</option><option value="30">30</option><option value="60">60</option><option value="120">120</option></select> دقيقة (لو في تغيير) — على جهاز الأدمن بس</label>' +
-      '<label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="dpbFs2Drive"> ☁️ رفع نسخة على Google Drive</label>' +
-      '<input type="url" id="dpbFs2Url" autocomplete="off" placeholder="رابط سكربت النسخ الاحتياطي (ينتهي بـ /exec)" style="width:100%;box-sizing:border-box;margin-top:6px;padding:9px 10px;border-radius:8px;border:1px solid #567;background:#0d1b2e;color:#fff;direction:ltr;text-align:left">' +
-      '<input type="email" id="dpbFs2Email" inputmode="email" autocomplete="off" placeholder="إيميل Google Drive اللي تترفع عليه النسخة" style="width:100%;box-sizing:border-box;margin-top:6px;padding:9px 10px;border-radius:8px;border:1px solid #567;background:#0d1b2e;color:#fff;direction:ltr;text-align:left">' +
-      '<details style="margin-top:10px"><summary class="hint" style="cursor:pointer">⚙️ أدوات متقدمة (نادرًا ما تحتاجها)</summary>' +
+      /* ===== 1) the phone ===== */
+      '<div class="fs2Grp" id="dpbFs2GrpBk"><div class="fs2GrpT">💾 النسخ على الهاتف</div>' +
+      optH('نسخ تلقائي على الهاتف', 'بيحفظ نسخة جوّه الجهاز (حالية + سابقة) لو في تغيير في الخرائط. على جهاز الأدمن بس', 'dpbFs2Auto') +
+      schedH('Bk') +
+      '<div class="fs2Btns"><button type="button" class="dpbAdminBtn" id="dpbFs2Backup" title="💾 نسخة احتياطية الآن">Backup Now</button><button type="button" class="dpbAdminBtn" id="dpbFs2Ext" title="📤 حفظ برّه التطبيق">Export</button><button type="button" class="dpbAdminBtn" id="dpbFs2Dir" title="📁 مكان الحفظ" style="display:none">Location</button></div>' +
+      boxH('النسخ على الهاتف', 'dpbFs2BkInfo', 'النسخ: بيحتفظ بنسختين بس (حالية + سابقة).') + '</div>' +
+      /* ===== 2) Google Drive ===== */
+      '<div class="fs2Grp" id="dpbFs2GrpDr"><div class="fs2GrpT">☁️ الرفع على Google Drive</div>' +
+      optH('رفع تلقائي على Google Drive', 'بيرفع نسخة لو في تغيير في الخرائط. مستقل تمامًا عن النسخ على الهاتف', 'dpbFs2Drive') +
+      schedH('Dr') +
+      fldH('رابط سكربت النسخ الاحتياطي (ينتهي بـ /exec)', '<input type="url" id="dpbFs2Url" autocomplete="off" placeholder="https://script.google.com/…/exec">') +
+      fldH('إيميل Google Drive اللي تترفع عليه النسخة', '<input type="email" id="dpbFs2Email" inputmode="email" autocomplete="off" placeholder="name@gmail.com">') +
+      '<div class="fs2Btns"><button type="button" class="dpbAdminBtn" id="dpbFs2DriveNow" title="☁️ رفع على Drive دلوقتي">Upload Now</button></div>' +
+      boxH('Google Drive', 'dpbFs2DriveInfo') + '</div>' +
+      /* ===== tools ===== */
+      '<details style="margin-top:12px"><summary class="hint" style="cursor:pointer">⚙️ أدوات متقدمة (نادرًا ما تحتاجها)</summary>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button type="button" class="dpbAdminBtn" id="dpbFs2ImportXl">📥 استيراد قيم الإكسل المرفوع (إضافة بس)</button><button type="button" class="dpbAdminBtn" id="dpbFs2CheckXl">🔎 فحص قيم الإكسل</button></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center"><select id="dpbFs2RestoreSrc" class="dpbAdminBtn"><option value="current">استعادة من: الحالية</option><option value="previous">استعادة من: السابقة</option><option value="file">استعادة من: ملف</option></select><button type="button" class="dpbAdminBtn" id="dpbFs2Restore">♻️ استعادة</button><input type="file" id="dpbFs2RestoreFile" accept=".json,application/json" style="display:none"></div>' +
       '</details>' +
-      '<div class="hint" id="dpbFs2DriveInfo" style="margin-top:8px;line-height:1.9"></div>' +
-      '<div class="hint" id="dpbFs2BkInfo" style="margin-top:8px">النسخ: بيحتفظ بنسختين بس (حالية + سابقة).</div>' +
-      '<div class="hint" id="dpbFs2State" style="margin-top:8px"></div>' +
-      '<div class="hint" id="dpbFs2Net" style="margin-top:8px;line-height:1.9"></div>' +
+      '<details style="margin-top:10px"><summary class="hint" style="cursor:pointer">🩺 فحص الاتصال ونوع القناة</summary>' +
+      '<div style="display:block!important;grid-template-columns:none!important"><div class="hint" id="dpbFs2Net" style="margin-top:8px;line-height:1.9;white-space:pre-wrap"></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="dpbAdminBtn" id="dpbFs2NetTest">🩺 فحص الاتصال + إعادة فتح القناة</button><button type="button" class="dpbAdminBtn" id="dpbFs2NetCopy">📋 نسخ تقرير الاتصال</button></div>' +
       '<label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">نوع الاتصال (بعد التغيير اقفل التطبيق وافتحه): <select id="dpbFs2Transport"><option value="lp">قنوات متقطعة (الحالي)</option><option value="auto">تلقائي</option><option value="ws">مباشر</option></select></label>' +
-      '<pre id="dpbFs2NetLog" style="margin:8px 0 0;max-height:210px;overflow:auto;white-space:pre-wrap;direction:ltr;text-align:left;font-size:11px;line-height:1.5;background:#091827;border:1px solid #243b57;border-radius:10px;padding:8px"></pre>' +
-      '<div class="hint" id="dpbFs2Msg" style="margin-top:6px"></div>';
+      '<pre id="dpbFs2NetLog" style="margin:8px 0 0;max-height:210px;overflow:auto;white-space:pre-wrap;direction:ltr;text-align:left;font-size:11px;line-height:1.5;background:#091827;border:1px solid #243b57;border-radius:10px;padding:8px"></pre></div>' +
+      '</details>' +
+      '<div class="fs2Sec">الحالة</div>' +
+      boxH('حالة الطبقة', 'dpbFs2State') +
+      boxH('رسائل', 'dpbFs2Msg');
     var old = document.getElementById('dpbFsCard');
     if (old && old.parentNode === host) host.insertBefore(c, old.nextSibling); else host.appendChild(c);
     function paint() { paintState(); if (on() && !store) getStore().catch(function () {}); }
@@ -1989,22 +2211,48 @@
       lsSet('DPB_BACKUP_URL_V1', v); say(v ? '🔗 اتحفظ رابط سكربت النسخ الاحتياطي المنفصل.' : '🔗 اتمسح — هيرجع للسكربت القديم.'); paintBk();
     });
     var dv = $('dpbFs2Drive'), em = $('dpbFs2Email'); dv.checked = driveOn(); em.value = driveEmail();
-    dv.addEventListener('change', function () { lsSet('DPB_BACKUP_DRIVE_V1', dv.checked ? 'on' : 'off'); say(dv.checked ? 'رفع Drive شغّال.' : 'رفع Drive متوقف.'); paintBk(); });
+    dv.addEventListener('change', function () { lsSet('DPB_BACKUP_DRIVE_V1', dv.checked ? 'on' : 'off'); if (dv.checked) lsSet('dpb_fs2_bk_admin', '1'); say(dv.checked ? 'رفع Drive التلقائي شغّال (ليه جدوله لوحده).' : 'رفع Drive التلقائي متوقف.'); paintBk(); schPaint(); });
     em.addEventListener('change', function () {
       var v = em.value.trim().toLowerCase();
       if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { say('⚠ الإيميل غير صالح'); return; }
       lsSet('DPB_BACKUP_DRIVE_EMAIL_V1', v); em.value = v; say(v ? '📧 اتحفظ الإيميل — بشارك النسخة معاه…' : '📧 اتمسح الإيميل');
       bkGet('current').then(function (o) { return o && driveOn() ? bkDriveUpload(o) : null; }).then(function (d) { if (d) say(d.ok ? '📧 تم ☁️' : '⚠ Drive: ' + d.error); paintBk(); });
     });
-    var au = $('dpbFs2Auto'), am = $('dpbFs2AutoMin'); au.checked = ls('dpb_fs2_bk_auto', 'off') === 'on'; am.value = ls('dpb_fs2_bk_min', '30');
-    au.addEventListener('change', function () { lsSet('dpb_fs2_bk_auto', au.checked ? 'on' : 'off'); if (au.checked) lsSet('dpb_fs2_bk_admin', '1'); say(au.checked ? 'النسخ التلقائي شغّال: كل ' + am.value + ' دقيقة لو في تغيير.' : 'النسخ التلقائي اتقفل.'); });
-    am.addEventListener('change', function () { lsSet('dpb_fs2_bk_min', am.value); });
+    var au = $('dpbFs2Auto'); au.checked = ls(SCH.bk.on, 'off') === 'on';
+    au.addEventListener('change', function () { lsSet(SCH.bk.on, au.checked ? 'on' : 'off'); if (au.checked) lsSet('dpb_fs2_bk_admin', '1'); say(au.checked ? 'النسخ التلقائي على الهاتف شغّال (ليه جدوله لوحده).' : 'النسخ التلقائي على الهاتف اتقفل.'); schPaint(); });
+    // ---- the two schedules (same widgets, different keys): timer (number + unit) and a fixed daily time, each with its own switch ----
+    function bindSched(p, k) {
+      var s = SCH[k], iv = $('dpbFs2' + p + 'Iv'), at = $('dpbFs2' + p + 'At'), n = $('dpbFs2' + p + 'N'), u = $('dpbFs2' + p + 'U'), tm = $('dpbFs2' + p + 'T');
+      iv.checked = ls(s.iv, 'on') === 'on'; at.checked = ls(s.at, 'off') === 'on'; n.value = String(schN(k)); u.value = schU(k); tm.value = schT(k);
+      iv.addEventListener('change', function () { lsSet(s.iv, iv.checked ? 'on' : 'off'); say(iv.checked ? 'التايمر شغّال: كل ' + schN(k) + ' ' + UNIT_AR[schU(k)] + '.' : 'التايمر اتوقف.'); schPaint(); });
+      at.addEventListener('change', function () { lsSet(s.at, at.checked ? 'on' : 'off'); if (at.checked) lsSet(s.day, ''); say(at.checked ? 'الوقت اليومي شغّال: ' + schT(k) + '.' : 'الوقت اليومي اتوقف.'); schPaint(); });
+      function fixNum() {   // the box can be emptied and retyped freely; it is checked when the cursor leaves it (or the unit changes)
+        var raw = String(n.value).trim(), v = Math.floor(Number(raw));
+        if (!raw || !(v >= 1)) { n.value = String(schN(k)); u.value = schU(k); schPaint(); return; }
+        if (v > 9999) v = 9999;
+        var mult = UNIT_MIN[u.value] || 1, note = '';
+        if (v * mult < MIN_MINUTES) { v = Math.ceil(MIN_MINUTES / mult); note = ' (أقل مدة 5 دقايق، اتظبطت)'; }
+        lsSet(s.n, String(v)); lsSet(s.u, u.value); n.value = String(v); say('اتحفظ التايمر: كل ' + v + ' ' + UNIT_AR[u.value] + note + '.'); schPaint();
+      }
+      n.addEventListener('change', fixNum); n.addEventListener('blur', fixNum); u.addEventListener('change', fixNum);
+      tm.addEventListener('change', function () {
+        if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(tm.value)) { tm.value = schT(k); return; }
+        lsSet(s.t, tm.value); lsSet(s.day, ''); say('اتحفظ الوقت اليومي: ' + tm.value + '.'); schPaint();
+      });
+    }
+    bindSched('Bk', 'bk'); bindSched('Dr', 'dr'); schPaint();
+    $('dpbFs2DriveNow').addEventListener('click', function () {
+      if (!on()) { say('شغّل الطبقة الجديدة الأول.'); return; }
+      if (!driveOn()) { say('شغّل رفع Drive الأول (المفتاح فوق).'); return; }
+      if (bkBusy) { say('في عملية نسخ أو رفع شغّالة دلوقتي، استنى لحد ما تخلص.'); return; }
+      bkBusy = true; say('بجهّز النسخة وببدأ الرفع على Drive…');
+      driveUploadFresh(true).then(function (d) { bkBusy = false; lsSet(SCH.dr.last, String(Date.now())); say(d && d.ok ? '☁️ اترفعت على Google Drive ✅' : '⚠ Drive: ' + ((d && d.error) || 'فشل')); paintBk(); schPaint(); }, function (e) { bkBusy = false; say('فشل: ' + permHint(e)); });
+    });
     $('dpbFs2Backup').addEventListener('click', function () {
       if (!on()) { say('شغّل الطبقة الجديدة الأول.'); return; }
       say('بقرا البيانات من نسخة الجهاز…');
       bkBackupNow().then(function (r) {
         if (!r.changed) {
-          if (driveOn() && ls('dpb_fs2_bk_drive_pending', '')) return bkGet('current').then(function (c) { return c ? bkDriveUpload(c) : { ok: false, error: 'مفيش نسخة' }; }).then(function (d) { say(d.ok ? 'مفيش تغيير، بس رفعت النسخة الحالية على Drive ☁️.' : '⚠ Drive: ' + d.error); paintBk(); });
           say('مفيش تغيير من آخر نسخة، فالحالية والسابقة زي ما هم.'); paintBk(); return;
         }
         return bkPublish(r).then(function (x) {

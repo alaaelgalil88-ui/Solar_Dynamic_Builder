@@ -10507,6 +10507,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       <button type="button" class="dpbAdminTabBtn" data-tab="companies">🏢 الشركات والمشغلين</button>
       <button type="button" class="dpbAdminTabBtn" data-tab="production-edits">🛠️ حالات الإنتاج</button>
       <button type="button" class="dpbAdminTabBtn" data-tab="sync">☁️ المزامنة والتشخيص</button>
+      <button type="button" class="dpbAdminTabBtn" data-tab="usage" style="grid-column:1/-1">📊 تقرير الاستهلاك</button>
     </div>
 
     <div class="dpbAdminTabPanel active" data-tab="supervisors">
@@ -10577,6 +10578,8 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         <div class="dpbSyncRow"><div class="hint" id="dpbJsErrorsStatus" style="white-space:pre-line">لا يوجد أخطاء مسجّلة.</div></div>
       </section>
     </div>
+
+    <div class="dpbAdminTabPanel" data-tab="usage"><div id="dpbUsageHost"></div></div>
 
     <div class="dpbAdminTabPanel" data-tab="companies">
       <div class="hint" style="margin:2px 4px 12px">أضف الشركات وأسماء مشغلي الماكينات هنا. اختيار المشغل وقت تحديد الخلايا هيحدد اسم شركته أوتوماتيك.</div>
@@ -11493,8 +11496,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       try{
         const o={url:u,method:method,connectTimeout:30000,readTimeout:timeout,responseType:"text"};
         if(method==="POST"){o.headers={"Content-Type":"text/plain;charset=utf-8"};o.data=body}
+        try{window.DPB_USAGE&&window.DPB_USAGE.add("drive","up",String(body||"").length+u.length)}catch(_){}
         const r=await H.request(o);
         const d=r&&r.data;const txt=(typeof d==="string")?d:JSON.stringify(d);
+        try{window.DPB_USAGE&&window.DPB_USAGE.add("drive","dn",String(txt||"").length)}catch(_){}
         return {status:r&&r.status,txt:txt};
       }catch(e){return {err:String((e&&e.message)||e)}}
     };
