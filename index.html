@@ -5632,21 +5632,21 @@ function renderMarkBar(){
     const master=markMasterData();
     const op=master.operators.find(o=>String(o.id)===String(mark.operatorId||''));
     const co=op?master.companies.find(c=>String(c.id)===String(op.companyId)):null;
-    opHtml='<select id="dpbMarkOperator" style="'+selCss()+'"><option value="">Operator…</option>'+
+    opHtml='<select id="dpbMarkOperator" style="'+selCss()+';max-width:170px;flex:0 1 auto;min-width:0"><option value="">Operator…</option>'+
       master.operators.map(o=>'<option value="'+esc(o.id)+'"'+(String(o.id)===String(mark.operatorId||'')?' selected':'')+'>'+esc(o.name)+'</option>').join('')+
       '</select>'+
-      '<span style="color:#9db2c7;font-size:11px;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis">'+(co?'🏢 '+esc(co.name):'')+'</span>';
+      '<span style="color:#9db2c7;font-size:11px;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis">'+(co?'🏢 '+esc(co.name):'')+'</span>';
   }
   const canApply=n>0&&(!isRam||!!mark.operatorId);
   row.innerHTML=
-    '<div style="display:flex;flex-wrap:nowrap;gap:8px;align-items:center">'+
-    '<button type="button" id="dpbMarkApply" title="تطبيق وحفظ" style="'+iconBtnCss('primary')+'"'+(canApply?'':' disabled')+'>✓</button>'+
-    '<button type="button" id="dpbMarkCancel" title="إلغاء التحديد" style="'+iconBtnCss('neutral')+'"'+(n?'':' disabled')+'>↺</button>'+
-    '<button type="button" id="dpbMarkDelete" title="حذف" style="'+iconBtnCss('danger')+'"'+(n?'':' disabled')+'>🗑️</button>'+
-    '<button type="button" id="dpbMarkReload" title="تحديث" style="'+iconBtnCss('neutral')+'">🔄</button>'+
-    '</div>'+
-    (opHtml?'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">'+opHtml+'</div>':'')+
-    '<span id="dpbMarkCount" style="color:#dceafa;font-weight:900;font-size:12px">'+n+' خلية محددة</span>';
+    '<div class="mbTop" dir="ltr"><span class="mbCount'+(n?' on':'')+'" dir="rtl"><span>محدد</span><b id="dpbMarkCount">'+n+'</b></span>'+
+    (opHtml?'<div class="mbOp">'+opHtml+'</div>':'')+'</div>'+
+    '<div class="mbBtns" dir="ltr">'+
+    '<button type="button" id="dpbMarkReload" class="mbB" title="تحديث" aria-label="تحديث">🔄</button>'+
+    '<button type="button" id="dpbMarkCancel" class="mbB" title="تراجع (إلغاء التحديد)" aria-label="تراجع"'+(n?'':' disabled')+'>↺</button>'+
+    '<button type="button" id="dpbMarkDelete" class="mbB danger" title="حذف" aria-label="حذف"'+(n?'':' disabled')+'>🗑️</button>'+
+    '<button type="button" id="dpbMarkApply" class="mbB primary" title="تطبيق وحفظ" aria-label="تطبيق"'+(canApply?'':' disabled')+'>✓ تطبيق</button>'+
+    '</div>';
 }
 function iconBtnCss(kind){
   const base='width:40px;height:40px;min-width:40px;border-radius:10px;font-size:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;';
@@ -6135,7 +6135,8 @@ function zcPlaceBalloon(){
   let left=r.left+r.width/2-bw/2;left=Math.max(6,Math.min(vw-bw-6,left));
   let top=r.bottom+10,below=true;
   if(top+bh>vh-8){top=r.top-bh-10;below=false;}
-  if(top<4)top=Math.max(4,vh-bh-8);
+  let minTop=4;try{const nv=document.querySelector('.app > aside');if(nv){const ps=getComputedStyle(nv).position;if(ps==='fixed'||ps==='sticky'){const nb=nv.getBoundingClientRect().bottom;if(nb>0&&nb<vh)minTop=nb+6;}}}catch(_){}
+  if(top<minTop){top=r.bottom+10;below=true;if(top+bh>vh-8){top=Math.max(minTop,vh-bh-8);}}
   o.style.left=left+'px';o.style.top=top+'px';
   const ar=o.querySelector('.zcArrow');
   ar.style.left=Math.max(10,Math.min(bw-22,r.left+r.width/2-left-6))+'px';
@@ -6186,7 +6187,7 @@ function renderZoneColorsPage(){
       zcSampleHtml(mk,z,work,sel,78,maxH)+'</div>';
   }).join('')+'</div>';
   if(ZC_UI.msg[mk])h+='<div class="zcMsg">'+ZC_UI.msg[mk]+'</div>';
-  h+='<div class="zcFoot"><button type="button" class="btn" data-zc="import" data-mk="'+esc(mk)+'">استيراد</button><button type="button" class="btn primary" data-zc="apply" data-mk="'+esc(mk)+'"'+(zcIsDirty(m,mk)?'':' disabled')+'>Apply'+(cur.members.length>1?' · '+cur.members.length+' عمليات':'')+'</button></div>';
+  h+='<div class="zcFoot"><button type="button" class="btn" data-zc="import" data-mk="'+esc(mk)+'">استيراد</button><button type="button" class="btn primary" data-zc="apply" data-mk="'+esc(mk)+'"'+(zcIsDirty(m,mk)?'':' disabled')+'>تطبيق'+(cur.members.length>1?' · '+cur.members.length+' عمليات':'')+'</button></div>';
   body.innerHTML=h;
   zcRotateLabels();zcPlaceBalloon();
 }
@@ -22113,16 +22114,17 @@ body.print-activity #dpbBottomBar{display:none!important}
 #zoneColorsBody .zcCell:active{transform:scale(.92)}
 #zoneColorsBody .zcCell.on{outline:none;z-index:3;box-shadow:0 0 0 2px #fff,0 0 12px 2px rgba(127,208,255,.9);transform:scale(1.12)}
 #zoneColorsBody .zcMsg{margin-top:8px;font-size:12px;line-height:1.35;color:#bfe7ff;background:rgba(40,140,220,.12);border:1px solid rgba(127,208,255,.3);border-radius:10px;padding:6px 8px}
-#zoneColorsBody .zcFoot{display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-top:10px;position:sticky;bottom:66px;z-index:5;padding:8px 0;background:linear-gradient(180deg,rgba(8,16,28,0),#08101c 35%)}
+#zoneColorsBody .zcFoot{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:14px;position:sticky;bottom:72px;z-index:5;padding:10px;background:#0b1b2b;border:1px solid #27506f;border-radius:14px;box-shadow:0 -8px 18px rgba(4,10,18,.85)}
 #zoneColorsBody .zcFoot .btn{height:40px;font-size:13px;font-weight:800}
 #zoneColorsBody .zcFoot .btn[disabled]{opacity:.35;pointer-events:none}
-#zonecolors .zcBalloon{position:fixed;z-index:99999;width:236px;padding:10px;border-radius:14px;background:#0d2236;border:1px solid #7fd0ff;box-shadow:0 10px 30px rgba(0,0,0,.6),0 0 0 1px rgba(127,208,255,.25)}
+#zonecolors .zcBalloon{position:fixed;z-index:99999;box-sizing:border-box;width:min(236px,calc(100vw - 16px));max-width:calc(100vw - 16px);padding:10px;border-radius:14px;background:#0d2236;border:1px solid #7fd0ff;box-shadow:0 10px 30px rgba(0,0,0,.6),0 0 0 1px rgba(127,208,255,.25)}
 #zonecolors .zcBalloon .zcBalHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;color:#bfe7ff}
 #zonecolors .zcBalloon .zcAll{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:700;white-space:nowrap}
-#zonecolors .zcBalloon .zcPal{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
-#zonecolors .zcBalloon .zcSw{width:100%;aspect-ratio:1;height:auto;border-radius:8px;border:2px solid rgba(255,255,255,.25);padding:0;cursor:pointer}
+#zonecolors .zcBalloon *{box-sizing:border-box}
+#zonecolors .zcBalloon .zcPal{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;width:100%}
+#zonecolors .zcBalloon .zcSw{width:100%;min-width:0;max-width:100%;min-height:0;aspect-ratio:1;height:auto;border-radius:8px;border:2px solid rgba(255,255,255,.25);padding:0;cursor:pointer}
 #zonecolors .zcBalloon .zcSw:active{transform:scale(.9)}
-#zonecolors .zcBalloon .zcCustomW{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:1;border-radius:8px;border:2px dashed #7fd0ff;color:#7fd0ff;font-weight:900;font-size:18px;overflow:hidden;cursor:pointer}
+#zonecolors .zcBalloon .zcCustomW{min-width:0;width:100%;position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:1;border-radius:8px;border:2px dashed #7fd0ff;color:#7fd0ff;font-weight:900;font-size:18px;overflow:hidden;cursor:pointer}
 #zonecolors .zcBalloon .zcCustomW input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
 #zonecolors .zcBalloon .zcArrow{position:absolute;width:12px;height:12px;background:#0d2236;border:1px solid #7fd0ff;transform:rotate(45deg)}
 #zonecolors .zcBalloon .zcArrow.up{top:-7px;border-right:0;border-bottom:0}
@@ -22258,14 +22260,30 @@ body.print-activity #dpbBottomBar{display:none!important}
 })();
 </script>
 
+<style id="dpbMarkBarCss">
+#dpbMapActions{gap:10px!important;padding:8px 4px 10px!important}
+#dpbMapActions .mbTop{display:flex;align-items:center;gap:10px;direction:ltr;min-height:36px}
+#dpbMapActions .mbCount{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;padding:6px 14px;border-radius:999px;background:#0d2233;border:1px solid #31516d;color:#9db2c7;font-size:12px;font-weight:800}
+#dpbMapActions .mbCount b{min-width:24px;text-align:center;color:#fff;font-size:16px;font-weight:900;font-variant-numeric:tabular-nums}
+#dpbMapActions .mbCount.on{border-color:#1ca878}
+#dpbMapActions .mbCount.on b{color:#59d98e}
+#dpbMapActions .mbOp{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0}
+#dpbMapActions .mbBtns{display:flex;flex-wrap:nowrap;align-items:center;gap:12px;direction:ltr}
+#dpbMapActions .mbB{flex:1 1 0;min-width:0;max-width:84px;height:44px;border-radius:12px;font-size:17px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;background:#0d2233;color:#dceafa;border:1px solid #31516d}
+#dpbMapActions .mbB.danger{background:#7a1f26;color:#ffd9d9;border-color:#7a1f26}
+#dpbMapActions .mbB.primary{flex:1.6 1 0;max-width:150px;font-size:14px;background:linear-gradient(135deg,#116b52,#1ca878);color:#fff;border:0}
+#dpbMapActions .mbB[disabled]{opacity:.38}
+</style>
 <style id="dpbCfMapCss">
 #excelMapShell td.me-u[data-cf]{position:relative}
 #excelMapShell td.me-u[data-cf]::after{content:attr(data-cf);position:absolute;top:0;left:0;font:900 8px/1 system-ui,sans-serif;color:#fff;background:#c62828;padding:1px 2px;border-radius:0 0 3px 0;pointer-events:none;z-index:3;white-space:nowrap;letter-spacing:0}
-#mapLegend .cfKey{display:block;width:100%;margin-top:6px;font-size:12px;color:#dceafa;line-height:2}
-#mapLegend .cfKey b{color:#ff9a9a;margin-inline-end:6px}
-#mapLegend .cfKey .cfN{display:inline-block;margin-inline-end:10px;font-weight:700}
-#mapLegend .cfKey .cfN i{font-style:normal;background:#c62828;color:#fff;border-radius:3px;padding:0 4px;margin-inline-end:4px;font-weight:900}
-#mapLegend .cfKey .cfTgl{background:#10283d;border:1px solid #27506f;color:#dceafa;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700}
+#mapLegend .cfKey{display:flex;flex-wrap:nowrap;align-items:center;direction:ltr;gap:10px;width:100%;margin-top:6px;font-size:12px;color:#dceafa}
+#mapLegend .cfKey .cfTgl{flex:0 0 auto;background:#10283d;border:1px solid #27506f;color:#9eb2c7;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:800;white-space:nowrap}
+#mapLegend .cfKey .cfTgl.on{background:#3a1717;border-color:#c62828;color:#ffb4b4}
+#mapLegend .cfKey .cfList{display:flex;flex-wrap:nowrap;gap:10px;flex:1 1 auto;min-width:0;overflow-x:auto;white-space:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+#mapLegend .cfKey .cfList::-webkit-scrollbar{display:none}
+#mapLegend .cfKey .cfN{flex:0 0 auto;font-weight:700}
+#mapLegend .cfKey .cfN i{font-style:normal;background:#c62828;color:#fff;border-radius:3px;padding:0 5px;margin-inline-end:4px;font-weight:900}
 #mapDetail .cfDet{margin-top:8px;padding:8px 10px;border:1px solid #7a2a2a;background:rgba(122,31,31,.18);border-radius:10px;font-size:12px;line-height:1.8;direction:rtl}
 #mapDetail .cfDet b{color:#ff9a9a}
 #mapDetail .cfDet .ok{color:#59d98e;font-weight:800}
@@ -22277,8 +22295,8 @@ body.print-activity #dpbBottomBar{display:none!important}
 /* v194: أرقام التناقض على الخريطة. الخلية اللي فيها تناقض بس بتاخد رقم صغير في ركنها = رقم العملية الناقصة (المفتاح تحت الخريطة).
    المشرف يشوف أرقام اللي الناقص فيها عمليته بس، والبيلدر والأدمن يشوفوا الكل. بتتحدّث مع كل إدخال (حتى أوفلاين). الضغط على الخلية بيضيف تفاصيل التناقض لكارت التفاصيل. */
 (function(){
-  var KEY='dpb_cf_map',on=true,seq=0,sig='',node=null,cache={byCell:null,names:null},obs=null,obsFor=null,tmr=0;
-  try{if(localStorage.getItem(KEY)==='off')on=false;}catch(e){}
+  var KEY='dpb_cf_map',on=false,seq=0,sig='',node=null,cache={byCell:null,names:null},obs=null,obsFor=null,tmr=0;
+  try{if(localStorage.getItem(KEY)==='on')on=true;}catch(e){}
   function esc(x){return String(x==null?'':x).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function fmt(t){if(!t)return '';var d=new Date(t);if(isNaN(d.getTime()))return '';var p=function(n){return n<10?'0'+n:''+n;};return p(d.getDate())+'/'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes());}
   function M(){return window.DPBMap||null;}
@@ -22290,7 +22308,7 @@ body.print-activity #dpbBottomBar{display:none!important}
   function legend(names){
     var lg=document.getElementById('mapLegend');if(!lg)return;lg.querySelectorAll('.cfKey').forEach(function(e){e.remove();});
     var d=document.createElement('div');d.className='cfKey';
-    d.innerHTML='<b>⚠ تناقض</b>'+(on?names.map(function(n,i){return '<span class="cfN"><i>'+(i+1)+'</i>'+esc(n)+'</span>';}).join(''):'')+'<button type="button" class="cfTgl">'+(on?'إخفاء الأرقام':'إظهار أرقام التناقض')+'</button>';
+    d.innerHTML='<button type="button" class="cfTgl'+(on?' on':'')+'" aria-pressed="'+(on?'true':'false')+'" title="يفحص الخلايا اللي اتنفذت من غير تنفيذ العملية السابقة لها">⚠ فحص التسلسل</button>'+(on?'<div class="cfList">'+names.map(function(n,i){return '<span class="cfN"><i>'+(i+1)+'</i>'+esc(n)+'</span>';}).join('')+'</div>':'');
     lg.appendChild(d);
   }
   function who(x){return x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'ملف الإكسل':(x.kind==='none'?'بدون سجل':esc(x.who||'—')));}
