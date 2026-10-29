@@ -3147,6 +3147,7 @@ html,body{max-width:100%;overflow-x:hidden!important}
 #dpbAdminOverlay .dpbAdminTopActions > .dpbAdminCloseX{position:absolute!important;top:10px!important;right:12px!important;width:38px!important;min-width:38px!important;height:38px!important;min-height:38px!important;flex:none!important}
 /* Tabs: equal 2-column glass grid, and they stay pinned right under the fixed header. */
 #dpbAdminOverlay .dpbAdminTabs{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;padding:10px 0 4px!important;position:sticky!important;top:calc(var(--dpbAdminTopH,120px))!important;z-index:90!important;background:linear-gradient(#060e17 70%,rgba(6,14,23,0))!important}
+#dpbAdminOverlay .dpbAdminTabBtn[data-tab="usage"]{display:none!important}
 #dpbAdminOverlay .dpbAdminTabBtn{width:100%!important;height:44px!important;padding:0 6px!important;font-size:11px!important;display:flex!important;align-items:center;justify-content:center;gap:6px;text-align:center;white-space:normal!important;line-height:1.15;border-radius:13px!important;background:linear-gradient(160deg,rgba(255,255,255,.10),rgba(255,255,255,.03))!important;border:1px solid rgba(255,255,255,.16)!important;box-shadow:0 3px 10px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.10)!important;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 #dpbAdminOverlay .dpbAdminTabBtn.active{background:linear-gradient(160deg,#1f9d76,#146c52)!important;border-color:#37d6a2!important;color:#fff!important}
 @media(max-width:620px){
@@ -6053,6 +6054,8 @@ function zcSig(units){
   return units.map(u=>[u.r1-r0,u.c1-c0,u.r2-u.r1,u.c2-u.c1].join(',')).join(';');
 }
 const zcOrig=u=>u.fill0!==undefined?u.fill0:u.fill;
+// zone letter of a tracker: from the PLAN (row+T), the same rule the rest of the app uses; own letters only as fallback
+function zcType(t){const u=t&&t.units&&t.units[0];let z='';try{z=u?trackerTypeOf(u):'';}catch(_){}return z||(t&&t.typeCode)||'';}
 // put the saved colour layer on a model (and take it off first, so "back to Excel" works on a cached model)
 function zcApplyModel(m){
   if(!m||!m.ok||!m.trackers)return m;
@@ -6060,7 +6063,7 @@ function zcApplyModel(m){
   const mine=zcLoad()[zcMapKey(m)];
   if(!mine)return m;
   for(const t of m.trackers.values()){
-    const z=mine[t.typeCode];if(!z||!t.units.length||zcSig(t.units)!==z.sig)continue;
+    const z=mine[zcType(t)];if(!z||!t.units.length||zcSig(t.units)!==z.sig)continue;
     for(const u of t.units){const c=z.c[u.post];if(c){if(u.fill0===undefined)u.fill0=u.fill;u.fill=c;}}
   }
   return m;
@@ -6078,7 +6081,7 @@ function zcOps(){
 // zones of one model: letter -> {sample tracker, count of cells, trackers that share the sample's shape, others}
 function zcZones(m){
   const byL=new Map();
-  for(const t of m.trackers.values()){if(!t.typeCode||!t.units.length)continue;let a=byL.get(t.typeCode);if(!a){a=[];byL.set(t.typeCode,a);}a.push(t);}
+  for(const t of m.trackers.values()){const tc=zcType(t);if(!tc||!t.units.length)continue;let a=byL.get(tc);if(!a){a=[];byL.set(tc,a);}a.push(t);}
   const out=[];
   for(const [letter,list] of [...byL.entries()].sort((a,b)=>a[0]<b[0]?-1:1)){
     const cnt=new Map();list.forEach(t=>{const s=zcSig(t.units);cnt.set(s,(cnt.get(s)||0)+1);});
@@ -6133,7 +6136,11 @@ function renderZoneColorsPage(){
       '<div class="zcOpBar"><span class="small">'+zones.length+' زون · الألوان زي الإكسل لحد ما تعدّل</span><button type="button" class="btn" data-zc="import" data-mk="'+esc(mk)+'">استيراد الألوان من ملف</button></div>'+zhtml+
       (ZC_UI.msg[mk]?'<div class="notice zcMsg">'+ZC_UI.msg[mk]+'</div>':'')+
       '<div class="dpbOvColorsApplyRow"><button type="button" class="btn primary" data-zc="apply" data-mk="'+esc(mk)+'">Apply</button></div></div>';
-  }).join('')+'<div class="hint" style="padding:6px 4px">الخطوة اختيارية: لو ما عدّلتش حاجة اضغط التالي والألوان تفضل زي الإكسل. الإكسل نفسه ما بيتغيّرش.</div>';
+  }).join('');
+  if(!body.innerHTML.trim()){
+    body.innerHTML='<div class="card"><div class="notice bad">مفيش زونات تتعرض: ملفات العمليات اتقرت بس ما طلعش منها خريطة بزونات (تأكد إن الـ Plan صح وإن كل تاب فيه الـ Named Ranges بتاعته a_15 / b_15 / c_14 …، وإن الـ Build اتفتح).</div></div>';
+  }
+  body.insertAdjacentHTML('beforeend','<div class="hint" style="padding:6px 4px">الخطوة اختيارية: لو ما عدّلتش حاجة اضغط التالي والألوان تفضل زي الإكسل. الإكسل نفسه ما بيتغيّرش.</div>');
 }
 function zcModelByKey(mk){
   for(const o of zcOps()){const m=buildModel(o.src.wb,o.src.sheet);if(m&&m.ok&&zcMapKey(m)===mk)return m;}
@@ -6157,7 +6164,7 @@ function zcApply(mk){
   for(const z of zcZones(m)){
     if(!(mine[z.letter]))continue;
     const skipped=[];let ok=0;
-    for(const t of m.trackers.values()){if(t.typeCode!==z.letter)continue;if(zcSig(t.units)===z.sig)ok++;else skipped.push(t.label||t.key);}
+    for(const t of m.trackers.values()){if(zcType(t)!==z.letter)continue;if(zcSig(t.units)===z.sig)ok++;else skipped.push(t.label||t.key);}
     lines.push('<b dir="ltr">'+esc(z.letter)+'_'+z.n+'</b>: اتطبّق على '+ok+' تراكر'+(skipped.length?' · اتخطّى '+skipped.length+' (شكل مختلف): <span dir="ltr">'+esc(skipped.slice(0,12).join(', '))+(skipped.length>12?' …':'')+'</span>':''));
   }
   ZC_UI.msg[mk]=lines.length?lines.join('<br>'):'مفيش تعديلات — الألوان زي الإكسل.';
@@ -6204,7 +6211,7 @@ function zcImportFromModel(mk,im){
   for(const z of zcZones(m)){
     const pats=new Map();
     for(const t of im.trackers.values()){
-      if(t.typeCode!==z.letter||zcSig(t.units)!==z.sig)continue;
+      if(zcType(t)!==z.letter||zcSig(t.units)!==z.sig)continue;
       const key=t.units.map(u=>u.fill||'').join('|');const e=pats.get(key)||{n:0,t:t};e.n++;pats.set(key,e);
     }
     if(!pats.size){res.noMatch.push(z.letter+'_'+z.n);continue;}
@@ -7582,7 +7589,18 @@ async function onPlanFile(e){
   planFileName.textContent='Reading '+f.name+' …';
   const up=document.getElementById('planUploadSetupBtn'); if(up) up.disabled=true;
   try{
-    project.wb=await XLSX.read(await f.arrayBuffer(),{type:'array',cellStyles:true});
+    const __wb=await XLSX.read(await f.arrayBuffer(),{type:'array',cellStyles:true});
+    // Guard: the Plan slot must hold the Plan file, not a process workbook (Execution / Modules / Torque Tube).
+    // A process workbook carries a `processcode` range and repeats a_15/b_15/c_14 in every tab, which made the
+    // type counts 45/45/42 and blocked Build.
+    {
+      const __names=(__wb.Workbook&&__wb.Workbook.Names||[]).map(n=>baseRangeName_(n&&n.Name||''));
+      const __isProcess=__names.includes('processcode');
+      if(__isProcess){
+        throw new Error('الملف ده ملف عملية (فيه processcode) مش ملف الـ Plan. ارفع ملف الـ Plan في الخانة دي، وملفات العمليات في Process Setup.');
+      }
+    }
+    project.wb=__wb;
     project.planFileName=f.name;project.planFile=f;try{localStorage.setItem('DPB_ADMIN_DEVICE_V1','1');if(window.dpbDeviceRole)window.dpbDeviceRole.setAdmin(true)}catch(_){}
     project.planPreview=true; project.planApplied=false;
     cacheTestFile('plan',f);
