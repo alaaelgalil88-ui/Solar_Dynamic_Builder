@@ -6091,10 +6091,10 @@ function zcZones(m){
   }
   return out;
 }
-function zcSampleHtml(mk,z,work,sel){
+function zcSampleHtml(mk,z,work,sel,maxW,maxH){
   const us=z.sample.units;
   const r0=Math.min.apply(null,us.map(u=>u.r1)),c0=Math.min.apply(null,us.map(u=>u.c1)),r1=Math.max.apply(null,us.map(u=>u.r2)),c1=Math.max.apply(null,us.map(u=>u.c2));
-  const H=r1-r0+1,W=c1-c0+1,s=Math.max(6,Math.min(26,Math.floor(Math.min(300/W,300/H))));
+  const H=r1-r0+1,W=c1-c0+1,s=Math.max(6,Math.min(26,Math.floor(Math.min((maxW||300)/W,(maxH||300)/H))));
   const cells=us.map(u=>{
     const col=work[u.post]||zcOrig(u)||'#ffffff';
     const w=(u.c2-u.c1+1)*s,h=(u.r2-u.r1+1)*s;
@@ -6108,39 +6108,49 @@ function zcDistinctColors(m,work){
   Object.keys(work||{}).forEach(k=>{if(work[k])set.add(String(work[k]).toLowerCase());});
   return [...set];
 }
+function zcCleanOf(z,work){const clean={};z.sample.units.forEach(u=>{const c=work[u.post];if(c&&String(c).toLowerCase()!==String(zcOrig(u)||'').toLowerCase())clean[u.post]=c;});return clean;}
+function zcIsDirty(m,mk){
+  const saved=zcLoad()[mk]||{};
+  for(const z of zcZones(m)){
+    const w=ZC_UI.work[mk+'|'+z.letter];if(!w)continue;
+    const cl=zcCleanOf(z,w),sv=(saved[z.letter]&&saved[z.letter].sig===z.sig)?saved[z.letter].c:{};
+    if(JSON.stringify(cl)!==JSON.stringify(sv))return true;
+  }
+  return false;
+}
 function renderZoneColorsPage(){
   const body=document.getElementById('zoneColorsBody');if(!body)return;
   let ops=[];try{ops=zcOps();}catch(_){}
   if(!ops.length){body.innerHTML='<div class="card"><div class="hint">لسه مفيش عمليات — ارفع ملفات العمليات الأول (خطوة Upload).</div></div>';return;}
-  const store=zcLoad();
-  body.innerHTML=ops.map(o=>{
-    const m=buildModel(o.src.wb,o.src.sheet);if(!m||!m.ok)return '';
-    const mk=zcMapKey(m),saved=store[mk]||{};
-    const zones=zcZones(m);if(!zones.length)return '';
-    const colors=zcDistinctColors(m,null);
-    const zhtml=zones.map(z=>{
-      const wkey=mk+'|'+z.letter;
-      const work=ZC_UI.work[wkey]=ZC_UI.work[wkey]||Object.assign({},(saved[z.letter]&&saved[z.letter].sig===z.sig)?saved[z.letter].c:{});
-      const sel=ZC_UI.sel[wkey]||0,all=!!ZC_UI.all[wkey];
-      const changed=Object.keys(work).length>0;
-      const pal=colors.concat(ZC_BASE.filter(c=>colors.indexOf(c)<0));
-      return '<div class="zcZone"><div class="zcHead"><b class="zcName" dir="ltr">'+esc(z.letter)+'_'+z.n+'</b><span class="small">'+z.total+' تراكر'+(z.other?' · '+z.other+' بشكل مختلف (لن يتغيّر)':'')+(changed?' · <span class="zcMod">معدّل</span>':'')+'</span></div>'+
-        zcSampleHtml(mk,z,work,sel)+
-        '<div class="zcTools"><label class="zcAll"><input type="checkbox" data-zc="all" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'"'+(all?' checked':'')+'> كل خلايا التراكر</label>'+
-        '<span class="small">'+(all?'اللون هيتحط على كل الخلايا':(sel?'خلية '+sel+' محددة':'اضغط خلية من العينة'))+'</span></div>'+
-        '<div class="zcPal">'+pal.map(c=>'<button type="button" class="zcSw" data-zc="sw" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" data-c="'+esc(c)+'" title="'+esc(c)+'" style="background:'+esc(c)+'"></button>').join('')+
-        '<input type="color" class="zcCustom" data-zc="custom" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" value="#ff0000" title="لون آخر"></div>'+
-        '<div class="zcZRow"><button type="button" class="btn" data-zc="reset" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'">↺ رجوع للإكسل</button></div></div>';
-    }).join('');
-    return '<div class="card zcOp"><h3 dir="ltr" style="text-align:right">'+esc(o.names.join(' / '))+'</h3>'+
-      '<div class="zcOpBar"><span class="small">'+zones.length+' زون · الألوان زي الإكسل لحد ما تعدّل</span><button type="button" class="btn" data-zc="import" data-mk="'+esc(mk)+'">استيراد الألوان من ملف</button></div>'+zhtml+
-      (ZC_UI.msg[mk]?'<div class="notice zcMsg">'+ZC_UI.msg[mk]+'</div>':'')+
-      '<div class="dpbOvColorsApplyRow"><button type="button" class="btn primary" data-zc="apply" data-mk="'+esc(mk)+'">Apply</button></div></div>';
-  }).join('');
-  if(!body.innerHTML.trim()){
-    body.innerHTML='<div class="card"><div class="notice bad">مفيش زونات تتعرض: ملفات العمليات اتقرت بس ما طلعش منها خريطة بزونات (تأكد إن الـ Plan صح وإن كل تاب فيه الـ Named Ranges بتاعته a_15 / b_15 / c_14 …، وإن الـ Build اتفتح).</div></div>';
+  const items=[];
+  for(const o of ops){const m=buildModel(o.src.wb,o.src.sheet);if(!m||!m.ok)continue;const zones=zcZones(m);if(!zones.length)continue;items.push({o,m,zones,mk:zcMapKey(m)});}
+  if(!items.length){body.innerHTML='<div class="card"><div class="notice bad">مفيش زونات تتعرض: ملفات العمليات اتقرت بس ما طلعش منها خريطة بزونات (تأكد إن الـ Plan صح وإن كل تاب فيه الـ Named Ranges بتاعته a_15 / b_15 / c_14 …، وإن الـ Build اتفتح).</div></div>';return;}
+  const cur=items.find(x=>x.mk===ZC_UI.op)||null;
+  let h='<div class="zcOpTabs">'+items.map(x=>'<button type="button" class="btn zcOpBtn'+(cur&&cur.mk===x.mk?' on':'')+'" dir="ltr" data-zc="op" data-mk="'+esc(x.mk)+'">'+esc(x.o.names.join(' / '))+'</button>').join('')+'</div>';
+  if(!cur){h+='<div class="hint" style="padding:8px 4px">اختار عملية من فوق عشان تظهر عيناتها.</div>';body.innerHTML=h;return;}
+  const {m,zones,mk}=cur,store=zcLoad(),saved=store[mk]||{};
+  const colors=zcDistinctColors(m,null);
+  const curSel=ZC_UI.cur&&ZC_UI.cur.mk===mk?ZC_UI.cur.l:'';
+  h+='<div class="card zcOp"><div class="zcOpBar"><span class="small">'+zones.length+' زون · الألوان زي الإكسل لحد ما تعدّل</span><button type="button" class="btn" data-zc="import" data-mk="'+esc(mk)+'">استيراد من ملف</button></div><div class="zcZones">';
+  h+=zones.map(z=>{
+    const wkey=mk+'|'+z.letter;
+    const work=ZC_UI.work[wkey]=ZC_UI.work[wkey]||Object.assign({},(saved[z.letter]&&saved[z.letter].sig===z.sig)?saved[z.letter].c:{});
+    const sel=ZC_UI.sel[wkey]||0,changed=Object.keys(work).length>0;
+    return '<div class="zcZone'+(curSel===z.letter?' cur':'')+'"><div class="zcHead"><b class="zcName" dir="ltr">'+esc(z.letter)+'_'+z.n+'</b></div><div class="small" style="margin-bottom:4px">'+z.total+' تراكر'+(z.other?' · '+z.other+' مختلف':'')+(changed?' · <span class="zcMod">معدّل</span>':'')+'</div>'+
+      zcSampleHtml(mk,z,work,sel,86,260)+
+      '<div class="zcZRow"><button type="button" class="btn" data-zc="reset" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'">↺ الإكسل</button></div></div>';
+  }).join('')+'</div>';
+  // colour list appears only when a cell is selected
+  const cz=curSel?zones.find(z=>z.letter===curSel):null;
+  if(cz&&(ZC_UI.sel[mk+'|'+cz.letter]||ZC_UI.all[mk+'|'+cz.letter])){
+    const wkey=mk+'|'+cz.letter,all=!!ZC_UI.all[wkey],pal=colors.concat(ZC_BASE.filter(c=>colors.indexOf(c)<0));
+    h+='<div class="zcPanel"><div class="zcTools"><b dir="ltr">'+esc(cz.letter)+'_'+cz.n+'</b><span class="small">'+(all?'اللون هيتحط على كل الخلايا':'خلية '+ZC_UI.sel[wkey]+' محددة')+'</span><label class="zcAll"><input type="checkbox" data-zc="all" data-mk="'+esc(mk)+'" data-l="'+esc(cz.letter)+'"'+(all?' checked':'')+'> كل الخلايا</label></div>'+
+      '<div class="zcPal">'+pal.map(c=>'<button type="button" class="zcSw" data-zc="sw" data-mk="'+esc(mk)+'" data-l="'+esc(cz.letter)+'" data-c="'+esc(c)+'" title="'+esc(c)+'" style="background:'+esc(c)+'"></button>').join('')+
+      '<input type="color" class="zcCustom" data-zc="custom" data-mk="'+esc(mk)+'" data-l="'+esc(cz.letter)+'" value="#ff0000" title="لون آخر"></div></div>';
   }
-  body.insertAdjacentHTML('beforeend','<div class="hint" style="padding:6px 4px">الخطوة اختيارية: لو ما عدّلتش حاجة اضغط التالي والألوان تفضل زي الإكسل. الإكسل نفسه ما بيتغيّرش.</div>');
+  if(ZC_UI.msg[mk])h+='<div class="notice zcMsg">'+ZC_UI.msg[mk]+'</div>';
+  h+='<div class="dpbOvColorsApplyRow"><button type="button" class="btn primary" data-zc="apply" data-mk="'+esc(mk)+'"'+(zcIsDirty(m,mk)?'':' disabled')+'>Apply</button></div></div>';
+  body.innerHTML=h;
 }
 function zcModelByKey(mk){
   for(const o of zcOps()){const m=buildModel(o.src.wb,o.src.sheet);if(m&&m.ok&&zcMapKey(m)===mk)return m;}
@@ -6190,9 +6200,10 @@ function zcSetColor(mk,letter,color){
 document.addEventListener('click',function(e){
   const b=e.target.closest&&e.target.closest('[data-zc]');if(!b||!document.getElementById('zoneColorsBody')||!document.getElementById('zoneColorsBody').contains(b))return;
   const act=b.getAttribute('data-zc'),mk=b.getAttribute('data-mk'),l=b.getAttribute('data-l');
-  if(act==='cell'){const w=mk+'|'+l,p=Number(b.getAttribute('data-p'));ZC_UI.sel[w]=ZC_UI.sel[w]===p?0:p;ZC_UI.msg[mk]='';renderZoneColorsPage();}
+  if(act==='op'){ZC_UI.op=(ZC_UI.op===mk?'':mk);ZC_UI.cur=null;renderZoneColorsPage();}
+  else if(act==='cell'){const w=mk+'|'+l,p=Number(b.getAttribute('data-p'));ZC_UI.sel[w]=ZC_UI.sel[w]===p?0:p;ZC_UI.msg[mk]='';ZC_UI.cur=ZC_UI.sel[w]?{mk,l}:null;renderZoneColorsPage();}
   else if(act==='sw'){ZC_UI.msg[mk]='';zcSetColor(mk,l,b.getAttribute('data-c'));}
-  else if(act==='apply')zcApply(mk);
+  else if(act==='apply'){if(!b.disabled)zcApply(mk);}
   else if(act==='reset')zcReset(mk,l);
   else if(act==='import'){ZC_UI.importMk=mk;const fi=document.getElementById('zcImportFile');if(fi)fi.click();}
 });
@@ -22012,6 +22023,13 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbCfOv .cfBody{padding:10px 12px}
 #dpbCfOv .cfNote{font-size:12px;color:#9eb2c7;margin:4px 0 8px}
 #dpbCfOv .cfSum{font-size:15px;font-weight:800;margin:6px 0}
+#zoneColorsBody .zcOpTabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+#zoneColorsBody .zcOpBtn.on{background:#1d5f99;border-color:#7fd0ff;color:#fff}
+#zoneColorsBody .zcZones{display:flex;gap:8px;align-items:flex-start;overflow-x:auto}
+#zoneColorsBody .zcZones .zcZone{flex:1 1 0;min-width:0;margin:6px 0;padding:6px}
+#zoneColorsBody .zcZone.cur{border-color:#7fd0ff}
+#zoneColorsBody .zcPanel{position:sticky;bottom:0;margin-top:8px;padding:8px;border:1px solid #7fd0ff;border-radius:12px;background:#0b1b2b}
+#zoneColorsBody .dpbOvColorsApplyRow .btn[disabled]{opacity:.4;pointer-events:none}
 #zoneColorsBody .zcZone{border:1px solid #27506f;border-radius:12px;padding:10px;margin:10px 0;background:#0b1b2b}
 #zoneColorsBody .zcHead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
 #zoneColorsBody .zcName{font-size:16px;color:#7fd0ff}
