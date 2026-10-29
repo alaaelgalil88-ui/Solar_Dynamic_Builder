@@ -3459,11 +3459,12 @@ if ("serviceWorker" in navigator && !window.__DPB_NATIVE) {
     <button class="active" data-p="setup">① Project Workspace</button>
     <button data-p="types">② Process Setup</button>
     <button data-p="upload">③ Upload Plan &amp; Validate</button>
-    <button data-p="ovcolors">④ Overlay Colors</button>
-    <button data-p="build">⑤ Build</button>
-    <button data-p="execution">⑥ Execution &amp; Production</button>
-    <button data-p="map">⑦ Site Map</button>
-    <button data-p="activity">⑧ Activity Report</button>
+    <button data-p="zonecolors">④ Zone Colors</button>
+    <button data-p="ovcolors">⑤ Overlay Colors</button>
+    <button data-p="build">⑥ Build</button>
+    <button data-p="execution">⑦ Execution &amp; Production</button>
+    <button data-p="map">⑧ Site Map</button>
+    <button data-p="activity">⑨ Activity Report</button>
     <button data-p="rules">Build Rules</button>
   </nav>
   <div class="notice" style="margin-top:20px">
@@ -3616,6 +3617,15 @@ if ("serviceWorker" in navigator && !window.__DPB_NATIVE) {
 </section>
 
 <!-- STEP 4: OVERLAY COLORS -->
+<section id="zonecolors" class="page">
+  <div class="card">
+    <h3>ألوان الزونات (عينة لكل زون)</h3>
+    <div class="hint">كل عملية بتظهر بتراكر عينة واحد لكل زون (a_15 = ١٥ خلية) بنفس عدد الخلايا والدمج والألوان اللي في الإكسل. اضغط خلية واختار لون (أو علّم «كل خلايا التراكر»)، وبعدين Apply لتطبيقه على كل تراكرات الزون. الإكسل نفسه ما بيتلمسش.</div>
+  </div>
+  <input type="file" id="zcImportFile" accept=".xlsx,.xlsm,.xls" style="display:none">
+  <div id="zoneColorsBody"></div>
+</section>
+
 <section id="ovcolors" class="page">
   <div class="card">
     <h3>ألوان طبقة التنفيذ (Overlay)</h3>
@@ -4077,7 +4087,7 @@ function finalize(core){
 }
 function buildModel(wb,sheetName){
   let per=modelCache.get(wb);if(!per){per=new Map();modelCache.set(wb,per);}
-  if(!per.has(sheetName)){const c=coreFromWorkbook(wb,sheetName);per.set(sheetName,c.ok?finalize(c):c);}
+  if(!per.has(sheetName)){const c=coreFromWorkbook(wb,sheetName);per.set(sheetName,c.ok?zcApplyModel(finalize(c)):c);}
   return per.get(sheetName);
 }
 
@@ -5201,13 +5211,15 @@ function renderProgBar(row,spec){
   row.setAttribute('data-sig',sig);row.removeAttribute('data-uid');
   const dis=n?'':' disabled';
   row.innerHTML=
-    '<button type="button" id="dpbMarkReload" title="تحديث" style="'+iconBtnCss('neutral')+'">🔄</button>'+
-    '<span style="font-size:12px;font-weight:800;min-width:120px">'+label+'</span>'+
-    '<input id="dpbProgQty" type="number" inputmode="numeric" min="0" step="1" placeholder="عدد الشاشات" '+(n?'':'disabled ')+'style="width:110px;'+selCss().replace('max-width:130px;','')+'">'+
+    '<div style="display:flex;flex-wrap:nowrap;gap:6px;align-items:center">'+
+    '<button type="button" id="dpbProgApply" title="تطبيق وحفظ" style="'+iconBtnCss('primary')+'"'+dis+'>✓</button>'+
+    '<input id="dpbProgQty" type="number" inputmode="numeric" min="0" max="9999" step="1" placeholder="العدد" oninput="if(this.value.length>4)this.value=this.value.slice(0,4)" '+(n?'':'disabled ')+'style="width:74px;min-width:0;text-align:center;direction:ltr;'+selCss().replace('max-width:130px;','')+'">'+
     '<button type="button" id="dpbMarkCancel" title="إلغاء التحديد" style="'+iconBtnCss('neutral')+'"'+dis+'>↺</button>'+
     '<button type="button" id="dpbProgEdit" title="تعديل القيمة" aria-label="تعديل القيمة" style="'+iconBtnCss(mark.progEdit?'primary':'neutral')+'"'+dis+'>✎</button>'+
     '<button type="button" id="dpbProgDelete" title="حذف القيمة" style="'+iconBtnCss('danger')+'"'+dis+'>🗑️</button>'+
-    '<button type="button" id="dpbProgApply" title="تطبيق وحفظ" style="'+iconBtnCss('primary')+'"'+dis+'>✓</button>';
+    '<button type="button" id="dpbMarkReload" title="تحديث" style="'+iconBtnCss('neutral')+'">🔄</button>'+
+    '</div>'+
+    '<span style="font-size:12px;font-weight:800">'+label+'</span>';
   const nq=document.getElementById('dpbProgQty');
   if(nq&&keep.sig===sig){nq.value=keep.q;if(keep.focus){nq.focus();try{nq.setSelectionRange(nq.value.length,nq.value.length);}catch(_){}}}
 }
@@ -5545,7 +5557,7 @@ function ensureActionsRow(){
   let row=document.getElementById('dpbMapActions');
   if(!row){
     row=document.createElement('div');row.id='dpbMapActions';
-    row.style.cssText='display:none;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 4px;';
+    row.style.cssText='display:none;flex-direction:column;flex-wrap:nowrap;gap:6px;align-items:stretch;padding:8px 4px;';
   }
   // Self-healing placement: some screens (e.g. Supervisor ▸ Project Maps)
   // physically relocate #excelMapShell into their own layout after this
@@ -5627,13 +5639,14 @@ function renderMarkBar(){
   }
   const canApply=n>0&&(!isRam||!!mark.operatorId);
   row.innerHTML=
-    '<button type="button" id="dpbMarkReload" title="تحديث" style="'+iconBtnCss('neutral')+'">🔄</button>'+
-    opHtml+
-    '<span id="dpbMarkCount" style="color:#dceafa;font-weight:900;font-size:12px;white-space:nowrap">'+n+' خلية محددة</span>'+
+    '<div style="display:flex;flex-wrap:nowrap;gap:8px;align-items:center">'+
+    '<button type="button" id="dpbMarkApply" title="تطبيق وحفظ" style="'+iconBtnCss('primary')+'"'+(canApply?'':' disabled')+'>✓</button>'+
     '<button type="button" id="dpbMarkCancel" title="إلغاء التحديد" style="'+iconBtnCss('neutral')+'"'+(n?'':' disabled')+'>↺</button>'+
     '<button type="button" id="dpbMarkDelete" title="حذف" style="'+iconBtnCss('danger')+'"'+(n?'':' disabled')+'>🗑️</button>'+
-    '<button type="button" id="dpbMarkDiag" title="تشخيص الخلية المحددة" style="'+iconBtnCss('neutral')+'">🩺</button>'+
-    '<button type="button" id="dpbMarkApply" title="تطبيق وحفظ" style="'+iconBtnCss('primary')+'"'+(canApply?'':' disabled')+'>✓</button>';
+    '<button type="button" id="dpbMarkReload" title="تحديث" style="'+iconBtnCss('neutral')+'">🔄</button>'+
+    '</div>'+
+    (opHtml?'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">'+opHtml+'</div>':'')+
+    '<span id="dpbMarkCount" style="color:#dceafa;font-weight:900;font-size:12px">'+n+' خلية محددة</span>';
 }
 function iconBtnCss(kind){
   const base='width:40px;height:40px;min-width:40px;border-radius:10px;font-size:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;';
@@ -5653,7 +5666,7 @@ function toggleUnit(id){
   const td=document.querySelector('#excelMapShell td[data-u="'+id+'"]');
   if(mark.sel.has(id)){mark.sel.delete(id);if(td)td.classList.remove('me-mark');renderMarkBar();return;}
   const lock=mark.locks.get(u.r1+'|'+u.c1);
-  if(lock){toast('🔒 '+(u.label||'الخلية')+(u.post?' — '+u.post:'')+' قيمتها '+lock.val+' في '+lock.name+' (كود '+lock.code+') — لازم تتحذف من هناك الأول. (🩺 للتفاصيل)',5000);return;}
+  if(lock){toast('🔒 '+(u.label||'الخلية')+(u.post?' — '+u.post:'')+' قيمتها '+lock.val+' في '+lock.name+' (كود '+lock.code+') — لازم تتحذف من هناك الأول.',5000);return;}
   mark.sel.set(id,u);if(td)td.classList.add('me-mark');
   renderMarkBar();
 }
@@ -5872,7 +5885,6 @@ document.addEventListener('click',ev=>{
   }
   if(t.id==='dpbMarkCancel'){clearMarkSelection();return;}
   if(t.id==='dpbMarkDelete'){deleteMark();return;}
-  if(t.id==='dpbMarkDiag'){dpbDiagSelected();return;}
   if(t.id==='dpbMarkApply'){applyMark();return;}
   if(t.id==='dpbProgEdit'){
     const spec=isProgressSpec();const units=[...mark.sel.values()];
@@ -6021,6 +6033,210 @@ function start(){
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){sync();window.__dpbMasterSync&&window.__dpbMasterSync();}});
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+
+/* ============================================================
+   ZONE COLORS step (④): one SAMPLE tracker per zone (letter) per operation, taken from the Excel as it is
+   (cell count, merges, colours). The colours of the sample can be changed by hand (one cell or the whole tracker)
+   and Apply copies the change to every tracker of that zone in that operation's map. The Excel file is never touched or re-uploaded:
+   the change is a colour layer (u.fill0 keeps the Excel colour; "back to Excel" removes the layer). Only drawing colours change -
+   matching, execution records and production data are not read from here.
+   ============================================================ */
+const ZC_BASE=['#ffffff','#000000','#7f7f7f','#bfbfbf','#ff0000','#c00000','#ff9900','#ffc000','#ffff00','#92d050','#00b050','#00b0f0','#0070c0','#002060','#7030a0','#ff66cc','#f4b183','#a9d18e','#9dc3e6','#d9d9d9'];
+let ZC_UI={work:{},sel:{},all:{},msg:{}};
+function zcKey(){return 'DPB_ZONECOLORS_V1_'+String(window.__dpbActiveProjectId||'default');}
+function zcLoad(){try{return JSON.parse(localStorage.getItem(zcKey())||'{}')||{};}catch(_){return {};}}
+function zcSave(o){try{localStorage.setItem(zcKey(),JSON.stringify(o));}catch(_){}}
+function zcMapKey(m){return String(m.sheetName||'')+'|'+String(m.siteName||'');}
+function zcSig(units){
+  if(!units||!units.length)return '';
+  const r0=Math.min.apply(null,units.map(u=>u.r1)),c0=Math.min.apply(null,units.map(u=>u.c1));
+  return units.map(u=>[u.r1-r0,u.c1-c0,u.r2-u.r1,u.c2-u.c1].join(',')).join(';');
+}
+const zcOrig=u=>u.fill0!==undefined?u.fill0:u.fill;
+// put the saved colour layer on a model (and take it off first, so "back to Excel" works on a cached model)
+function zcApplyModel(m){
+  if(!m||!m.ok||!m.trackers)return m;
+  for(const u of m.units){if(u.fill0!==undefined)u.fill=u.fill0;}
+  const mine=zcLoad()[zcMapKey(m)];
+  if(!mine)return m;
+  for(const t of m.trackers.values()){
+    const z=mine[t.typeCode];if(!z||!t.units.length||zcSig(t.units)!==z.sig)continue;
+    for(const u of t.units){const c=z.c[u.post];if(c){if(u.fill0===undefined)u.fill0=u.fill;u.fill=c;}}
+  }
+  return m;
+}
+function zcOps(){
+  const lc=localCatalog();if(!lc)return [];
+  const by=new Map();
+  for(const m of lc.maps){
+    if(m.mode!=='dynamic'||!m.op||m.op.kind==='notstarted'||m.snap==='plan')continue;
+    let o=by.get(m.snap);if(!o){o={key:m.snap,names:[],src:lc.src.get(m.snap)};by.set(m.snap,o);}
+    if(o.names.indexOf(m.op.name)<0)o.names.push(m.op.name);
+  }
+  return [...by.values()].filter(o=>o.src);
+}
+// zones of one model: letter -> {sample tracker, count of cells, trackers that share the sample's shape, others}
+function zcZones(m){
+  const byL=new Map();
+  for(const t of m.trackers.values()){if(!t.typeCode||!t.units.length)continue;let a=byL.get(t.typeCode);if(!a){a=[];byL.set(t.typeCode,a);}a.push(t);}
+  const out=[];
+  for(const [letter,list] of [...byL.entries()].sort((a,b)=>a[0]<b[0]?-1:1)){
+    const cnt=new Map();list.forEach(t=>{const s=zcSig(t.units);cnt.set(s,(cnt.get(s)||0)+1);});
+    let best='',bn=0;for(const [s,n] of cnt)if(n>bn){best=s;bn=n;}
+    const sample=list.find(t=>zcSig(t.units)===best);
+    out.push({letter,sample,sig:best,n:sample.units.length,same:bn,other:list.length-bn,total:list.length});
+  }
+  return out;
+}
+function zcSampleHtml(mk,z,work,sel){
+  const us=z.sample.units;
+  const r0=Math.min.apply(null,us.map(u=>u.r1)),c0=Math.min.apply(null,us.map(u=>u.c1)),r1=Math.max.apply(null,us.map(u=>u.r2)),c1=Math.max.apply(null,us.map(u=>u.c2));
+  const H=r1-r0+1,W=c1-c0+1,s=Math.max(6,Math.min(26,Math.floor(Math.min(300/W,300/H))));
+  const cells=us.map(u=>{
+    const col=work[u.post]||zcOrig(u)||'#ffffff';
+    const w=(u.c2-u.c1+1)*s,h=(u.r2-u.r1+1)*s;
+    return '<div class="zcCell'+(sel===u.post?' on':'')+'" data-zc="cell" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" data-p="'+u.post+'" style="left:'+((u.c1-c0)*s)+'px;top:'+((u.r1-r0)*s)+'px;width:'+w+'px;height:'+h+'px;background:'+esc(col)+'"></div>';
+  }).join('');
+  return '<div class="zcSampleWrap"><div class="zcSample" style="width:'+(W*s)+'px;height:'+(H*s)+'px">'+cells+'</div></div>';
+}
+function zcDistinctColors(m,work){
+  const set=new Set();
+  m.units.forEach(u=>{const c=zcOrig(u);if(c)set.add(String(c).toLowerCase());});
+  Object.keys(work||{}).forEach(k=>{if(work[k])set.add(String(work[k]).toLowerCase());});
+  return [...set];
+}
+function renderZoneColorsPage(){
+  const body=document.getElementById('zoneColorsBody');if(!body)return;
+  let ops=[];try{ops=zcOps();}catch(_){}
+  if(!ops.length){body.innerHTML='<div class="card"><div class="hint">لسه مفيش عمليات — ارفع ملفات العمليات الأول (خطوة Upload).</div></div>';return;}
+  const store=zcLoad();
+  body.innerHTML=ops.map(o=>{
+    const m=buildModel(o.src.wb,o.src.sheet);if(!m||!m.ok)return '';
+    const mk=zcMapKey(m),saved=store[mk]||{};
+    const zones=zcZones(m);if(!zones.length)return '';
+    const colors=zcDistinctColors(m,null);
+    const zhtml=zones.map(z=>{
+      const wkey=mk+'|'+z.letter;
+      const work=ZC_UI.work[wkey]=ZC_UI.work[wkey]||Object.assign({},(saved[z.letter]&&saved[z.letter].sig===z.sig)?saved[z.letter].c:{});
+      const sel=ZC_UI.sel[wkey]||0,all=!!ZC_UI.all[wkey];
+      const changed=Object.keys(work).length>0;
+      const pal=colors.concat(ZC_BASE.filter(c=>colors.indexOf(c)<0));
+      return '<div class="zcZone"><div class="zcHead"><b class="zcName" dir="ltr">'+esc(z.letter)+'_'+z.n+'</b><span class="small">'+z.total+' تراكر'+(z.other?' · '+z.other+' بشكل مختلف (لن يتغيّر)':'')+(changed?' · <span class="zcMod">معدّل</span>':'')+'</span></div>'+
+        zcSampleHtml(mk,z,work,sel)+
+        '<div class="zcTools"><label class="zcAll"><input type="checkbox" data-zc="all" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'"'+(all?' checked':'')+'> كل خلايا التراكر</label>'+
+        '<span class="small">'+(all?'اللون هيتحط على كل الخلايا':(sel?'خلية '+sel+' محددة':'اضغط خلية من العينة'))+'</span></div>'+
+        '<div class="zcPal">'+pal.map(c=>'<button type="button" class="zcSw" data-zc="sw" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" data-c="'+esc(c)+'" title="'+esc(c)+'" style="background:'+esc(c)+'"></button>').join('')+
+        '<input type="color" class="zcCustom" data-zc="custom" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" value="#ff0000" title="لون آخر"></div>'+
+        '<div class="zcZRow"><button type="button" class="btn" data-zc="reset" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'">↺ رجوع للإكسل</button></div></div>';
+    }).join('');
+    return '<div class="card zcOp"><h3 dir="ltr" style="text-align:right">'+esc(o.names.join(' / '))+'</h3>'+
+      '<div class="zcOpBar"><span class="small">'+zones.length+' زون · الألوان زي الإكسل لحد ما تعدّل</span><button type="button" class="btn" data-zc="import" data-mk="'+esc(mk)+'">استيراد الألوان من ملف</button></div>'+zhtml+
+      (ZC_UI.msg[mk]?'<div class="notice zcMsg">'+ZC_UI.msg[mk]+'</div>':'')+
+      '<div class="dpbOvColorsApplyRow"><button type="button" class="btn primary" data-zc="apply" data-mk="'+esc(mk)+'">Apply</button></div></div>';
+  }).join('')+'<div class="hint" style="padding:6px 4px">الخطوة اختيارية: لو ما عدّلتش حاجة اضغط التالي والألوان تفضل زي الإكسل. الإكسل نفسه ما بيتغيّرش.</div>';
+}
+function zcModelByKey(mk){
+  for(const o of zcOps()){const m=buildModel(o.src.wb,o.src.sheet);if(m&&m.ok&&zcMapKey(m)===mk)return m;}
+  return null;
+}
+function zcAfterChange(){
+  try{if(window.DPBMap&&typeof window.DPBMap.refresh==='function')window.DPBMap.refresh();}catch(_){}
+  try{publish();}catch(_){}
+}
+function zcApply(mk){
+  const m=zcModelByKey(mk);if(!m)return;
+  const store=zcLoad();const mine=store[mk]=store[mk]||{};
+  const lines=[];
+  for(const z of zcZones(m)){
+    const wkey=mk+'|'+z.letter,work=ZC_UI.work[wkey]||{};
+    const clean={};z.sample.units.forEach(u=>{const c=work[u.post];if(c&&String(c).toLowerCase()!==String(zcOrig(u)||'').toLowerCase())clean[u.post]=c;});
+    if(Object.keys(clean).length)mine[z.letter]={sig:z.sig,c:clean};else delete mine[z.letter];
+  }
+  if(!Object.keys(mine).length)delete store[mk];
+  zcSave(store);zcApplyModel(m);
+  for(const z of zcZones(m)){
+    if(!(mine[z.letter]))continue;
+    const skipped=[];let ok=0;
+    for(const t of m.trackers.values()){if(t.typeCode!==z.letter)continue;if(zcSig(t.units)===z.sig)ok++;else skipped.push(t.label||t.key);}
+    lines.push('<b dir="ltr">'+esc(z.letter)+'_'+z.n+'</b>: اتطبّق على '+ok+' تراكر'+(skipped.length?' · اتخطّى '+skipped.length+' (شكل مختلف): <span dir="ltr">'+esc(skipped.slice(0,12).join(', '))+(skipped.length>12?' …':'')+'</span>':''));
+  }
+  ZC_UI.msg[mk]=lines.length?lines.join('<br>'):'مفيش تعديلات — الألوان زي الإكسل.';
+  zcAfterChange();renderZoneColorsPage();
+}
+function zcReset(mk,letter){
+  const store=zcLoad();
+  if(store[mk]){delete store[mk][letter];if(!Object.keys(store[mk]).length)delete store[mk];}
+  zcSave(store);delete ZC_UI.work[mk+'|'+letter];delete ZC_UI.sel[mk+'|'+letter];
+  const m=zcModelByKey(mk);if(m)zcApplyModel(m);
+  ZC_UI.msg[mk]='<b dir="ltr">'+esc(letter)+'</b>: رجع لألوان الإكسل.';
+  zcAfterChange();renderZoneColorsPage();
+}
+function zcSetColor(mk,letter,color){
+  const m=zcModelByKey(mk);if(!m)return;
+  const z=zcZones(m).find(x=>x.letter===letter);if(!z)return;
+  const wkey=mk+'|'+letter,work=ZC_UI.work[wkey]=ZC_UI.work[wkey]||{};
+  if(ZC_UI.all[wkey])z.sample.units.forEach(u=>{work[u.post]=color;});
+  else if(ZC_UI.sel[wkey])work[ZC_UI.sel[wkey]]=color;
+  else{ZC_UI.msg[mk]='اضغط خلية من العينة الأول (أو علّم «كل خلايا التراكر»).';}
+  renderZoneColorsPage();
+}
+document.addEventListener('click',function(e){
+  const b=e.target.closest&&e.target.closest('[data-zc]');if(!b||!document.getElementById('zoneColorsBody')||!document.getElementById('zoneColorsBody').contains(b))return;
+  const act=b.getAttribute('data-zc'),mk=b.getAttribute('data-mk'),l=b.getAttribute('data-l');
+  if(act==='cell'){const w=mk+'|'+l,p=Number(b.getAttribute('data-p'));ZC_UI.sel[w]=ZC_UI.sel[w]===p?0:p;ZC_UI.msg[mk]='';renderZoneColorsPage();}
+  else if(act==='sw'){ZC_UI.msg[mk]='';zcSetColor(mk,l,b.getAttribute('data-c'));}
+  else if(act==='apply')zcApply(mk);
+  else if(act==='reset')zcReset(mk,l);
+  else if(act==='import'){ZC_UI.importMk=mk;const fi=document.getElementById('zcImportFile');if(fi)fi.click();}
+});
+document.addEventListener('change',function(e){
+  const b=e.target;if(!b||!b.getAttribute||!document.getElementById('zoneColorsBody')||!document.getElementById('zoneColorsBody').contains(b))return;
+  const act=b.getAttribute('data-zc');if(!act)return;const mk=b.getAttribute('data-mk'),l=b.getAttribute('data-l');
+  if(act==='all'){ZC_UI.all[mk+'|'+l]=!!b.checked;renderZoneColorsPage();}
+  else if(act==='custom'){ZC_UI.msg[mk]='';zcSetColor(mk,l,b.value);}
+});
+
+// ---- import colours from a (modified) Excel file: reads the COLOURS only, puts them on the sample as an unsaved edit; nothing is saved until Apply ----
+// The file is never added to the project and never replaces project data. A zone is imported only when the file has a tracker of the same zone with the SAME shape.
+function zcImportFromModel(mk,im){
+  const m=zcModelByKey(mk);if(!m||!im||!im.trackers)return null;
+  const res={zones:0,cells:0,noMatch:[],same:[]};
+  for(const z of zcZones(m)){
+    const pats=new Map();
+    for(const t of im.trackers.values()){
+      if(t.typeCode!==z.letter||zcSig(t.units)!==z.sig)continue;
+      const key=t.units.map(u=>u.fill||'').join('|');const e=pats.get(key)||{n:0,t:t};e.n++;pats.set(key,e);
+    }
+    if(!pats.size){res.noMatch.push(z.letter+'_'+z.n);continue;}
+    let best=null;for(const e of pats.values())if(!best||e.n>best.n)best=e;
+    const wkey=mk+'|'+z.letter,work=ZC_UI.work[wkey]=ZC_UI.work[wkey]||{};let ch=0;
+    best.t.units.forEach((u,i)=>{
+      const nc=u.fill||'#ffffff',cur=work[i+1]||zcOrig(z.sample.units[i])||'#ffffff';
+      if(String(nc).toLowerCase()!==String(cur).toLowerCase()){work[i+1]=nc;ch++;}
+    });
+    if(ch){res.zones++;res.cells+=ch;}else res.same.push(z.letter+'_'+z.n);
+  }
+  return res;
+}
+async function zcImport(mk,file){
+  try{
+    const wb=await XLSX.read(await file.arrayBuffer(),{type:'array',cellStyles:true});
+    const o=zcOps().find(x=>{const m=buildModel(x.src.wb,x.src.sheet);return m&&m.ok&&zcMapKey(m)===mk;});
+    if(!o)return;
+    let sheet=wb.SheetNames.length===1?wb.SheetNames[0]:sheetFor(wb,o.names[0]);
+    const core=coreFromWorkbook(sheetLayoutWb(wb,sheet),sheet);
+    if(!core||!core.ok){ZC_UI.msg[mk]='الملف ده ما اتقراش كخريطة ('+esc((core&&core.error)||'شيت أو رينجات ناقصة')+') — ما اتغيّر حاجة.';renderZoneColorsPage();return;}
+    const r=zcImportFromModel(mk,finalize(core));
+    ZC_UI.msg[mk]=r?('استيراد من شيت «'+esc(sheet)+'»: '+r.zones+' زون اتغيّرت ألوانها ('+r.cells+' خلية)'+(r.same.length?' · '+r.same.length+' زون زي ما هو':'')+(r.noMatch.length?' · مفيش شكل مطابق في الملف لـ: <span dir="ltr">'+esc(r.noMatch.join(', '))+'</span> (ما اتغيّرش)':'')+'. راجع العينة وبعدين اضغط Apply — لسه ما اتحفظش حاجة.'):'ما قدرتش أقرا الملف.';
+  }catch(e){ZC_UI.msg[mk]='تعذّر قراءة الملف: '+esc(String(e&&e.message||e));}
+  renderZoneColorsPage();
+}
+document.addEventListener('change',function(e){
+  const f=e.target;if(!f||f.id!=='zcImportFile')return;
+  const file=f.files&&f.files[0],mk=ZC_UI.importMk;f.value='';
+  if(file&&mk)zcImport(mk,file);
+});
+window.renderZoneColorsPage=renderZoneColorsPage;
 
 window.renderOvColorsPage=renderOvColorsPage;
 window.dpbOvClearAutoCache=dpbOvClearAutoCache;
@@ -6305,12 +6521,12 @@ const mapLegend=document.getElementById('mapLegend');
 /* ============================================================
    NAV
    ============================================================ */
-const WORKFLOW_PAGES=['setup','types','upload','ovcolors','build','execution','map','activity','rules'];
+const WORKFLOW_PAGES=['setup','types','upload','zonecolors','ovcolors','build','execution','map','activity','rules'];
 let currentPage='setup';
 function updateFloatNav(){
   const idx=WORKFLOW_PAGES.indexOf(currentPage);
   const prev=document.getElementById('floatPrevBtn'), next=document.getElementById('floatNextBtn'), label=document.getElementById('floatNavLabel');
-  const titles={setup:'New Project',types:'Process Setup',upload:'Upload & Validate',build:'Build',execution:'Execution & Production',map:'Site Map',activity:'Activity Report',rules:'Build Rules'};
+  const titles={setup:'New Project',types:'Process Setup',upload:'Upload & Validate',zonecolors:'Zone Colors',ovcolors:'Overlay Colors',build:'Build',execution:'Execution & Production',map:'Site Map',activity:'Activity Report',rules:'Build Rules'};
   if(prev) prev.disabled=idx<=0;
   let canNext=idx>=0 && idx<WORKFLOW_PAGES.length-1;
   const np=canNext?WORKFLOW_PAGES[idx+1]:null;
@@ -6415,6 +6631,7 @@ function go(p){
   const titles={setup:['New Project','Upload the Plan first, then define the process structure.'],
     types:['Process Setup','Define grouped and separate process sources.'],
     upload:['Upload Plan &amp; Validate','The Key file is gone. Everything comes from Plan.xlsx.'],
+    zonecolors:['Zone Colors','One sample tracker per zone: optionally change its colors, then Apply to every tracker of that zone.'],
     ovcolors:['Overlay Colors','Choose manual or automatic execution-overlay colors per operation.'],
     build:['Build','Matching Engine: geometry + colors + merged cells vs. the Site Range.'],
     map:['Site Map','The Tracker Map output of the last Build.'],
@@ -6425,6 +6642,7 @@ function go(p){
   pageSub.innerHTML=titles[p][1];
   if(p==='map' && project.buildResult) DPBMap.refresh();
   if(p==='ovcolors') renderOvColorsPage();
+  if(p==='zonecolors') renderZoneColorsPage();
   updateFloatNav();
   focusCurrentProcess(p);
 }
@@ -6462,7 +6680,7 @@ function syncStepAccess(){
   const built=!!project.buildResult;
   // Navigation is a workspace, not a maze: already-created sections stay reachable.
   // The Build/Execution/Map/Report sections still require their real data.
-  const navMap={setup:true,types:true,upload:true,ovcolors:setupDone&&sourceDone,build:setupDone&&sourceDone,execution:built,map:built,activity:built,rules:true};
+  const navMap={setup:true,types:true,upload:true,zonecolors:setupDone&&sourceDone,ovcolors:setupDone&&sourceDone,build:setupDone&&sourceDone,execution:built,map:built,activity:built,rules:true};
   document.querySelectorAll('nav button[data-p]').forEach(b=>{
     const p=b.dataset.p;
     b.disabled=!navMap[p];
@@ -10553,7 +10771,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   <div class="dpbAdminWrap">
     <div class="dpbAdminTop">
       <div><h2>Admin Control Center</h2><div class="small">حسابات المشرفين · الصلاحيات · النسخ الاحتياطي</div></div>
-      <div class="dpbAdminActions dpbAdminTopActions"><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminSyncBtn" type="button" title="مزامنة: رفع الحدود والألوان الحقيقية من إكسل الجهاز ده لكل الأجهزة التانية" aria-label="مزامنة">☁️</button><button class="dpbAdminGearBtn dpbAdminGlassBtn" id="dpbAdminChangePinTop" type="button" title="تغيير الرقم السري للأدمن" aria-label="تغيير الرقم السري للأدمن">⚙️</button><button class="dpbAdminIconBtn dpbAdminBackupIcon dpbAdminGlassBtn" id="dpbBackupNow" type="button" title="النسخ الاحتياطي" aria-label="النسخ الاحتياطي">💾</button><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminHardReset" type="button" title="تصفير كامل للبيانات المحلية" aria-label="تصفير كامل للبيانات المحلية">🧹</button><button class="dpbAdminIconBtn dpbAdminBuilderIcon dpbAdminGlassBtn" id="dpbAdminOpenBuilder" type="button" title="فتح Plan Builder" aria-label="فتح Plan Builder">🛠️</button><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminMsgBtn" type="button" title="الرسائل" aria-label="الرسائل" style="position:relative">💬<span id="dpbMsgTabBadge" class="dpbMsgBadge dpbMsgDot" style="display:none">0</span></button><button class="dpbAdminBtn dpbAdminGlassBtn" id="dpbAdminBack">رجوع</button><button class="dpbAdminBtn danger dpbAdminCloseX dpbAdminGlassBtn dpbAdminGlassClose" id="dpbAdminClose" type="button" title="إغلاق" aria-label="إغلاق">×</button></div>
+      <div class="dpbAdminActions dpbAdminTopActions"><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminSyncBtn" type="button" title="مزامنة: رفع الحدود والألوان الحقيقية من إكسل الجهاز ده لكل الأجهزة التانية" aria-label="مزامنة">☁️</button><button class="dpbAdminGearBtn dpbAdminGlassBtn" id="dpbAdminChangePinTop" type="button" title="تغيير الرقم السري للأدمن" aria-label="تغيير الرقم السري للأدمن">⚙️</button><button class="dpbAdminIconBtn dpbAdminBackupIcon dpbAdminGlassBtn" id="dpbBackupNow" type="button" title="النسخ الاحتياطي" aria-label="النسخ الاحتياطي">💾</button><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminUsageTop" type="button" title="تقرير الاستهلاك" aria-label="تقرير الاستهلاك">📊</button><button class="dpbAdminIconBtn dpbAdminBuilderIcon dpbAdminGlassBtn" id="dpbAdminOpenBuilder" type="button" title="فتح Plan Builder" aria-label="فتح Plan Builder">🛠️</button><button class="dpbAdminIconBtn dpbAdminGlassBtn" id="dpbAdminMsgBtn" type="button" title="الرسائل" aria-label="الرسائل" style="position:relative">💬<span id="dpbMsgTabBadge" class="dpbMsgBadge dpbMsgDot" style="display:none">0</span></button><button class="dpbAdminBtn dpbAdminGlassBtn" id="dpbAdminBack">رجوع</button><button class="dpbAdminBtn danger dpbAdminCloseX dpbAdminGlassBtn dpbAdminGlassClose" id="dpbAdminClose" type="button" title="إغلاق" aria-label="إغلاق">×</button></div>
     </div>
     <div id="dpbConnectionStatus" class="dpbAdminConnPill" style="margin:10px 12px 0;padding:9px 12px;border-radius:10px;background:rgba(255,255,255,.04);font-size:12px;font-weight:800;text-align:center">⏳ بيتفحص الاتصال...</div>
     <!-- Admin Control Center reorganized into tabs: the page had grown into
@@ -10568,7 +10786,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       <button type="button" class="dpbAdminTabBtn" data-tab="companies">🏢 الشركات والمشغلين</button>
       <button type="button" class="dpbAdminTabBtn" data-tab="production-edits">🛠️ حالات الإنتاج</button>
       <button type="button" class="dpbAdminTabBtn" data-tab="sync">☁️ المزامنة والتشخيص</button>
-      <button type="button" class="dpbAdminTabBtn" data-tab="usage" style="grid-column:1/-1">📊 تقرير الاستهلاك</button>
+      <button type="button" class="dpbAdminTabBtn" data-tab="usage" style="display:none">📊 تقرير الاستهلاك</button>
     </div>
 
     <div class="dpbAdminTabPanel active" data-tab="supervisors">
@@ -11339,7 +11557,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
      button) and corrupt the transition into Builder Setup. */
   q("dpbBackupNow").onclick=openBackupScreen;
   q("dpbBackupScreenClose").onclick=closeBackupScreen;
-  if(q("dpbAdminHardReset"))q("dpbAdminHardReset").onclick=function(){ if(typeof window.hardResetLocalData==="function") window.hardResetLocalData(); };
+  if(q("dpbAdminUsageTop"))q("dpbAdminUsageTop").onclick=function(){ var b=document.querySelector('.dpbAdminTabBtn[data-tab="usage"]'); if(b)b.click(); };
   if(q("dpbAdminSyncBtn"))q("dpbAdminSyncBtn").onclick=async function(){
     // Same job as the old "رفع الحدود ☁️" button: push this device's Excel-sourced
     // boundaries/colors/catalog to the cloud so every other device picks them up.
@@ -21776,7 +21994,25 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbCfOv .cfBody{padding:10px 12px}
 #dpbCfOv .cfNote{font-size:12px;color:#9eb2c7;margin:4px 0 8px}
 #dpbCfOv .cfSum{font-size:15px;font-weight:800;margin:6px 0}
-#dpbCfOv .cfChips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}
+#zoneColorsBody .zcZone{border:1px solid #27506f;border-radius:12px;padding:10px;margin:10px 0;background:#0b1b2b}
+#zoneColorsBody .zcHead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+#zoneColorsBody .zcName{font-size:16px;color:#7fd0ff}
+#zoneColorsBody .zcMod{color:#ffd54a;font-weight:800}
+#zoneColorsBody .zcSampleWrap{max-height:340px;overflow:auto;border:1px solid #1d3a52;border-radius:8px;padding:6px;background:#06111c;direction:ltr}
+#zoneColorsBody .zcSample{position:relative;margin:0 auto}
+#zoneColorsBody .zcCell{position:absolute;box-sizing:border-box;border:1px solid rgba(0,0,0,.55);cursor:pointer}
+#zoneColorsBody .zcCell.on{outline:3px solid #fff;outline-offset:-2px;z-index:2}
+#zoneColorsBody .zcTools{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0}
+#zoneColorsBody .zcAll{display:flex;align-items:center;gap:6px;font-weight:700}
+#zoneColorsBody .zcPal{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+#zoneColorsBody .zcSw{width:30px;height:30px;border-radius:8px;border:2px solid #355a78;cursor:pointer;padding:0}
+#zoneColorsBody .zcCustom{width:38px;height:32px;padding:0;border:none;background:none}
+#zoneColorsBody .zcZRow{margin-top:8px}
+#zoneColorsBody .zcMsg{margin-top:8px}
+#zoneColorsBody .zcOpBar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+#dpbCfOv .cfFilters{display:flex;gap:8px;align-items:stretch}
+#dpbCfOv .cfFilters input{flex:1 1 50%;min-width:0;width:auto}
+#dpbCfOv .cfFilters select{flex:1 1 50%;min-width:0;background:#0d2233;border:1px solid #27506f;color:#fff;border-radius:10px;padding:9px 8px;font-size:13px;font-weight:700;direction:rtl}
 #dpbCfOv .cfChip{background:#10283d;border:1px solid #27506f;color:#dceafa;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700}
 #dpbCfOv .cfChip.on{background:#1b5d8f;border-color:#55b3ff}
 #dpbCfOv input{width:100%;box-sizing:border-box;background:#0d2233;border:1px solid #27506f;color:#fff;border-radius:10px;padding:9px 11px;font-size:14px;direction:ltr}
@@ -21791,6 +22027,9 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbCfOv .ok{color:#59d98e;font-weight:800}
 #dpbCfOv .no{color:#ff7a7a;font-weight:800}
 #dpbCfOv .sub{color:#9eb2c7;font-size:11px;display:block}
+#dpbCfOv td,#dpbCfOv th{direction:rtl;text-align:right}
+#dpbCfOv .ok,#dpbCfOv .no,#dpbCfOv .sub{display:block;direction:rtl;text-align:right;unicode-bidi:isolate}
+#dpbCfOv .cfItem{margin-bottom:6px}
 #dpbCfOv .empty{padding:22px 10px;text-align:center;color:#9eb2c7}
 #dpbCfOv .cfMore{display:flex;gap:8px;margin:8px 0 14px}
 #dpbCfOv .cfMore button{flex:1;background:#10283d;border:1px solid #27506f;color:#dceafa;border-radius:10px;padding:10px 8px;font-size:13px;font-weight:800}
@@ -21814,9 +22053,9 @@ body.print-activity #dpbBottomBar{display:none!important}
   }
   function doneCell(d){
     return d.map(function(x){
-      var w=x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'من الإكسل':(x.kind==='none'?'بدون سجل':esc(x.who||'—')));
+      var w=x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'ملف الإكسل':(x.kind==='none'?'بدون سجل':esc(x.who||'—')));
       var t=(x.kind==='user'||x.kind==='auto')?fmt(x.when):'';
-      return '<div><span class="ok">✔ '+esc(x.name)+'</span><span class="sub">'+w+(t?' — '+t:'')+'</span></div>';
+      return '<div class="cfItem"><span class="ok">✔ <bdi>'+esc(x.name)+'</bdi></span><span class="sub">('+w+(t?' / '+t:'')+')</span></div>';
     }).join('');
   }
   function paint(data){
@@ -21829,49 +22068,54 @@ body.print-activity #dpbBottomBar{display:none!important}
       return true;
     });
     var counts={};data.rows.forEach(function(r){r.missing.forEach(function(m){counts[m]=(counts[m]||0)+1;});});
-    var chips='<span class="cfChip'+(filt.miss?'':' on')+'" data-m="">الكل '+data.rows.length+'</span>'+Object.keys(counts).map(function(m){return '<span class="cfChip'+(filt.miss===m?' on':'')+'" data-m="'+esc(m)+'">'+esc(m)+' ناقصة: '+counts[m]+'</span>';}).join('');
+    var opts='<option value="">كل العمليات ('+data.rows.length+')</option>'+Object.keys(counts).map(function(m){return '<option value="'+esc(m)+'">'+esc(m)+' — ناقصة في '+counts[m]+'</option>';}).join('');
     lastRows=rows;lastData=data;var shown=rows.slice(0,filt.lim);
-    var tbl=shown.length?('<div class="cfWrap"><table><thead><tr><th>مكان الخلية</th><th>اللي خلصت (مين / امتى)</th><th>اللي ناقصة</th></tr></thead><tbody>'+shown.map(function(r){
-      return '<tr><td class="pos"><span>تراكر '+esc(r.tracker)+'</span><span>'+esc(r.row)+'</span><span>خلية '+esc(r.cell||(r.r1+'/'+r.c1))+'</span></td><td>'+doneCell(r.done)+'</td><td>'+r.missing.map(function(m){return '<div class="no">✘ '+esc(m)+'</div>';}).join('')+'</td></tr>';
+    var tbl=shown.length?('<div class="cfWrap"><table><thead><tr><th>موقع الخلية</th><th>العمليات المنفذة (بواسطة / التاريخ)</th><th>العمليات الناقصة</th></tr></thead><tbody>'+shown.map(function(r){
+      return '<tr><td class="pos"><span>تراكر <bdi>'+esc(r.tracker)+'</bdi></span><span><bdi>'+esc(r.row)+'</bdi></span><span>خلية <bdi>'+esc(r.cell||(r.r1+'/'+r.c1))+'</bdi></span></td><td>'+doneCell(r.done)+'</td><td>'+r.missing.map(function(m){return '<div class="no">✘ <bdi>'+esc(m)+'</bdi></div>';}).join('')+'</td></tr>';
     }).join('')+'</tbody></table></div>'+(rows.length>shown.length?'<div class="cfNote">معروض '+shown.length+' من '+rows.length+'</div><div class="cfMore"><button type="button" data-more="step">عرض '+Math.min(STEP,rows.length-shown.length)+' كمان</button><button type="button" data-more="all">عرض الكل ('+rows.length+')</button></div>':''))
-      :'<div class="empty">'+(data.rows.length?'مفيش نتايج بالفلتر ده.':'✅ مفيش تناقضات.')+'</div>';
+      :'<div class="empty">'+(data.rows.length?'لا توجد نتائج لهذا الفلتر.':'✅ لا توجد تناقضات.')+'</div>';
     var inp=body.querySelector('input'),keep=inp&&document.activeElement===inp;
     if(!body.querySelector('.cfList')){
-      body.innerHTML='<div class="cfNote" id="cfNote"></div><input id="cfTxt" inputmode="numeric" autocomplete="off" placeholder="Tracker: 1-2-3"><div class="cfSum" id="cfSum"></div><div class="cfChips" id="cfChips"></div><div class="cfList" id="cfList"></div>';
+      body.innerHTML='<div class="cfNote" id="cfNote"></div><div class="cfFilters"><input id="cfTxt" inputmode="numeric" autocomplete="off" placeholder="رقم التراكر: 1-2-3"><select id="cfOp"></select></div><div class="cfSum" id="cfSum"></div><div class="cfList" id="cfList"></div>';
       body.querySelector('#cfTxt').addEventListener('input',function(e){filt.txt=e.target.value;filt.lim=STEP;sig='';refresh(true);});
       body.querySelector('#cfList').addEventListener('click',function(e){var b=e.target.closest('[data-more]');if(!b)return;filt.lim=b.getAttribute('data-more')==='all'?1e9:filt.lim+STEP;paint(lastData);});
-      body.querySelector('#cfChips').addEventListener('click',function(e){var c=e.target.closest('.cfChip');if(!c)return;filt.miss=c.getAttribute('data-m')||'';filt.lim=STEP;sig='';refresh(true);});
+      body.querySelector('#cfOp').addEventListener('change',function(e){filt.miss=e.target.value||'';filt.lim=STEP;sig='';refresh(true);});
     }
-    body.querySelector('#cfNote').textContent=cur==='sup'?'بتشوف التناقضات اللي الناقص فيها عملياتك بس. العملية اللي خلصت بدون اللي قبلها بتبان هنا.':'كل التناقضات: عملية متأخرة خلصت واللي قبلها ما خلصتش.';
-    body.querySelector('#cfSum').textContent=rows.length+' خلية فيها تناقض'+(rows.length!==data.rows.length?' (من '+data.rows.length+')':'');
-    body.querySelector('#cfChips').innerHTML=chips;
+    body.querySelector('#cfNote').textContent=cur==='sup'?'تظهر هنا التناقضات التي تنقصها عملياتك فقط: عملية تم تنفيذها دون تنفيذ العملية السابقة لها.':'كل التناقضات: عملية لاحقة تم تنفيذها دون تنفيذ العملية السابقة لها.';
+    body.querySelector('#cfSum').textContent=rows.length+' خلية بها تناقض'+(rows.length!==data.rows.length?' (من '+data.rows.length+')':'');
+    var sel=body.querySelector('#cfOp');if(sel&&sel.getAttribute('data-sig')!==opts){sel.innerHTML=opts;sel.setAttribute('data-sig',opts);}if(sel&&sel.value!==filt.miss)sel.value=filt.miss;
     body.querySelector('#cfList').innerHTML=tbl;
   }
 
   /* طباعة كل التناقضات (بعد الفلتر الحالي، من غير حد 300) بنفس شكل Activity Report: صفحة A4 بيضا، هيدر، مربعات ملخّص، جدول، ترقيم صفحات */
   function printAll(){
-    var rows=lastRows;if(!rows||!rows.length){alert('مفيش تناقضات للطباعة.');return;}
-    var area=document.getElementById('printActivityArea');if(!area){alert('منطقة الطباعة مش موجودة.');return;}
-    var who=function(x){return x.kind==='auto'?'Auto (old)':(x.kind==='excel'?'Excel':(x.kind==='none'?'No record':(x.who||'-')));};
+    var rows=lastRows;if(!rows||!rows.length){alert('لا توجد تناقضات للطباعة.');return;}
+    var area=document.getElementById('printActivityArea');if(!area){alert('منطقة الطباعة غير موجودة.');return;}
+    var who=function(x){return x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'ملف الإكسل':(x.kind==='none'?'بدون سجل':(x.who||'—')));};
     var data=rows.map(function(r,i){
-      var done=r.done.map(function(x){var t=(x.kind==='user'||x.kind==='auto')?fmt(x.when):'';return x.name+' - '+who(x)+(t?' - '+t:'');});
-      return {n:i+1,tr:String(r.tracker),row:String(r.row),cell:String(r.cell||(r.r1+'/'+r.c1)),done:done,miss:r.missing.join(', ')};
+      var done=r.done.map(function(x){var t=(x.kind==='user'||x.kind==='auto')?fmt(x.when):'';return {name:x.name,sub:'('+who(x)+(t?' / '+t:'')+')'};});
+      return {n:i+1,tr:String(r.tracker),row:String(r.row),cell:String(r.cell||(r.r1+'/'+r.c1)),done:done,miss:r.missing.slice()};
     });
-    var heights=data.map(function(d){var lines=Math.max(1,d.done.length,Math.ceil(d.miss.length/26));return 2.81+1.7*(lines-1);});
+    var heights=data.map(function(d){var lines=Math.max(3,d.done.length*2,d.miss.length);return 2.81+1.7*(lines-1);});
     var idx=window.dpbPaginate(heights),pages=idx.length,n=rows.length;
     var counts={};rows.forEach(function(r){r.missing.forEach(function(m){counts[m]=(counts[m]||0)+1;});});
-    var summary=[['Cells with conflict',n,'100%']].concat(Object.keys(counts).map(function(m){return [m+' missing',counts[m],Math.round(counts[m]*100/n)+'%'];}));
+    var summary=[['خلايا بها تناقض',n,'100%']].concat(Object.keys(counts).map(function(m){return [m+' ناقصة',counts[m],Math.round(counts[m]*100/n)+'%'];}));
     var d=new Date(),p2=function(x){return x<10?'0'+x:''+x;},stamp=p2(d.getDate())+'/'+p2(d.getMonth()+1)+'/'+d.getFullYear();
-    var fl=(filt.txt?' · Tracker filter: '+filt.txt:'')+(filt.miss?' · Missing: '+filt.miss:'');
-    var scope=cur==='sup'?'My Operations':'All Operations';
-    var head=['#','TRACKER','ROW','CELL','DONE (operation - who - when)','MISSING'];
-    var colgroup='<colgroup><col style="width:5%"><col style="width:9%"><col style="width:10%"><col style="width:7%"><col style="width:47%"><col style="width:22%"></colgroup>';
+    var fl=(filt.txt?' · فلتر التراكر: '+filt.txt:'')+(filt.miss?' · الناقصة: '+filt.miss:'');
+    var scope=cur==='sup'?'عملياتي':'كل العمليات';
+    var head=['#','موقع الخلية','العمليات المنفذة (بواسطة / التاريخ)','العمليات الناقصة'];
+    var colgroup='<colgroup><col style="width:5%"><col style="width:20%"><col style="width:50%"><col style="width:25%"></colgroup>';
+    var rtl='direction:rtl;text-align:right;unicode-bidi:isolate';
     area.innerHTML=idx.map(function(ids,i){
-      return '<div class="print-report-page"><div class="print-report-head"><h2 style="margin:0 0 1mm;font-size:13px">Operations Conflicts Report — '+esc(scope)+'</h2><div style="font-size:7px;color:#555">Page '+(i+1)+' of '+pages+' · '+ids.length+' Cells · '+stamp+esc(fl)+'</div></div>'+
-      '<div class="print-summary">'+summary.map(function(x){return '<div class="box"><div class="k">'+esc(x[0])+'</div><div class="v">'+x[1]+'</div><div class="pct">'+x[2]+'</div></div>';}).join('')+'</div>'+
-      '<div class="print-panel-grid"><table class="print-panel">'+colgroup+'<thead><tr>'+head.map(function(h){return '<th>'+esc(h)+'</th>';}).join('')+'</tr></thead><tbody>'+
-      ids.map(function(k){var r=data[k];return '<tr><td>'+r.n+'</td><td>'+esc(r.tr)+'</td><td>'+esc(r.row)+'</td><td>'+esc(r.cell)+'</td><td class="hasop">'+(r.done.length?r.done.map(esc).join('<br>'):'-')+'</td><td class="hasop">'+esc(r.miss)+'</td></tr>';}).join('')+
-      '</tbody></table></div><div class="print-page-number">Page '+(i+1)+' of '+pages+'</div></div>';
+      return '<div class="print-report-page" style="direction:rtl"><div class="print-report-head" style="'+rtl+'"><h2 style="margin:0 0 1mm;font-size:13px">تقرير تناقضات العمليات — '+esc(scope)+'</h2><div style="font-size:7px;color:#555">صفحة '+(i+1)+' من '+pages+' · '+ids.length+' خلية · '+stamp+esc(fl)+'</div></div>'+
+      '<div class="print-summary" style="direction:rtl">'+summary.map(function(x){return '<div class="box"><div class="k">'+esc(x[0])+'</div><div class="v">'+x[1]+'</div><div class="pct">'+x[2]+'</div></div>';}).join('')+'</div>'+
+      '<div class="print-panel-grid"><table class="print-panel" style="direction:rtl">'+colgroup+'<thead><tr>'+head.map(function(h){return '<th style="'+rtl+'">'+esc(h)+'</th>';}).join('')+'</tr></thead><tbody>'+
+      ids.map(function(k){var r=data[k];
+        return '<tr><td style="'+rtl+'">'+r.n+'</td>'+
+        '<td class="hasop" style="'+rtl+'">تراكر <bdi>'+esc(r.tr)+'</bdi><br><bdi>'+esc(r.row)+'</bdi><br>خلية <bdi>'+esc(r.cell)+'</bdi></td>'+
+        '<td class="hasop" style="'+rtl+'">'+(r.done.length?r.done.map(function(x){return '✔ <bdi>'+esc(x.name)+'</bdi><br>'+esc(x.sub);}).join('<br>'):'-')+'</td>'+
+        '<td class="hasop" style="'+rtl+'">'+r.miss.map(function(m){return '✘ <bdi>'+esc(m)+'</bdi>';}).join('<br>')+'</td></tr>';}).join('')+
+      '</tbody></table></div><div class="print-page-number">صفحة '+(i+1)+' من '+pages+'</div></div>';
     }).join('');
     document.body.classList.add('print-activity');
     setTimeout(function(){window.print();},80);
@@ -21924,7 +22168,7 @@ body.print-activity #dpbBottomBar{display:none!important}
   function shell(){return document.getElementById('excelMapShell');}
   function isSup(){var s=shell();return !!(s&&s.closest&&s.closest('#dpbSupMapCanvas'));}
   function mine(){var vp=[];try{vp=(window.__dpbSupVisibleProcs&&window.__dpbSupVisibleProcs())||[];}catch(e){}return vp.map(function(p){return p.name;});}
-  function eligible(){var m=M(),st=m&&m.state,l=st&&st.last;if(!l||!l.spec||!l.model||!l.model.ok)return null;if(l.spec.mode!=='dynamic'||!l.spec.op||l.spec.op.kind==='notstarted')return null;return l;}
+  function eligible(){var m=M(),st=m&&m.state,l=st&&st.last;if(!l||!l.spec||!l.model||!l.model.ok)return null;if(l.spec.mode!=='dynamic'||!l.spec.op||l.spec.op.kind==='notstarted'||!l.spec.op.grouped)return null;return l;}
   function clear(){var s=shell();if(s)s.querySelectorAll('td[data-cf]').forEach(function(t){t.removeAttribute('data-cf');});var lg=document.getElementById('mapLegend');if(lg)lg.querySelectorAll('.cfKey').forEach(function(e){e.remove();});var b=document.getElementById('mapDetail');if(b)b.querySelectorAll('.cfDet').forEach(function(e){e.remove();});sig='';node=null;cache.byCell=null;}
   function legend(names){
     var lg=document.getElementById('mapLegend');if(!lg)return;lg.querySelectorAll('.cfKey').forEach(function(e){e.remove();});
@@ -21932,14 +22176,14 @@ body.print-activity #dpbBottomBar{display:none!important}
     d.innerHTML='<b>⚠ تناقض</b>'+(on?names.map(function(n,i){return '<span class="cfN"><i>'+(i+1)+'</i>'+esc(n)+'</span>';}).join(''):'')+'<button type="button" class="cfTgl">'+(on?'إخفاء الأرقام':'إظهار أرقام التناقض')+'</button>';
     lg.appendChild(d);
   }
-  function who(x){return x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'من الإكسل':(x.kind==='none'?'بدون سجل':esc(x.who||'—')));}
+  function who(x){return x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'ملف الإكسل':(x.kind==='none'?'بدون سجل':esc(x.who||'—')));}
   function detail(){
     var box=document.getElementById('mapDetail'),m=M();if(!box||!m||!cache.byCell||!on)return;
     if(box.querySelector('.cfDet'))return;
     var st=m.state,l=st&&st.last,id=st&&st.selected;if(!l||id==null||!l.model.unitById)return;
     var u=l.model.unitById.get(id);if(!u)return;
     var r=cache.byCell.get(u.r1+'|'+u.c1);if(!r)return;
-    var h='<b>⚠ تناقض في الخلية دي</b>'+r.done.map(function(x){var t=(x.kind==='user'||x.kind==='auto')?fmt(x.when):'';return '<div><span class="ok">✔ '+esc(x.name)+'</span> <span class="sub">'+who(x)+(t?' — '+t:'')+'</span></div>';}).join('')+r.missing.map(function(n){return '<div><span class="no">✘ '+esc(n)+' ناقصة</span></div>';}).join('');
+    var h='<b>⚠ تناقض في الخلية دي</b>'+r.done.map(function(x){var t=(x.kind==='user'||x.kind==='auto')?fmt(x.when):'';return '<div><span class="ok">✔ '+esc(x.name)+'</span> <span class="sub">('+who(x)+(t?' / '+t:'')+')</span></div>';}).join('')+r.missing.map(function(n){return '<div><span class="no">✘ '+esc(n)+' ناقصة</span></div>';}).join('');
     var d=document.createElement('div');d.className='cfDet';d.innerHTML=h;box.appendChild(d);
   }
   function watch(){var box=document.getElementById('mapDetail');if(!box||box===obsFor)return;if(obs)obs.disconnect();obsFor=box;try{obs=new MutationObserver(function(){detail();});obs.observe(box,{childList:true});}catch(e){}}

@@ -1546,7 +1546,7 @@
       return (!tot || (exp && tot < exp * 0.95)) ? null : out;
     }, function () { return null; });
   }
-  function bkRead() {
+  function bkRead0() {
     return getAdapter().then(function (a) {   // v156: the backup reads the whole namespace, so it no longer needs a project to be open
       if (!a || !a.list) throw new Error('الاتصال الحالي مش بيدعم قراءة كل المستندات');
       bkStep('read-local');
@@ -1562,6 +1562,37 @@
     });
   }
   /*BKREAD-END*/
+  // v195: the backup must not wait for the upload. Records entered on THIS device that are still waiting for the server (DPB_SHARED_PRODUCTION_V2 records whose
+  // time differs from DPB_CLOUD_SYNCED_TIMES_V1) are laid over what was read from Firebase, so the phone copy / Drive copy always holds this device's latest edits.
+  // Rows only; a newer row already on the server is never replaced by an older local one.
+  function bkLocalPending() {
+    var out = [];
+    try {
+      var raw = JSON.parse(localStorage.getItem('DPB_SHARED_PRODUCTION_V2') || '{}'), arr = Array.isArray(raw.records) ? raw.records : [];
+      var syn = {}; try { syn = JSON.parse(localStorage.getItem('DPB_CLOUD_SYNCED_TIMES_V1') || '{}') || {}; } catch (e) {}
+      var pid = String(window.__dpbActiveProjectId || '');
+      arr.forEach(function (r) {
+        if (!r || !r.id || !r.process || r.del) return;
+        if (!isFinite(Number(r.r1)) || !isFinite(Number(r.c1)) || r.r1 === '' || r.c1 === '') return;
+        if (pid && String(r.projectId || '') !== pid) return;
+        if (syn[r.id] === r.time) return;
+        out.push(r);
+      });
+    } catch (e) {}
+    return out;
+  }
+  function bkLocalSig() { var a = bkLocalPending(), m = ''; a.forEach(function (r) { var t = String(r.time || ''); if (t > m) m = t; }); return a.length + '@' + m; }
+  function bkOverlayLocal(cur) {
+    try {
+      if (!cur || !cur.rows) return cur;
+      bkLocalPending().forEach(function (r) {
+        var k = CORE.slug(r.process) + '_' + Number(r.r1) + '_' + Number(r.c1), o = cur.rows[k];
+        if (!o || String(r.time || '') > String(o.time || '')) cur.rows[k] = clean(r);
+      });
+    } catch (e) {}
+    return cur;
+  }
+  function bkRead() { return bkRead0().then(bkOverlayLocal); }
   function bkMake(cur) { return { format: BK_FORMAT, version: 1, ns: nsName(), savedAt: new Date().toISOString(), counts: { rows: Object.keys(cur.rows).length, kv: Object.keys(cur.kv).length }, rows: cur.rows, kv: cur.kv }; }
   function bkDownload(obj, name) {
     var blob = new Blob([JSON.stringify(obj)], { type: 'application/json' }), url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -1983,7 +2014,7 @@
   /* ---- v186: automatic jobs. TWO independent jobs, each with its own master switch, its own "every N minutes/hours/days" timer and its own fixed daily time:
        bk = copy on the phone (current + previous),   dr = upload to Google Drive.
      Both only act when the map cells changed (rows), and only on the admin device. Minimum for a timer: 5 minutes. ---- */
-  var bkBusy = false, bkLastVer = null, drLastVer = null;
+  var bkBusy = false, bkLastVer = null, drLastVer = null, bkLastLoc = null, drLastLoc = null;
   var SCH = {
     bk: { on: 'dpb_fs2_bk_auto', iv: 'dpb_fs2_bk_iv', n: 'dpb_fs2_bk_n', u: 'dpb_fs2_bk_u', at: 'dpb_fs2_bk_at_on', t: 'dpb_fs2_bk_at', day: 'dpb_fs2_bk_at_day', last: 'dpb_fs2_bk_last', defN: function () { return String(Number(ls('dpb_fs2_bk_min', '30')) || 30); }, defT: '20:00' },
     dr: { on: 'DPB_BACKUP_DRIVE_V1', iv: 'dpb_fs2_dr_iv', n: 'dpb_fs2_dr_n', u: 'dpb_fs2_dr_u', at: 'dpb_fs2_dr_at_on', t: 'dpb_fs2_dr_at', day: 'dpb_fs2_dr_at_day', last: 'dpb_fs2_dr_last', defN: function () { return '30'; }, defT: '22:00' }
@@ -2068,16 +2099,16 @@
       if (Date.now() < Number(ls('dpb_fs2_bk_quota_until', '0'))) return Promise.resolve('skip');
       // with a project open the listener tells us when something changed (own edits AND other devices' edits); with no project open nothing can tell,
       // so the namespace is looked at no more than once an hour (every look reads each document once) - a daily time is allowed to look once
-      if (curStore()) { if (bkLastVer === version) { if (due.at) schMarkDay('bk'); return Promise.resolve('skip'); } }
-      else if (!due.at && due.since < Math.max(due.ev, 60) * 60000) return Promise.resolve('skip');
+      if (curStore()) { if (bkLastVer === version && bkLastLoc === bkLocalSig()) { if (due.at) schMarkDay('bk'); return Promise.resolve('skip'); } }
+      else if (!due.at && due.since < Math.max(due.ev, 60) * 60000 && bkLastLoc === bkLocalSig()) return Promise.resolve('skip');
     }
-    bkBusy = true; bkAutoRun = !force; var ver = version;
+    bkBusy = true; bkAutoRun = !force; var ver = version, loc = bkLocalSig();
     return bkBackupNow().then(function (r) {
-      bkLastVer = ver; lsSet(SCH.bk.last, String(Date.now())); if (due.at) schMarkDay('bk');
+      bkLastVer = ver; bkLastLoc = loc; lsSet(SCH.bk.last, String(Date.now())); if (due.at) schMarkDay('bk');
       if (!r.changed) return 'same';
       return bkPublish(r).then(function (x) { return 'saved:' + x[0]; });
     }).catch(function (e) {
-      if (e && e.code === 'bk-skip') { bkLastVer = ver; lsSet(SCH.bk.last, String(Date.now())); return 'skip-server'; }   // v161: phone copy not usable and the server was read recently: wait for the next change / interval instead of retrying every minute
+      if (e && e.code === 'bk-skip') { bkLastVer = ver; bkLastLoc = loc; lsSet(SCH.bk.last, String(Date.now())); return 'skip-server'; }   // v161: phone copy not usable and the server was read recently: wait for the next change / interval instead of retrying every minute
       if (/resource-exhausted|quota/i.test(String(e && (e.code || e.message || e)))) lsSet('dpb_fs2_bk_quota_until', String(Date.now() + 3 * 3600000)); return 'error';
     }).then(function (x) { bkBusy = false; bkAutoRun = false; bkPaint(); return x; });
   }
@@ -2102,16 +2133,16 @@
       if (Date.now() < Number(ls('dpb_fs2_bk_quota_until', '0'))) return Promise.resolve('skip');
       var pend = !!ls('dpb_fs2_bk_drive_pending', '');
       if (!pend) {
-        if (curStore()) { if (drLastVer === version) { if (due.at) schMarkDay('dr'); return Promise.resolve('skip'); } }
-        else if (!due.at && due.since < Math.max(due.ev, 60) * 60000) return Promise.resolve('skip');
+        if (curStore()) { if (drLastVer === version && drLastLoc === bkLocalSig()) { if (due.at) schMarkDay('dr'); return Promise.resolve('skip'); } }
+        else if (!due.at && due.since < Math.max(due.ev, 60) * 60000 && drLastLoc === bkLocalSig()) return Promise.resolve('skip');
       }
     }
-    bkBusy = true; var ver = version;
+    bkBusy = true; var ver = version, loc = bkLocalSig();
     return driveUploadFresh(false).then(function (d) {
-      drLastVer = ver; lsSet(SCH.dr.last, String(Date.now())); if (due.at) schMarkDay('dr');
+      drLastVer = ver; drLastLoc = loc; lsSet(SCH.dr.last, String(Date.now())); if (due.at) schMarkDay('dr');
       return d && d.same ? 'same' : (d && d.ok ? 'uploaded' : 'drive-fail');
     }).catch(function (e) {
-      if (e && e.code === 'bk-skip') { drLastVer = ver; lsSet(SCH.dr.last, String(Date.now())); return 'skip-server'; }
+      if (e && e.code === 'bk-skip') { drLastVer = ver; drLastLoc = loc; lsSet(SCH.dr.last, String(Date.now())); return 'skip-server'; }
       if (/resource-exhausted|quota/i.test(String(e && (e.code || e.message || e)))) lsSet('dpb_fs2_bk_quota_until', String(Date.now() + 3 * 3600000)); return 'error';
     }).then(function (x) { bkBusy = false; try { bkPaint(); } catch (e) {} return x; });
   }
