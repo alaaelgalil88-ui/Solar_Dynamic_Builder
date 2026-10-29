@@ -1000,6 +1000,8 @@
   }
   function kvWriteStr(a, key, str) {
     var p = kvDoc(key), t = new Date().toISOString(), ops = [];
+    // v196: a Builder edit (map catalog / shapes / Excel copy / limits+colours / build result) made on this phone - online or OFFLINE - must wake the automatic backup
+    try { if (/^(mapcat|mapsnap_|xlfile_|basecells|buildresult)/.test(String(key))) localStorage.setItem('dpb_fs2_bld_ver', String(Date.now())); } catch (e) {}
     if (str.length <= KV_CHUNK) ops.push({ t: 's', path: p, data: { json: str, time: t } });
     else {
       var n = Math.ceil(str.length / KV_CHUNK);
@@ -1581,7 +1583,7 @@
     } catch (e) {}
     return out;
   }
-  function bkLocalSig() { var a = bkLocalPending(), m = ''; a.forEach(function (r) { var t = String(r.time || ''); if (t > m) m = t; }); return a.length + '@' + m; }
+  function bkLocalSig() { var a = bkLocalPending(), m = ''; a.forEach(function (r) { var t = String(r.time || ''); if (t > m) m = t; }); return a.length + '@' + m + '#' + ls('dpb_fs2_bld_ver', ''); }
   function bkOverlayLocal(cur) {
     try {
       if (!cur || !cur.rows) return cur;
@@ -1685,7 +1687,20 @@
   // Everything in kv (chat messages, ticks, reminders, supervisor accounts, names, FCM tokens, the per-device clock doc, build/meta stamps...) never starts an automatic backup:
   // opening the app rewrites some of those documents (clock-*, fcm_* time, chat seenAt), which used to look like "something changed" and made a backup + Drive upload on every open.
   // The Backup Now button still compares EVERYTHING (as before), and any copy that is made still contains everything.
-  function bkVfp(cur) { var fp = {}; Object.keys((cur && cur.rows) || {}).forEach(function (id) { if (id.indexOf('meta-') === 0) return; fp[id] = hashStr(stable(cur.rows[id])); }); return fp; }
+  // v196: ...plus the Builder's own documents (kv ids p_<project>__mapcat / mapsnap_* / xlfile_* / basecells / buildresult, and their -pN parts). The per-write 'time' stamp is left out so
+  // re-publishing identical content never counts as an edit. Chat, clocks, tokens, accounts, names and build/meta stamps stay out.
+  var BK_BLD_RE = /__(mapcat|mapsnap_|xlfile_|basecells|buildresult)/;
+  function bkVfp(cur) {
+    var fp = {};
+    Object.keys((cur && cur.rows) || {}).forEach(function (id) { if (id.indexOf('meta-') === 0) return; fp[id] = hashStr(stable(cur.rows[id])); });
+    Object.keys((cur && cur.kv) || {}).forEach(function (id) {
+      if (!BK_BLD_RE.test(id)) return;
+      var d = cur.kv[id], c = {}; if (d && typeof d === 'object') Object.keys(d).forEach(function (k) { if (k !== 'time') c[k] = d[k]; });
+      fp['kv:' + id] = hashStr(stable(c));
+    });
+    return fp;
+  }
+  function bkRowsOnly(f) { var o = {}; Object.keys(f || {}).forEach(function (k) { if (k.indexOf('kv:') !== 0) o[k] = f[k]; }); return o; }
   function bkBackupNow() {
     var autoMode = !!bkAutoRun;
     return bkRead().then(function (cur) {
@@ -1703,6 +1718,7 @@
       if (autoMode) {
         return bkGet('currentvfp').then(function (ov) {
           if (ov) {
+            if (!Object.keys(ov).some(function (k) { return k.indexOf('kv:') === 0; }) && stable(ov) === stable(bkRowsOnly(vfp))) return bkPut('currentvfp', vfp).then(function () { bkStep('done'); return { changed: false, current: null, previous: null }; });   // first run after v196: the old fingerprint had no Builder part
             if (stable(ov) === stable(vfp)) { bkStep('done'); return { changed: false, current: null, previous: null }; }
             return bkGet('current').then(rotate);
           }
@@ -2119,6 +2135,7 @@
       return bkGet('drivevfp').then(function (ov) {
         var pend = !!ls('dpb_fs2_bk_drive_pending', '');
         if (!manual && ov && !pend && stable(ov) === stable(vfp)) return { skipped: true, same: true };
+        if (!manual && ov && !pend && !Object.keys(ov).some(function (k) { return k.indexOf('kv:') === 0; }) && stable(ov) === stable(bkRowsOnly(vfp))) return bkPut('drivevfp', vfp).then(function () { return { skipped: true, same: true }; });   // first run after v196
         var obj = bkMake(cur); cur = null;
         return bkDriveUpload(obj).then(function (d) { return (d && d.ok) ? bkPut('drivevfp', vfp).then(function () { return d; }) : d; });
       });
