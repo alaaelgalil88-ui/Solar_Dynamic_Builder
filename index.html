@@ -6093,7 +6093,7 @@ function zcZones(m){
 function zcSampleHtml(mk,z,work,sel,maxW,maxH){
   const us=z.sample.units;
   const r0=Math.min.apply(null,us.map(u=>u.r1)),c0=Math.min.apply(null,us.map(u=>u.c1)),r1=Math.max.apply(null,us.map(u=>u.r2)),c1=Math.max.apply(null,us.map(u=>u.c2));
-  const H=r1-r0+1,W=c1-c0+1,s=Math.max(8,Math.min(30,Math.floor(Math.min((maxW||300)/W,(maxH||300)/H))));
+  const H=r1-r0+1,W=c1-c0+1,s=Math.max(8,Math.min(34,Math.floor(Math.min((maxW||300)/W,(maxH||300)/H))));
   const cells=us.map(u=>{
     const col=work[u.post]||zcOrig(u)||'#ffffff';
     const w=(u.c2-u.c1+1)*s,h=(u.r2-u.r1+1)*s;
@@ -6176,16 +6176,14 @@ function renderZoneColorsPage(){
   if(!cur){h+='<div class="hint" style="padding:8px 4px">اختار عملية من فوق عشان تظهر عيناتها.</div>';body.innerHTML=h;zcRotateLabels();return;}
   const {m,zones,mk}=cur,store=zcLoad(),saved=store[mk]||{};
   // sample height so that everything fits one screen (no scrolling)
-  const aside=document.querySelector('aside');const topY=aside?aside.getBoundingClientRect().bottom:232;
-  const avail=Math.floor(window.innerHeight-topY-62-250);
-  const maxH=Math.max(120,Math.min(300,avail));
+  const maxH=480;   // big, easy-to-tap cells; the page may scroll (the user prefers bigger samples to a no-scroll screen)
   h+='<div class="zcZones">'+zones.map(z=>{
     const wkey=mk+'|'+z.letter;
     const work=ZC_UI.work[wkey]=ZC_UI.work[wkey]||Object.assign({},(saved[z.letter]&&saved[z.letter].sig===z.sig)?saved[z.letter].c:{});
     const sel=ZC_UI.sel[wkey]||0,changed=Object.keys(zcCleanOf(z,work)).length>0;
     return '<div class="zcZone'+(changed?' mod':'')+'"><div class="zcHead"><span class="zcBadge zcName" dir="ltr">'+esc(z.letter)+'_'+z.n+'</span>'+(changed?'<button type="button" class="zcRst" data-zc="reset" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" title="رجوع للإكسل">↺</button>':'')+'</div>'+
       '<div class="zcCount">'+z.total+' تراكر'+(z.other?' · '+z.other+' مختلف':'')+'</div>'+
-      zcSampleHtml(mk,z,work,sel,70,maxH)+'</div>';
+      zcSampleHtml(mk,z,work,sel,78,maxH)+'</div>';
   }).join('')+'</div>';
   if(ZC_UI.msg[mk])h+='<div class="zcMsg">'+ZC_UI.msg[mk]+'</div>';
   h+='<div class="zcFoot"><button type="button" class="btn" data-zc="import" data-mk="'+esc(mk)+'">استيراد</button><button type="button" class="btn primary" data-zc="apply" data-mk="'+esc(mk)+'"'+(zcIsDirty(m,mk)?'':' disabled')+'>Apply'+(cur.members.length>1?' · '+cur.members.length+' عمليات':'')+'</button></div>';
@@ -22115,7 +22113,7 @@ body.print-activity #dpbBottomBar{display:none!important}
 #zoneColorsBody .zcCell:active{transform:scale(.92)}
 #zoneColorsBody .zcCell.on{outline:none;z-index:3;box-shadow:0 0 0 2px #fff,0 0 12px 2px rgba(127,208,255,.9);transform:scale(1.12)}
 #zoneColorsBody .zcMsg{margin-top:8px;font-size:12px;line-height:1.35;color:#bfe7ff;background:rgba(40,140,220,.12);border:1px solid rgba(127,208,255,.3);border-radius:10px;padding:6px 8px}
-#zoneColorsBody .zcFoot{display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-top:10px}
+#zoneColorsBody .zcFoot{display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-top:10px;position:sticky;bottom:66px;z-index:5;padding:8px 0;background:linear-gradient(180deg,rgba(8,16,28,0),#08101c 35%)}
 #zoneColorsBody .zcFoot .btn{height:40px;font-size:13px;font-weight:800}
 #zoneColorsBody .zcFoot .btn[disabled]{opacity:.35;pointer-events:none}
 #zonecolors .zcBalloon{position:fixed;z-index:99999;width:236px;padding:10px;border-radius:14px;background:#0d2236;border:1px solid #7fd0ff;box-shadow:0 10px 30px rgba(0,0,0,.6),0 0 0 1px rgba(127,208,255,.25)}
