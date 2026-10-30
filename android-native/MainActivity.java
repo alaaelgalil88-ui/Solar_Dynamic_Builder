@@ -17,6 +17,10 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DpbKeepAlivePlugin.class);
         super.onCreate(savedInstanceState);
 
+        // قفل ارتداد/تمدد الشاشة (overscroll) على الـWebView كله، فالأجزاء الثابتة فوق وتحت
+        // في كل شاشات التطبيق ما تتحركش لما تسحب في آخر القايمة.
+        disableOverScroll();
+
         // لما الأندرويد يقتل صفحة الـWebView عشان الذاكرة، نعمل reload بدل ما التطبيق يقفل.
         // لو حصل أكتر من 3 مرات في دقيقة نسيب السلوك الافتراضي عشان ما ندخلش في لفّة.
         if (getBridge() != null) {
@@ -38,6 +42,21 @@ public class MainActivity extends BridgeActivity {
                 }
             });
         }
+    }
+
+    private void disableOverScroll() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                WebView w = getBridge().getWebView();
+                w.setOverScrollMode(android.view.View.OVER_SCROLL_NEVER);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        disableOverScroll();
     }
 
     // v167: while the keep-alive service is running, do not let the WebView freeze its timers/network when the screen is left,
