@@ -2,9 +2,6 @@ name: Build APK
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths-ignore: ['**.md']
 
 jobs:
   build:
@@ -15,7 +12,7 @@ jobs:
       - name: Copy web files into www
         run: |
           mkdir -p www
-          cp index.html sw.js manifest.json icon-192.png icon-512.png dpb-fs.js dpb-fs2-core.js dpb-fs2.js dpb-config.js www/
+          cp index.html sw.js manifest.json icon-192.png icon-512.png dpb-fs.js dpb-fs2-core.js dpb-fs2.js dpb-config.js dpb-version.js dpb-update.js www/
           ls -la www
 
       - uses: actions/setup-node@v4
