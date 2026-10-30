@@ -189,8 +189,8 @@ function main() {
   if (!OTA) {
     log('1/8 Checking Java + Android SDK');
     const jh = findJava21();
-    if (jh) { env.JAVA_HOME = jh; env.PATH = path.join(jh, 'bin') + path.delimiter + env.PATH; }
-    Object.assign(process.env, { JAVA_HOME: env.JAVA_HOME, PATH: env.PATH });
+    if (jh) { process.env.JAVA_HOME = jh; process.env.PATH = path.join(jh, 'bin') + path.delimiter + (process.env.PATH || ''); }
+    env = Object.assign({}, process.env);
     sdk = findSdk();
 
     log('2/8 Signing key (keeps updates installable over the old app)');
