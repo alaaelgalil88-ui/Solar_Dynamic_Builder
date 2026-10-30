@@ -1,0 +1,2 @@
+# Address of the "update" folder on GitHub Pages (one line, no spaces)
+https://alaaelgalil88-ui.github.io/Solar_Dynamic_Builder/update/
