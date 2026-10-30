@@ -6131,7 +6131,7 @@ function zcPlaceBalloon(){
     '<div class="zcPal">'+full.map(c=>'<button type="button" class="zcSw" data-zc="sw" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'" data-c="'+esc(c)+'" title="'+esc(c)+'" style="background:'+esc(c)+'"></button>').join('')+
     '<label class="zcCustomW" title="لون آخر"><input type="color" class="zcCustom" data-zc="custom" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'" value="#ff0000">＋</label></div><div class="zcArrow"></div>';
   sec.appendChild(o);
-  const r=cell.getBoundingClientRect(),bw=o.offsetWidth,bh=o.offsetHeight,vw=window.innerWidth,vh=window.innerHeight;
+  const r=cell.getBoundingClientRect(),bw=o.offsetWidth,bh=o.offsetHeight,vw=window.innerWidth,vh0=window.innerHeight,ft=document.querySelector('#zoneColorsBody .zcFoot'),vh=ft?Math.min(vh0,ft.getBoundingClientRect().top):vh0;
   let left=r.left+r.width/2-bw/2;left=Math.max(6,Math.min(vw-bw-6,left));
   let top=r.bottom+10,below=true;
   if(top+bh>vh-8){top=r.top-bh-10;below=false;}
@@ -6245,8 +6245,8 @@ function zcSetColor(mk,letter,color){
 document.addEventListener('click',function(e){
   const b=e.target.closest&&e.target.closest('[data-zc]');if(!b||!document.getElementById('zonecolors')||!document.getElementById('zonecolors').contains(b))return;
   const act=b.getAttribute('data-zc'),mk=b.getAttribute('data-mk'),l=b.getAttribute('data-l');
-  if(act==='op'){ZC_UI.op=(ZC_UI.op===mk?'':mk);ZC_UI.cur=null;renderZoneColorsPage();}
-  else if(act==='cell'){const w=mk+'|'+l,p=Number(b.getAttribute('data-p'));ZC_UI.sel[w]=ZC_UI.sel[w]===p?0:p;ZC_UI.msg[mk]='';ZC_UI.cur=ZC_UI.sel[w]?{mk,l}:null;renderZoneColorsPage();}
+  if(act==='op'){ZC_UI.op=(ZC_UI.op===mk?'':mk);ZC_UI.cur=null;ZC_UI.sel={};renderZoneColorsPage();}
+  else if(act==='cell'){const w=mk+'|'+l,p=Number(b.getAttribute('data-p')),was=ZC_UI.sel[w]===p;ZC_UI.sel={};ZC_UI.sel[w]=was?0:p;ZC_UI.msg[mk]='';ZC_UI.cur=ZC_UI.sel[w]?{mk,l}:null;renderZoneColorsPage();}
   else if(act==='sw'){ZC_UI.msg[mk]='';zcSetColor(mk,l,b.getAttribute('data-c'));}
   else if(act==='apply'){if(!b.disabled)zcApply(mk);}
   else if(act==='reset')zcReset(mk,l);
@@ -22114,7 +22114,8 @@ body.print-activity #dpbBottomBar{display:none!important}
 #zoneColorsBody .zcCell:active{transform:scale(.92)}
 #zoneColorsBody .zcCell.on{outline:none;z-index:3;box-shadow:0 0 0 2px #fff,0 0 12px 2px rgba(127,208,255,.9);transform:scale(1.12)}
 #zoneColorsBody .zcMsg{margin-top:8px;font-size:12px;line-height:1.35;color:#bfe7ff;background:rgba(40,140,220,.12);border:1px solid rgba(127,208,255,.3);border-radius:10px;padding:6px 8px}
-#zoneColorsBody .zcFoot{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:14px;position:sticky;bottom:72px;z-index:5;padding:10px;background:#0b1b2b;border:1px solid #27506f;border-radius:14px;box-shadow:0 -8px 18px rgba(4,10,18,.85)}
+#zoneColorsBody .zcFoot{display:grid;grid-template-columns:1fr 2fr;gap:10px;position:fixed;left:0;right:0;bottom:calc(58px + env(safe-area-inset-bottom,0px));z-index:99970;margin:0;padding:10px 12px;background:#07111d;border-top:1px solid rgba(79,210,255,.30);box-sizing:border-box}
+#zoneColorsBody{padding-bottom:84px}
 #zoneColorsBody .zcFoot .btn{height:40px;font-size:13px;font-weight:800}
 #zoneColorsBody .zcFoot .btn[disabled]{opacity:.35;pointer-events:none}
 #zonecolors .zcBalloon{position:fixed;z-index:99999;box-sizing:border-box;width:min(236px,calc(100vw - 16px));max-width:calc(100vw - 16px);padding:10px;border-radius:14px;background:#0d2236;border:1px solid #7fd0ff;box-shadow:0 10px 30px rgba(0,0,0,.6),0 0 0 1px rgba(127,208,255,.25)}
