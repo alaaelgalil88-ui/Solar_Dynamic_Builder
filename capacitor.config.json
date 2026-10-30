@@ -1,5 +1,11 @@
 {
   "appId": "com.dpb.map.v2",
-  "appName": "DPB Map",
-  "webDir": "www"
+  "appName": "solar_productivity",
+  "webDir": "www",
+  "plugins": {
+    "CapacitorUpdater": {
+      "autoUpdate": false,
+      "appReadyTimeout": 20000
+    }
+  }
 }
