@@ -22408,3 +22408,31 @@ body.print-activity #dpbBottomBar{display:none!important}
 /* the "update available" bar must always sit above the frozen headers and overlays */
 #dpbOtaBar{z-index:2147483000!important}
 </style>
+
+<style id="dpbAdminConnTitle">
+/* Admin Control Center: the Firestore status card is gone; the title colour says it instead
+   (green = connected, red = not connected, normal colour while it is still connecting). */
+#dpbConnectionStatus{display:none!important}
+#dpbAdminOverlay .dpbAdminTop h2{transition:color .35s ease}
+#dpbAdminOverlay[data-fs="ok"] .dpbAdminTop h2{color:#7be08a!important}
+#dpbAdminOverlay[data-fs="bad"] .dpbAdminTop h2{color:#ff6b6b!important}
+</style>
+<script>
+(function(){
+  var ov=null;
+  function status(){ try{ return window.DPB_FS2&&window.DPB_FS2.status?window.DPB_FS2.status():null; }catch(e){ return null; } }
+  function tick(){
+    try{
+      ov=ov||document.getElementById('dpbAdminOverlay'); if(!ov) return;
+      var s=status(), v='wait';
+      if(navigator.onLine===false) v='bad';
+      else if(s&&s.connected) v='ok';
+      else if(s&&(s.failed||s.on===false)) v='bad';
+      if(ov.getAttribute('data-fs')!==v) ov.setAttribute('data-fs',v);
+    }catch(e){}
+  }
+  setInterval(tick,1000);
+  window.addEventListener('online',tick); window.addEventListener('offline',tick);
+  tick();
+})();
+</script>
