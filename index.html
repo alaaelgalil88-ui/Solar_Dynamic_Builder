@@ -19167,9 +19167,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     var active=document.activeElement;
     // Builder tracker input must keep the Android numeric keyboard open while typing.
     // Only Supervisor may relinquish keyboard focus when it explicitly finishes filtering.
-    if(active && active.id==='dpbSupervisorTrackerFilterInput'){
-      try{active.blur()}catch(_){}
-    }
+    /* The supervisor box used to blur itself ~0.45s after the first digit, which closed the keyboard in the middle of typing.
+       Now it behaves like the Builder box: the keyboard stays open; Enter / the keyboard's ✓ closes it (see dpbTfGuardJs). */
 
     resultWrap.setAttribute('tabindex','-1');
     resultWrap.style.overflowAnchor='none';
@@ -22576,6 +22575,7 @@ body.print-activity #dpbBottomBar{display:none!important}
 (function(){
   function sync(fr,inp){var cap=Number(fr.style.getPropertyValue('--tfch'))||4,n=inp.value.length;if(n>cap)fr.classList.add('tfWide');else if(n===0)fr.classList.remove('tfWide')}
   window.addEventListener('input',function(e){var t=e.target;if(!t||t.tagName!=='INPUT'||!t.closest)return;var fr=t.closest('.dpbTrackerFilter.dpbTfRow');if(fr)sync(fr,t)},true);
+  window.addEventListener('keydown',function(e){var t=e.target;if(e.key==='Enter'&&t&&(t.id==='dpbSupervisorTrackerFilterInput'||t.id==='dpbMsSearch')){e.preventDefault();try{t.blur()}catch(_){}}},true);
   window.addEventListener('click',function(e){if(!e.target||!e.target.closest||!e.target.closest('.dpbTfReset'))return;setTimeout(function(){var l=document.querySelectorAll('.dpbTrackerFilter.dpbTfRow');for(var i=0;i<l.length;i++){var inp=l[i].querySelector('input');if(inp)sync(l[i],inp)}},60)},true);
 })();
 </script>
