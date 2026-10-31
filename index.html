@@ -22559,7 +22559,12 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbSupervisorTrackerFilter.dpbTfRow > .dpbTfReset{flex:0 0 auto!important;width:auto!important;min-width:0!important;height:44px!important;padding:0 14px!important;font-size:12.5px!important;border-radius:13px!important}
 /* in-app update bar (OTA) + web update banner */
 #dpbOtaBar{background:linear-gradient(135deg,rgba(11,34,56,.97),rgba(6,20,35,.98))!important;border:1px solid rgba(53,214,255,.45)!important;border-radius:18px!important;padding:12px 14px!important;box-shadow:0 14px 34px rgba(0,0,0,.6),0 0 22px rgba(53,214,255,.2)!important;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-#dpbOtaBar button{position:relative;overflow:hidden;border-radius:12px!important;padding:10px 18px!important;font-weight:800!important;letter-spacing:.2px}
+#dpbOtaBar button{position:relative;overflow:hidden;flex:0 0 auto;border-radius:12px!important;padding:9px 14px!important;font-weight:800!important;letter-spacing:.2px;white-space:nowrap}
+/* one single row: message on one line (the small "app restarts" sub-line is dropped), buttons beside it */
+#dpbOtaBar{flex-wrap:nowrap!important;gap:8px!important;padding:8px 12px!important}
+#dpbOtaBar br,#dpbOtaBar small{display:none!important}
+#dpbOtaBar > span{flex:1 1 auto!important;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:340px){#dpbOtaBar{font-size:12px!important;gap:6px!important;padding:8px 10px!important}#dpbOtaBar button{padding:8px 10px!important;font-size:12px!important}}
 #dpbOtaBar #dpbOtaGo{background:linear-gradient(135deg,#2fe0ab,#13a57f)!important;box-shadow:0 6px 18px rgba(31,214,160,.45)!important;animation:dpbGoPulse 2.2s ease-in-out infinite}
 #dpbOtaBar #dpbOtaGo::after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:40%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.55),transparent);transform:skewX(-20deg);animation:dpbSheen 2.4s ease-in-out infinite}
 #dpbOtaBar #dpbOtaLater,#dpbOtaBar #dpbOtaX{background:rgba(255,255,255,.08)!important;border:1px solid rgba(255,255,255,.16)!important}
