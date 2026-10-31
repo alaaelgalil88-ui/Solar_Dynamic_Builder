@@ -59,15 +59,30 @@
     b.querySelector('#dpbOtaLater').onclick = hide;
     b.querySelector('#dpbOtaGo').onclick = function () { install(info); };
   }
+  function sha256Hex(buf) {                  // the update plugin wants the zip's SHA-256, so we compute it here
+    return crypto.subtle.digest('SHA-256', buf).then(function (d) {
+      return Array.prototype.map.call(new Uint8Array(d), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    });
+  }
+  function errText(e) {
+    var m = '';
+    try { m = (e && (e.message || e.errorMessage || e.error || e.code)) || (typeof e === 'string' ? e : JSON.stringify(e)); } catch (x) { m = String(e); }
+    return String(m || 'unknown').replace(/[<>&"]/g, ' ').slice(0, 160);
+  }
   function install(info) {
     if (busy) return; busy = true;
     bar('<span>⏳ جاري تنزيل التحديث…</span>');
-    Promise.resolve(P.download({ url: BASE + info.file, version: String(info.version) })).then(function (bundle) {
+    var url = BASE + info.file;
+    var sum = info.checksum ? Promise.resolve(String(info.checksum)) :
+      fetch(url + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.arrayBuffer(); }).then(sha256Hex);
+    sum.then(function (cs) {
+      return P.download({ url: url, version: String(info.version), checksum: cs });
+    }).then(function (bundle) {
       bar('<span>✅ تم التنزيل — بيتم التشغيل…</span>');
       return P.set(bundle);
-    }).catch(function () {
+    }).catch(function (e) {
       busy = false;
-      bar('<span style="flex:1">تعذّر التنزيل — تأكد من النت وجرّب تاني</span>' + btn('dpbOtaX', 'حسنًا', false)).querySelector('#dpbOtaX').onclick = hide;
+      bar('<span style="flex:1">تعذّر التنزيل — جرّب تاني<br><small style="font-weight:600;opacity:.75;direction:ltr;display:block;text-align:left">' + errText(e) + '</small></span>' + btn('dpbOtaX', 'حسنًا', false)).querySelector('#dpbOtaX').onclick = hide;
     });
   }
 
