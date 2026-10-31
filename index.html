@@ -22403,3 +22403,8 @@ body.print-activity #dpbBottomBar{display:none!important}
 }
 @media(max-width:360px){ body.dpbProjectHomeMode .app > aside .brand{font-size:18px!important} }
 </style>
+
+<style id="dpbOtaBarOnTop">
+/* the "update available" bar must always sit above the frozen headers and overlays */
+#dpbOtaBar{z-index:2147483000!important}
+</style>
