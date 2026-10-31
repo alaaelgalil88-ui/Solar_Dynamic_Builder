@@ -11417,11 +11417,11 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       el.textContent="⏳ بيتفحص الاتصال...";
       el.style.color="#9db9d1";
       if(!document.getElementById("dpbPublishBuildBtn")){
-        const b=document.createElement("button");b.id="dpbPublishBuildBtn";b.type="button";b.className="dpbAdminBtn";b.style.cssText="margin-top:8px;width:100%";b.textContent="📤 انشر الخرايط للمشرفين";
+        const b=document.createElement("button");b.id="dpbPublishBuildBtn";b.type="button";b.className="dpbAdminIconBtn dpbAdminGlassBtn";b.title="انشر الخرايط للمشرفين";b.setAttribute("aria-label","انشر الخرايط للمشرفين");b.textContent="📤";
         b.addEventListener("click",async()=>{
           const pr=window.project;
           if(!(pr&&pr.buildResult)){alert("مفيش Build على الجهاز ده. اعمل Build من اللابتوب الأول (خطوة Build).");return;}
-          b.disabled=true;const t0=b.textContent;b.textContent="⏳ بيرفع...";
+          b.disabled=true;const t0=b.textContent;b.textContent="⏳";
           try{
             const payload={buildResult:pr.buildResult,types:pr.types,colors:(typeof EXACT_CODE_COLORS!=="undefined"?EXACT_CODE_COLORS:undefined),savedAt:new Date().toISOString()};
             const res=await window.DPB_GS.saveBuildResult(payload);
@@ -11439,7 +11439,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
           }catch(e){alert("❌ فشل الرفع: "+(e&&e.message||e));}
           b.disabled=false;b.textContent=t0;
         });
-        el.insertAdjacentElement("afterend",b);
+        {const sy=document.getElementById("dpbAdminSyncBtn");if(sy)sy.insertAdjacentElement("afterend",b);else el.insertAdjacentElement("afterend",b);}
       }
       let tries=0;
       (function tick(){
@@ -21922,11 +21922,11 @@ input:focus,select:focus,textarea:focus,.dpbKeepFocus{outline:2px solid #2dd4a3!
   function wrapSticky(){
     try{
       var st=document.getElementById('dpbConnectionStatus'),bt=document.getElementById('dpbPublishBuildBtn');
-      if(!st||!bt||!st.parentNode)return;
+      if(!st||!st.parentNode)return;
       var bar=document.getElementById('dpbAdminStickyBar');
-      if(bar&&st.parentNode===bar&&bt.parentNode===bar)return;
+      if(bar&&st.parentNode===bar)return;
       if(!bar){bar=document.createElement('div');bar.id='dpbAdminStickyBar';st.parentNode.insertBefore(bar,st)}
-      bar.appendChild(st);bar.appendChild(bt);
+      bar.appendChild(st);
       if(typeof window.dpbSyncAdminTopOffset==='function')window.dpbSyncAdminTopOffset();
     }catch(_){}
   }
@@ -22434,6 +22434,11 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbOtaBar{z-index:2147483000!important}
 </style>
 
+<style id="dpbAdminIconRow7">
+/* Publish-maps is now an icon (📤) between sync (☁️) and usage (📊); the row keeps its start and end, 7 equal icons, the old wide button/bar is gone. */
+#dpbAdminStickyBar{display:none!important}
+#dpbAdminOverlay .dpbAdminTop .dpbAdminTopActions{grid-template-columns:repeat(7,minmax(0,1fr))!important;gap:5px!important}
+</style>
 <style id="dpbAdminConnTitle">
 /* Admin Control Center: the Firestore status card is gone; the title colour says it instead
    (green = connected, red = not connected, normal colour while it is still connecting). */
