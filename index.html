@@ -10887,11 +10887,11 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
          that other code looks up by id has moved — only grouped under a
          tab nav so each concern (Security / Supervisors & Permissions /
          Companies & Operators / Sync & Diagnostics) gets its own screen. -->
-    <div class="dpbAdminTabs" role="tablist">
-      <button type="button" class="dpbAdminTabBtn active" data-tab="supervisors">👤 المشرفين والصلاحيات</button>
-      <button type="button" class="dpbAdminTabBtn" data-tab="companies">🏢 الشركات والمشغلين</button>
-      <button type="button" class="dpbAdminTabBtn" data-tab="production-edits">🛠️ حالات الإنتاج</button>
-      <button type="button" class="dpbAdminTabBtn" data-tab="sync">☁️ المزامنة والتشخيص</button>
+    <div class="dpbAdminTabs" role="tablist"><i class="dpbTabInd" aria-hidden="true"></i>
+      <button type="button" class="dpbAdminTabBtn active" data-tab="supervisors" role="tab" aria-label="المشرفين والصلاحيات"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.2 19.5c.5-3.3 2.6-5 5.8-5s5.3 1.7 5.8 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16.2 14.2c2.6-.2 4.2 1.2 4.6 4"/></svg><span>المشرفين</span></button>
+      <button type="button" class="dpbAdminTabBtn" data-tab="companies" role="tab" aria-label="الشركات والمشغلين"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20.5V6.5L12 3l8 3.5v14"/><path d="M2.5 20.5h19"/><path d="M8.5 9.5h1.6M13.9 9.5h1.6M8.5 13h1.6M13.9 13h1.6M10.6 20.5v-3.6h2.8v3.6"/></svg><span>الشركات</span></button>
+      <button type="button" class="dpbAdminTabBtn" data-tab="production-edits" role="tab" aria-label="حالات الإنتاج"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h3.5l2.2-6.5 3.6 11 2.4-7.5H21"/></svg><span>الإنتاج</span></button>
+      <button type="button" class="dpbAdminTabBtn" data-tab="sync" role="tab" aria-label="المزامنة والتشخيص"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h9.2a4.1 4.1 0 0 0 .9-8.1A5.6 5.6 0 0 0 6.4 9.2 4.7 4.7 0 0 0 7 18.5z"/><path d="M9.6 13.4 12 11l2.4 2.4M12 11v5.2"/></svg><span>المزامنة</span></button>
       <button type="button" class="dpbAdminTabBtn" data-tab="usage" style="display:none">📊 تقرير الاستهلاك</button>
     </div>
 
@@ -11094,6 +11094,18 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     });
     setAdminProcessSelection(ids);
   }
+  /* ترتيب ظهور المشرفين: ◀ ▶ على كل كارت. الترتيب بيتحفظ في حقل order لكل حساب وبيتبعت للسيرفر واحدورا التاني (عشان الكتابات ما تتخانقش) فيظهر بنفس الترتيب في شاشة دخول المشرف على كل الأجهزة. الأدمن دايمًا الأول. */
+  function moveAccount(id,dir){
+    const a=accounts(),i=a.findIndex(x=>x.id===id),j=i+dir;
+    if(i<0||j<0||j>=a.length)return;
+    const root=q("dpbAdminSupList"),sl=root?root.scrollLeft:0;
+    const t=a[i];a[i]=a[j];a[j]=t;
+    const changed=[];
+    a.forEach((x,k)=>{if(x.order!==k+1){x.order=k+1;changed.push(x)}});
+    saveAccounts(a);
+    try{const r2=q("dpbAdminSupList");if(r2){r2.scrollLeft=sl;const c=r2.querySelector('[data-acc-id="'+String(id).replace(/"/g,"")+'"]');if(c&&c.scrollIntoView)c.scrollIntoView({behavior:"smooth",inline:"nearest",block:"nearest"})}}catch(_){}
+    changed.reduce((p,x)=>p.then(()=>pushAccountToSheet(x)).catch(()=>{}),Promise.resolve());
+  }
   function renderAccounts(){
     const root=q("dpbAdminSupList"), list=accounts();
     if(!list.length){root.innerHTML='<div class="hint">لا يوجد مشرفين. أنشئ أول حساب وحدد له عملية أو أكثر.</div>';return}
@@ -11102,8 +11114,11 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       const all=isAllProcesses(a);
       let names=all?"كل العمليات":ids.map(id=>processes().find(x=>String(x.id)===id)?.name||"العملية غير متاحة").filter(Boolean).join(" · ")||"لا توجد صلاحية";
       {const pj=accountProjectIds(a);names+=" · مشاريع: "+(pj.includes("*")?"كل المشاريع":pj.map(id=>((window.__dpbProjectRecords||[]).find(x=>String(x.id)===id)||{}).name||"مشروع غير متاح").join(" + "));}
-      return `<div class="dpbAdminRow"><div><b>${esc(a.name)}</b><small>${esc(names)} · PIN ${esc(a.pin)} · ${a.active===false?"غير مفعل":"مفعل"}</small></div><div class="dpbAdminActions"><button class="dpbAdminBtn" data-edit="${esc(a.id)}">تعديل</button><button class="dpbAdminBtn ${a.active===false?"green":"danger"}" data-toggle="${esc(a.id)}">${a.active===false?"تفعيل":"تعطيل"}</button><button class="dpbAdminBtn danger" data-del="${esc(a.id)}">حذف</button></div></div>`;
+      const mi=list.indexOf(a),rtl=(getComputedStyle(root).direction==="rtl");
+      const mv=`<div class="dpbAdminMove" aria-label="ترتيب الظهور"><button type="button" class="dpbMvBtn" data-mv="-1" data-mid="${esc(a.id)}" ${mi===0?"disabled":""} aria-label="تقديم">${rtl?"▶":"◀"}</button><span class="dpbMvNo">${mi+1}</span><button type="button" class="dpbMvBtn" data-mv="1" data-mid="${esc(a.id)}" ${mi===list.length-1?"disabled":""} aria-label="تأخير">${rtl?"◀":"▶"}</button></div>`;
+      return `<div class="dpbAdminRow" data-acc-id="${esc(a.id)}"><div><b>${esc(a.name)}</b><small>${esc(names)} · PIN ${esc(a.pin)} · ${a.active===false?"غير مفعل":"مفعل"}</small></div><div class="dpbAdminActions"><button class="dpbAdminBtn" data-edit="${esc(a.id)}">تعديل</button><button class="dpbAdminBtn ${a.active===false?"green":"danger"}" data-toggle="${esc(a.id)}">${a.active===false?"تفعيل":"تعطيل"}</button><button class="dpbAdminBtn danger" data-del="${esc(a.id)}">حذف</button></div>${mv}</div>`;
     }).join("");
+    root.querySelectorAll("[data-mv]").forEach(b=>b.onclick=()=>moveAccount(b.dataset.mid,Number(b.dataset.mv)));
     root.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>editAccount(b.dataset.edit));
     root.querySelectorAll("[data-toggle]").forEach(b=>b.onclick=()=>toggleAccount(b.dataset.toggle));
     root.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>deleteAccount(b.dataset.del));
@@ -11356,7 +11371,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     // is also visible to anyone editing the Sheet directly. Never blocks
     // the local save — if the Sheet is unreachable this simply no-ops.
     if(!window.DPB_GS||typeof window.DPB_GS.pushUser!=="function"||!a||!a.name)return;
-    window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,projectIds:accountProjectIds(a),active:a.active!==false,photo:a.photo||"",reminders:Array.isArray(a.reminders)?a.reminders:[]});
+    return window.DPB_GS.pushUser({username:a.name,password:a.pin,role:"Supervisor",processIds:a.processIds||[],allProcesses:!!a.allProcesses,projectIds:accountProjectIds(a),active:a.active!==false,photo:a.photo||"",reminders:Array.isArray(a.reminders)?a.reminders:[],order:a.order});
   }
   function toggleAccount(id){const a=accounts();const i=a.findIndex(x=>x.id===id);if(i<0)return;a[i].active=a[i].active===false;saveAccounts(a);pushAccountToSheet(a[i])}
   function deleteAccount(id){const a=accounts().find(x=>x.id===id);if(!a)return;if(!confirm(`حذف حساب المشرف ${a.name}؟`))return;saveAccounts(accounts().filter(x=>x.id!==id));if(editingId===id)resetForm();const rm=window.DPB_GS&&window.DPB_GS.removeUserSafe;if(typeof rm==="function"){rm(a.name).then(r=>{if(!(r&&r.ok))alert("اتحذف المشرف "+a.name+" من الجهاز ده. مقدرتش أحذفه من السيرفر دلوقتي (مفيش اتصال أو الاتصال فشل)، وهيتحذف لوحده أول ما النت يرجع.")})}}
@@ -11965,6 +11980,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       active,
       photo:String(u.photo||u.Photo||"").trim(),
       reminders:Array.isArray(u.reminders)?u.reminders:[],
+      order:(u.order!=null&&u.order!==""&&isFinite(Number(u.order)))?Number(u.order):undefined,
       source:"sheet"
     };
   }
@@ -11980,6 +11996,10 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       if(!res||res.ok===false||!Array.isArray(res.users))return false;
       const hidden=pendDel();   // مشرفين اتحذفوا ولسه الحذف ماوصلش السيرفر: مبيرجعوش في القايمة
       const accounts=res.users.map(rowToAccount).filter(a=>a.name&&hidden.indexOf(a.name.toLowerCase())<0);
+      /* ترتيب المشرفين اللي الأدمن حدده (حقل order). اللي معندوش ترتيب (حساب جديد) بيروح في الآخر بنفس ترتيبه. */
+      accounts.forEach((a,i)=>{a.__i=i});
+      accounts.sort((x,y)=>((x.order!=null?x.order:1e9)-(y.order!=null?y.order:1e9))||(x.__i-y.__i));
+      accounts.forEach(a=>{delete a.__i});
       // FIX (الأمان): السيرفر دلوقتي مبيبعتش الباسوردات إلا للأدمن. قبل ما نستبدل الكاش القديم، اللي كان فيه
       // باسوردات على الجهاز ده بيتحوّل لبصمات (عشان الدخول الأوفلاين يفضل شغال من غير ما حد يضطر يدخل أونلاين تاني).
       try{
@@ -22439,6 +22459,52 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbAdminStickyBar{display:none!important}
 #dpbAdminOverlay .dpbAdminTop .dpbAdminTopActions{grid-template-columns:repeat(7,minmax(0,1fr))!important;gap:5px!important}
 </style>
+<style id="dpbAdminTabsPro">
+/* Admin tab bar: one floating glass bar, 4 icon+label tabs, a green indicator that slides to the active tab. */
+#dpbAdminOverlay .dpbAdminWrap > .dpbAdminTabs{display:flex!important;gap:0!important;position:sticky!important;top:calc(var(--dpbAdminTopH,120px) + 20px)!important;z-index:90!important;margin:10px 0 14px!important;padding:5px!important;border-radius:20px!important;isolation:isolate;
+  background:linear-gradient(180deg,rgba(20,42,66,.94),rgba(8,20,34,.96))!important;border:1px solid rgba(94,170,255,.28)!important;
+  box-shadow:0 12px 28px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.09)!important;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+#dpbAdminOverlay .dpbAdminWrap > .dpbAdminTabs::before{content:"";position:absolute;left:0;right:0;top:-10px;height:12px;background:rgba(7,17,29,.9);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:-2;pointer-events:none}
+#dpbAdminOverlay .dpbAdminTabs .dpbAdminTabBtn{position:relative;z-index:1;flex:1 1 0!important;min-width:0!important;width:auto!important;height:56px!important;padding:6px 2px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:5px!important;
+  background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;border-radius:15px!important;
+  color:#8da5c1!important;font-size:11.5px!important;font-weight:800!important;line-height:1!important;white-space:nowrap!important;letter-spacing:.2px;transition:color .25s ease,transform .12s ease!important}
+#dpbAdminOverlay .dpbAdminTabs .dpbAdminTabBtn[data-tab="usage"]{display:none!important}
+#dpbAdminOverlay .dpbAdminTabs .dpbAdminTabBtn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:transform .35s cubic-bezier(.3,1.5,.5,1)}
+#dpbAdminOverlay .dpbAdminTabs .dpbAdminTabBtn.active{color:#fff!important;background:transparent!important;border:0!important}
+#dpbAdminOverlay .dpbAdminTabs .dpbAdminTabBtn.active svg{transform:translateY(-1px) scale(1.14);filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))}
+#dpbAdminOverlay .dpbAdminTabs .dpbAdminTabBtn.active span{text-shadow:0 1px 2px rgba(0,0,0,.35)}
+#dpbAdminOverlay .dpbAdminTabs .dpbTabInd{position:absolute;top:5px;bottom:5px;left:5px;width:0;border-radius:15px;z-index:0;pointer-events:none;opacity:0;
+  background:linear-gradient(160deg,#2fe0ab 0%,#16a982 55%,#0c7a60 100%);
+  box-shadow:0 8px 20px rgba(31,214,160,.40),inset 0 0 0 1px rgba(150,255,224,.38),inset 0 1px 0 rgba(255,255,255,.45);
+  transition:left .4s cubic-bezier(.4,.1,.15,1),width .4s cubic-bezier(.4,.1,.15,1),opacity .2s ease}
+#dpbAdminOverlay .dpbAdminTabs .dpbTabInd.on{opacity:1}
+@media(prefers-reduced-motion:reduce){#dpbAdminOverlay .dpbAdminTabs .dpbTabInd{transition:none}}
+/* supervisor cards: reorder control (◀ n ▶) */
+#dpbAdminOverlay #dpbAdminSupList .dpbAdminRow .dpbAdminMove{position:absolute;top:10px;right:10px;left:auto;z-index:2;display:flex;align-items:center;gap:2px;padding:2px;border-radius:999px;background:rgba(5,16,28,.8);border:1px solid rgba(65,188,255,.38)}
+#dpbAdminOverlay #dpbAdminSupList .dpbAdminRow .dpbMvBtn{width:28px;height:28px;padding:0;border:0;border-radius:50%;background:rgba(65,188,255,.14);color:#bfe9ff;font-size:11px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+#dpbAdminOverlay #dpbAdminSupList .dpbAdminRow .dpbMvBtn:disabled{opacity:.25;cursor:default}
+#dpbAdminOverlay #dpbAdminSupList .dpbAdminRow .dpbMvNo{min-width:18px;text-align:center;font-size:11px;font-weight:800;color:#8fd8ff}
+#dpbAdminOverlay #dpbAdminSupList .dpbAdminRow>div:first-child b{max-width:calc(100% - 100px)!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+<script id="dpbAdminTabsProJs">
+(function(){
+  function bar(){return document.querySelector('#dpbAdminOverlay .dpbAdminTabs')}
+  function place(){
+    var b=bar();if(!b)return;var ind=b.querySelector('.dpbTabInd'),a=b.querySelector('.dpbAdminTabBtn.active');
+    if(!ind||!a||!a.offsetWidth){return}
+    var w=a.offsetWidth+'px',l=a.offsetLeft+'px';if(ind.style.width!==w)ind.style.width=w;if(ind.style.left!==l)ind.style.left=l;if(!ind.classList.contains('on'))ind.classList.add('on');
+  }
+  document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('.dpbAdminTabBtn'))setTimeout(place,0)});
+  window.addEventListener('resize',place);
+  function arm(){
+    var b=bar();if(!b){return false}
+    try{if(window.ResizeObserver)new ResizeObserver(place).observe(b)}catch(_){}
+    try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){if(ms[i].target.classList&&ms[i].target.classList.contains('dpbAdminTabBtn')){place();return}}}).observe(b,{attributes:true,subtree:true,attributeFilter:['class']})}catch(_){}
+    place();return true;
+  }
+  if(!arm())document.addEventListener('DOMContentLoaded',arm);
+})();
+</script>
 <style id="dpbAdminConnTitle">
 /* Admin Control Center: the Firestore status card is gone; the title colour says it instead
    (green = connected, red = not connected, normal colour while it is still connecting). */
