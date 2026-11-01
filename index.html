@@ -18145,7 +18145,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   function renderLoginAccounts(){
     const root=q("dpbSupAccounts"); if(!root)return;
     const list=getSupervisorAccounts().filter(a=>a.active!==false);
-    const all=[{id:"__admin__",name:"Admin",pin:null,allProcesses:true,isAdmin:true},...list.filter(a=>String(a.name||"").toLowerCase()!=="admin")];
+    /* v199: مربع Admin اتشال من شاشة دخول المشرف. رقم الأدمن بيتكتب في الأدمن كنترول بس؛ للشغل اليومي استخدم حساب مشرف شخصي. */
+    const all=list.filter(a=>!a.isAdmin&&String(a.name||"").toLowerCase()!=="admin");
     if(!selectedLoginAccount || !all.some(a=>String(a.id)===String(selectedLoginAccount.id))) selectedLoginAccount=all[0]||null;
     root.innerHTML=all.length?all.map(a=>{
       const isSelected=selectedLoginAccount&&String(selectedLoginAccount.id)===String(a.id);
