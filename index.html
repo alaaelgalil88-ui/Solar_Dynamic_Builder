@@ -21121,8 +21121,20 @@ button:not(:disabled):active,.btn:not(:disabled):active,
 </style>
 
 <!-- v109: النقطة 11 — محاذاة العربي يمين، خطوط، وميض الأزرار، إخفاء الكيبورد -->
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@600;700;800&family=Tajawal:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
+<!-- v201: خطوط Cairo/Tajawal محلية جوه التطبيق (من غير إنترنت) عشان الشكل يبقى ثابت أونلاين وأوفلاين -->
+<link rel="preload" href="fonts/Cairo-800.woff" as="font" type="font/woff" crossorigin><link rel="preload" href="fonts/Tajawal-500.woff" as="font" type="font/woff" crossorigin>
+<style id="dpbGateAlignFinal">
+/* v202: نفس شكل الوصف اللي كان بيظهر بعد ثانية (يمين + ممتد على عرض العمود)، بس ثابت من أول فريم من غير ما يعتمد على السكريبت */
+#dpbStartGate.master-gate .master-role small{direction:rtl!important;text-align:right!important;align-self:stretch!important}
+</style>
+<style id="dpbLocalFonts">
+@font-face{font-family:"Cairo";font-style:normal;font-weight:600;font-display:block;src:url("fonts/Cairo-600.woff") format("woff")}
+@font-face{font-family:"Cairo";font-style:normal;font-weight:700;font-display:block;src:url("fonts/Cairo-700.woff") format("woff")}
+@font-face{font-family:"Cairo";font-style:normal;font-weight:800;font-display:block;src:url("fonts/Cairo-800.woff") format("woff")}
+@font-face{font-family:"Tajawal";font-style:normal;font-weight:400;font-display:block;src:url("fonts/Tajawal-400.woff") format("woff")}
+@font-face{font-family:"Tajawal";font-style:normal;font-weight:500;font-display:block;src:url("fonts/Tajawal-500.woff") format("woff")}
+@font-face{font-family:"Tajawal";font-style:normal;font-weight:700;font-display:block;src:url("fonts/Tajawal-700.woff") format("woff")}
+</style>
 <style id="dpbV109Polish">
 :root{
   --dpb-font-head:"Cairo","Tajawal","Noto Kufi Arabic","Noto Sans Arabic","Segoe UI",system-ui,-apple-system,sans-serif;
@@ -21178,7 +21190,7 @@ button,.btn,[role=button]{-webkit-tap-highlight-color:transparent}
 
   /* ---------- 3) محاذاة العربي من اليمين ---------- */
   var AR=/[\u0600-\u06FF]/;
-  var SKIP='#mapDetail,#mapLegend,.fs2Chip,.excel-plan,script,style,textarea,input,select,svg,[contenteditable="true"],[data-dpb-ltr],#dpbSupUser,#dpbAdminSupName,.dpbBackupRow';
+  var SKIP='#mapDetail,#mapLegend,.fs2Chip,.excel-plan,script,style,textarea,input,select,svg,[contenteditable="true"],[data-dpb-ltr],#dpbSupUser,#dpbAdminSupName,.dpbBackupRow,.master-role';  /* v200: كروت شاشة البداية (ADMIN/SUPERVISOR) ليها محاذاة ثابتة من الـCSS، السكريبت ما يلمسهاش */
   var done=new WeakSet();
   function blockOf(el){
     var n=el,cs;
