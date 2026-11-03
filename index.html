@@ -285,6 +285,18 @@ html.dpbReady #dpbBoot{opacity:0;pointer-events:none}
 #dpbStartGate.master-gate .master-brand span:nth-child(2){display:block!important}
 @media(prefers-reduced-motion:reduce){.dpbFxShineRect,.dpbFxText,.dpbFxDyn,#dpbBoot .lg,#dpbStartGate.master-gate .master-logo,#dpbStartGate.master-gate .master-brand span:nth-child(2),#dpbBoot .trk i:after{animation:none!important}}
 </style>
+<style id="dpbFxLite">
+/* light effects, made cheap: they now animate only opacity/transform (the GPU does it) instead of re-painting a filter / text-clip every frame */
+#dpbBoot .lg,#dpbStartGate.master-gate .master-logo{animation:none!important;filter:none!important}
+#dpbBoot .lg{position:relative;isolation:isolate}
+#dpbBoot .lg::before,#dpbStartGate.master-gate .master-logo::before{content:"";position:absolute;left:-28%;right:-28%;top:-34%;bottom:-34%;border-radius:50%;background:radial-gradient(closest-side,rgba(0,190,255,.50),rgba(255,181,30,.20) 55%,rgba(0,0,0,0) 100%);opacity:.3;transform:scale(.92);animation:dpbFxGlowLite 3s ease-in-out infinite;pointer-events:none;z-index:-1;will-change:opacity,transform}
+@keyframes dpbFxGlowLite{0%,100%{opacity:.3;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
+.dpbFxText,.dpbFxDyn,#dpbStartGate.master-gate .master-brand span:nth-child(2){animation:dpbFxTextLite 7s ease-in-out infinite!important;filter:none!important}
+@keyframes dpbFxTextLite{0%{background-position:100% 0}22%,100%{background-position:0% 0}}
+.dpbFxShineRect{animation:dpbFxShineLite 6.4s ease-in-out infinite!important}
+@keyframes dpbFxShineLite{0%{transform:translateX(0) skewX(-20deg)}28%,100%{transform:translateX(335px) skewX(-20deg)}}
+@media(prefers-reduced-motion:reduce){#dpbBoot .lg::before,#dpbStartGate.master-gate .master-logo::before,.dpbFxText,.dpbFxDyn,#dpbStartGate.master-gate .master-brand span:nth-child(2),.dpbFxShineRect{animation:none!important}}
+</style>
 
 <script id="dpbRevealGuard">
 /* Safety net: the page is hidden (anti-FOUC) until the inline script near the end of the body reveals it.
