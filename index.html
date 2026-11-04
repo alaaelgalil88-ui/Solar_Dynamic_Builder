@@ -972,6 +972,7 @@ window.XLSX = (() => {
   }
 
   async function read(data){
+    const FULL=!!window.__dpbXlsxFull;   /* extra style details (fonts/borders/alignment/col widths/row heights): only the Material page asks for them */
     const z=await unzip(data), names=[...z.entries.keys()];
     const out={SheetNames:[],Sheets:{},Workbook:{Names:[]}};
     const wbXml=await z.get('xl/workbook.xml'); if(!wbXml) throw new Error('Workbook XML is missing.');
@@ -1043,9 +1044,9 @@ window.XLSX = (() => {
     if(stylesXml){
       const sdoc=parseXml(te.decode(stylesXml));
       const bordersEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='borders');
-      if(bordersEl){for(const bd of [...bordersEl.children]){const o={};for(const side of [...bd.children]){const nm=lname(side);if(['left','right','top','bottom'].indexOf(nm)<0)continue;const st=side.getAttribute('style');if(!st)continue;const ce=[...side.children].find(x=>lname(x)==='color');o[nm[0]]={st:st,c:readColor(ce)||'000000'};}styleBorders.push(o);}}
+      if(FULL&&bordersEl){for(const bd of [...bordersEl.children]){const o={};for(const side of [...bd.children]){const nm=lname(side);if(['left','right','top','bottom'].indexOf(nm)<0)continue;const st=side.getAttribute('style');if(!st)continue;const ce=[...side.children].find(x=>lname(x)==='color');o[nm[0]]={st:st,c:readColor(ce)||'000000'};}styleBorders.push(o);}}
       const fontsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='fonts');
-      if(fontsEl){for(const f of [...fontsEl.children]){const ch=[...f.children];const g=nm=>ch.find(x=>lname(x)===nm);
+      if(FULL&&fontsEl){for(const f of [...fontsEl.children]){const ch=[...f.children];const g=nm=>ch.find(x=>lname(x)===nm);
         const sz=g('sz'),col=g('color');styleFonts.push({bold:!!g('b'),italic:!!g('i'),sz:sz?Number(sz.getAttribute('val')):null,color:readColor(col)});}}
       const fillsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='fills');
       if(fillsEl){
@@ -1079,9 +1080,9 @@ window.XLSX = (() => {
         const xf=cellXfs[styleIndex]||{fillId:0};
         const fill=styleFills[xf.fillId]||{patternType:'none',fgColor:null,bgColor:null};
         const fnt=styleFonts[xf.fontId]||null;
-        ws[ref]={v,t:typ||'n',s:{fill:{patternType:fill.patternType,fgColor:fill.fgColor?{rgb:fill.fgColor}:null,bgColor:fill.bgColor?{rgb:fill.bgColor}:null},font:fnt?{bold:fnt.bold,italic:fnt.italic,sz:fnt.sz,color:fnt.color?{rgb:fnt.color}:null}:null,alignment:{horizontal:xf.h||null,vertical:xf.v||null,wrap:xf.wrap},border:styleBorders[xf.bId]||null}};
+        ws[ref]={v,t:typ||'n',s:{fill:{patternType:fill.patternType,fgColor:fill.fgColor?{rgb:fill.fgColor}:null,bgColor:fill.bgColor?{rgb:fill.bgColor}:null},...(FULL?{font:fnt?{bold:fnt.bold,italic:fnt.italic,sz:fnt.sz,color:fnt.color?{rgb:fnt.color}:null}:null,alignment:{horizontal:xf.h||null,vertical:xf.v||null,wrap:xf.wrap},border:styleBorders[xf.bId]||null}:{})}};
       }
-      {const cols=[],rowsA=[];let dcw=null,drh=null;
+      if(FULL){const cols=[],rowsA=[];let dcw=null,drh=null;
        const fp=[...doc.getElementsByTagName('*')].find(n=>lname(n)==='sheetFormatPr');
        if(fp){if(fp.getAttribute('defaultColWidth'))dcw=Number(fp.getAttribute('defaultColWidth'));if(fp.getAttribute('defaultRowHeight'))drh=Number(fp.getAttribute('defaultRowHeight'));}
        for(const cc of [...doc.getElementsByTagName('*')].filter(n=>lname(n)==='col')){const mn=Number(cc.getAttribute('min')),mx=Number(cc.getAttribute('max')),w=Number(cc.getAttribute('width'));
@@ -22996,15 +22997,50 @@ body.print-activity #dpbBottomBar{display:none!important}
   var q=function(id){return document.getElementById(id)};
   function pid(){return window.__dpbActiveProjectId||'LEGACY'}
   function lsKey(){return KEY+'::'+pid()}
-  function load(){try{var r=JSON.parse(localStorage.getItem(lsKey())||'null');return r&&r.state?r:null}catch(_){return null}}
-  function save(){try{if(S&&S.state!=='empty')localStorage.setItem(lsKey(),JSON.stringify(S));else localStorage.removeItem(lsKey())}catch(_){}}
+  /* ---- view-only storage: its own small IndexedDB, never localStorage, never synced, never part of any backup ---- */
+  var CACHE={},HYD={},PT=null,IDB_NAME='matview_local';
+  function idb(){return new Promise(function(res,rej){try{var r=indexedDB.open(IDB_NAME,1);r.onupgradeneeded=function(){r.result.createObjectStore('v')};r.onsuccess=function(){res(r.result)};r.onerror=function(){rej(r.error)}}catch(e){rej(e)}})}
+  function idbPut(k,v){return idb().then(function(d){return new Promise(function(res){var tx=d.transaction('v','readwrite');tx.objectStore('v').put(v,k);tx.oncomplete=function(){d.close();res()};tx.onerror=function(){d.close();res()}})}).catch(function(){})}
+  function idbGet(k){return idb().then(function(d){return new Promise(function(res){var rq=d.transaction('v').objectStore('v').get(k);rq.onsuccess=function(){d.close();res(rq.result)};rq.onerror=function(){d.close();res(null)}})}).catch(function(){return null})}
+  function idbDel(k){return idb().then(function(d){return new Promise(function(res){var tx=d.transaction('v','readwrite');tx.objectStore('v').delete(k);tx.oncomplete=function(){d.close();res()};tx.onerror=function(){d.close();res()}})}).catch(function(){})}
+  function pack(s){
+    var st=[],ix={};function si(o){if(!o)return -1;var k=JSON.stringify(o);if(!(k in ix)){ix[k]=st.length;st.push(o)}return ix[k]}
+    var o={state:s.state,fileName:s.fileName,counts:s.counts,snap:null};
+    if(s.snap){var sn=s.snap;o.snap={sheet:sn.sheet,range:sn.range,rows:sn.rows,cols:sn.cols,merges:sn.merges,colW:sn.colW,rowH:sn.rowH,sty:st,
+      cells:sn.cells.map(function(row){return row.map(function(c){var i=si(c[2]);return (c[0]===''&&!c[1]&&i<0)?0:[c[0],c[1]||0,i]})})}}
+    return o;
+  }
+  function unpack(o){
+    if(o&&o.snap&&o.snap.sty){var sn=o.snap,st=sn.sty;sn.cells=sn.cells.map(function(row){return row.map(function(c){return c===0?['',null,null]:[c[0],c[1]||null,c[2]>=0?st[c[2]]:null]})});delete sn.sty}
+    return o;
+  }
+  async function toBlob(str){try{if(window.CompressionStream){var cs=new CompressionStream('gzip'),w=cs.writable.getWriter();w.write(new TextEncoder().encode(str));w.close();return await new Response(cs.readable).arrayBuffer()}}catch(_){}return str}
+  async function fromBlob(v){if(typeof v==='string')return JSON.parse(v);var ds=new DecompressionStream('gzip'),w=ds.writable.getWriter();w.write(new Uint8Array(v));w.close();return JSON.parse(await new Response(ds.readable).text())}
+  function load(){var r=CACHE[pid()];return r&&r.state?r:null}
+  function save(){
+    var p=pid();
+    if(S&&S.state!=='empty')CACHE[p]=S;else delete CACHE[p];
+    clearTimeout(PT);
+    PT=setTimeout(async function(){try{if(CACHE[p]&&CACHE[p].state!=='empty')await idbPut(p,await toBlob(JSON.stringify(pack(CACHE[p]))));else await idbDel(p)}catch(_){}},300);
+  }
+  async function hydrate(p){
+    try{
+      var obj=null,rec=await idbGet(p);
+      if(rec)obj=unpack(await fromBlob(rec));
+      /* one-time cleanup: older versions kept this in localStorage (big, visible to the app) - move it out and delete it */
+      try{var olds=[];for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf('DPB_MATERIAL_V1::')===0)olds.push(k)}
+        olds.forEach(function(k){if(!obj&&k==='DPB_MATERIAL_V1::'+p){try{var r=JSON.parse(localStorage.getItem(k));if(r&&r.state)obj=r}catch(_){}}localStorage.removeItem(k)});
+        if(obj&&!rec){CACHE[p]=obj;await idbPut(p,await toBlob(JSON.stringify(pack(obj))))}}catch(_){}
+      if(obj&&obj.state&&!CACHE[p]){CACHE[p]=obj;if(pid()===p&&(!S||S.state==='empty')){S=obj;if(!S.counts)S.counts={};lastPid=p;try{render()}catch(_){}}}
+    }catch(_){}
+  }
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]})}
   function norm(s){return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g,'')}
   function txt(v){return v==null?'':String(v).trim()}
   function ensure(){
     var p=pid();
     if(S&&lastPid===p)return;
-    lastPid=p;S=load()||{state:'empty',fileName:'',snap:null,counts:{}};
+    lastPid=p;S=load()||{state:'empty',fileName:'',snap:null,counts:{}};if(!HYD[p]){HYD[p]=1;hydrate(p)}
     if(!S.counts)S.counts={};
   }
 
@@ -23021,7 +23057,7 @@ body.print-activity #dpbBottomBar{display:none!important}
   function addr(r,c){var s='',n=c+1;while(n>0){var m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=Math.floor((n-1)/26)}return s+(r+1)}
   async function readBom(file){
     if(!window.XLSX)throw new Error('قارئ الإكسل مش محمّل. اقفل التطبيق وافتحه تاني.');
-    var wb=await XLSX.read(await file.arrayBuffer(),{type:'array',cellStyles:true});
+    var wb;window.__dpbXlsxFull=true;try{wb=await XLSX.read(await file.arrayBuffer(),{type:'array',cellStyles:true})}finally{window.__dpbXlsxFull=false}
     var names=(wb.Workbook&&wb.Workbook.Names)||[],pr=null;
     for(var i=0;i<names.length&&!pr;i++){
       var nm=String(names[i].Name||'').trim().replace(/^.*!/,'');
@@ -23223,11 +23259,11 @@ body.print-activity #dpbBottomBar{display:none!important}
       var hint=!applied?'':(e.manual?'يدوي · <b data-reset="'+esc(col.key)+'">رجّع التلقائي</b>':(auto?'تلقائي من الـ Plan':'اكتب العدد'));
       return '<div class="dpbMatCnt"><label>'+chip+esc(col.color)+'</label><input inputmode="numeric" maxlength="6" data-key="'+esc(col.key)+'" value="'+(e.v==null?'':e.v)+'" placeholder="0"'+(applied?'':' disabled')+'><small>'+hint+'</small></div>';
     }).join('');
-    tw.innerHTML=wrapTable(tableHtml(S.snap,an,applied),S.snap);showTools(applied);
+    tw.innerHTML=staleNote(S.snap)+wrapTable(tableHtml(S.snap,an,applied),S.snap);showTools(applied);
   }
   function renderTableOnly(){
     var an=S.snap?analyze(S.snap):null;if(!an||!an.cols)return;
-    q('dpbMatTable').innerHTML=wrapTable(tableHtml(S.snap,an,S.state==='applied'),S.snap);showTools(S.state==='applied');
+    q('dpbMatTable').innerHTML=staleNote(S.snap)+wrapTable(tableHtml(S.snap,an,S.state==='applied'),S.snap);showTools(S.state==='applied');
   }
 
   /* ---------- zoom (fit / +/- / pinch) ---------- */
@@ -23247,6 +23283,10 @@ body.print-activity #dpbBottomBar{display:none!important}
     var W=tblW(sn);
     return '<div class="dpbMatScroll" id="dpbMatScroll"><div id="dpbMatZoom"'+(W?' style="width:'+W+'px"':'')+'>'+html+'</div></div>';
   }
+  function staleNote(sn){
+    if(sn&&sn.colW&&sn.colW.length===sn.cols)return '';
+    return '<div class="dpbMatNote err" style="margin:0 0 8px">⚠️ الجدول ده محفوظ من نسخة قديمة من غير مقاسات الشيت (طول/عرض الخلايا). اضغط <b>Upload</b> وارفع ملف الـ BOM تاني ثم <b>Apply</b> علشان يترسم بنفس مقاسات الشيت.</div>';
+  }
   function showTools(on){
     var tb=q('dpbMatTools');if(!tb)return;
     tb.style.display=on?'flex':'none';
@@ -23261,9 +23301,31 @@ body.print-activity #dpbBottomBar{display:none!important}
     q('dpbMatPrint').onclick=openPrint;
     var host=q('dpbMatTable'),d0=0,z0=1;
     function dist(t){var a=t[0],b=t[1];return Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)}
-    host.addEventListener('touchstart',function(e){if(e.touches.length===2){d0=dist(e.touches);z0=curZoom()}},{passive:true});
-    host.addEventListener('touchmove',function(e){if(e.touches.length===2&&d0>0){e.preventDefault();setZoom(z0*dist(e.touches)/d0)}},{passive:false});
-    host.addEventListener('touchend',function(e){if(e.touches.length<2)d0=0},{passive:true});
+    var dr=null,raf=0;
+    function scr(e){return e.target&&e.target.closest?e.target.closest('#dpbMatScroll'):null}
+    host.addEventListener('touchstart',function(e){
+      cancelAnimationFrame(raf);
+      if(e.touches.length===2){d0=dist(e.touches);z0=curZoom();dr=null;return}
+      var s=scr(e);if(s&&e.touches.length===1){dr={s:s,x:e.touches[0].clientX,y:e.touches[0].clientY,sl:s.scrollLeft,st:s.scrollTop,vx:0,vy:0,lx:e.touches[0].clientX,ly:e.touches[0].clientY,t:Date.now()}}
+    },{passive:true});
+    host.addEventListener('touchmove',function(e){
+      if(e.touches.length===2&&d0>0){e.preventDefault();setZoom(z0*dist(e.touches)/d0);return}
+      if(dr&&e.touches.length===1){
+        e.preventDefault();e.stopPropagation();
+        var x=e.touches[0].clientX,y=e.touches[0].clientY,now=Date.now(),dt=Math.max(1,now-dr.t);
+        dr.vx=(dr.lx-x)/dt;dr.vy=(dr.ly-y)/dt;dr.lx=x;dr.ly=y;dr.t=now;
+        dr.s.scrollLeft=dr.sl+(dr.x-x);dr.s.scrollTop=dr.st+(dr.y-y);
+      }
+    },{passive:false});
+    function endDrag(e){
+      if(e.touches&&e.touches.length<2)d0=0;
+      if(dr&&(!e.touches||e.touches.length===0)){
+        var s=dr.s,vx=dr.vx*16,vy=dr.vy*16;dr=null;
+        (function step(){vx*=0.94;vy*=0.94;if(Math.abs(vx)<0.3&&Math.abs(vy)<0.3)return;s.scrollLeft+=vx;s.scrollTop+=vy;raf=requestAnimationFrame(step)})();
+      }
+    }
+    host.addEventListener('touchend',endDrag,{passive:true});
+    host.addEventListener('touchcancel',function(){dr=null;d0=0},{passive:true});
     host.addEventListener('wheel',function(e){if(e.ctrlKey){e.preventDefault();setZoom(curZoom()*(e.deltaY<0?1.1:1/1.1))}},{passive:false});
     window.addEventListener('resize',function(){if(ZOOM==null)applyZoom()});
   }
@@ -23352,7 +23414,8 @@ body.print-activity #dpbBottomBar{display:none!important}
       '.pgB{flex:1;min-height:0;overflow:hidden}.pgF{height:'+FOOT+'mm;text-align:center;font-size:8pt;color:#555}';
   }
   function doPrint(pl,sn,an){
-    window.__dpbPrintOpts={landscape:pl.o==='landscape',size:size_};
+    var prevOpts=window.__dpbPrintOpts;window.__dpbPrintOpts={landscape:pl.o==='landscape',size:size_};
+    setTimeout(function(){window.__dpbPrintOpts=prevOpts},8000);
     var w=window.open('','_blank');
     if(!w){window.alert('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة وجرّب تاني.');return}
     w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>BOM</title><style>'+printCss(pl)+'</style></head><body><div id="dpbMat">'+printHtml(pl,sn,an)+'</div></body></html>');
@@ -23364,10 +23427,10 @@ body.print-activity #dpbBottomBar{display:none!important}
   function openPrint(){
     ensure();var sn=S.snap,an=sn?analyze(sn):null;
     if(S.state!=='applied'||!an||!an.cols)return;
-    try{var pf=JSON.parse(localStorage.getItem('DPB_PRINT_PREF')||'{}');if(PG[pf.size])size_=pf.size;if(['auto','portrait','landscape'].indexOf(pf.orient)>=0)orient_=pf.orient}catch(_){}
+    try{var pf=JSON.parse(localStorage.getItem('matview_print_pref')||'{}');if(PG[pf.size])size_=pf.size;if(['auto','portrait','landscape'].indexOf(pf.orient)>=0)orient_=pf.orient}catch(_){}
     var native=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()&&Capacitor.Plugins&&Capacitor.Plugins.DpbPrint),bigOk=false;
-    var old=document.getElementById('dpbPrintDlg');if(old)old.remove();
-    var o=document.createElement('div');o.id='dpbPrintDlg';
+    var old=document.getElementById('dpbMatPrintDlg');if(old)old.remove();
+    var o=document.createElement('div');o.id='dpbMatPrintDlg';
     o.style.cssText='position:fixed;inset:0;z-index:2147482000;background:rgba(3,10,20,.72);display:flex;align-items:center;justify-content:center;padding:14px';
     var sel='width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e';
     o.innerHTML='<div dir="rtl" style="background:#0e1b2c;border:1px solid #29405e;border-radius:14px;padding:14px;max-width:420px;width:100%;color:#eef5ff;font-family:system-ui;text-align:right">'+
@@ -23389,7 +23452,7 @@ body.print-activity #dpbBottomBar{display:none!important}
       if(big)sum.innerHTML+='<br><span style="color:#f6c86b">⚠️ نسخة APK دي بتدعم A3 وA4 بس. حدّث الـ APK علشان A0 وA1 وA2.</span>';
       o.querySelector('#dpbMpPrev').innerHTML=pl.fill.map(function(f){return '<div style="flex:0 0 auto;width:'+(pl.o==='portrait'?44:62)+'px;height:'+(pl.o==='portrait'?62:44)+'px;border:1px solid #4d8dff;border-radius:4px;display:flex;align-items:flex-start;padding:3px;box-sizing:border-box"><i style="display:block;width:100%;height:'+Math.max(8,Math.min(100,f))+'%;background:#2b4a70;border-radius:2px"></i></div>'}).join('');
     };
-    var save=function(){try{localStorage.setItem('DPB_PRINT_PREF',JSON.stringify(Object.assign(JSON.parse(localStorage.getItem('DPB_PRINT_PREF')||'{}'),{size:size_,orient:orient_})))}catch(_){}};
+    var save=function(){try{localStorage.setItem('matview_print_pref',JSON.stringify({size:size_,orient:orient_}))}catch(_){}};
     o.querySelector('#dpbMpSize').value=size_;o.querySelector('#dpbMpOri').value=orient_;
     o.querySelector('#dpbMpSize').onchange=function(e){size_=e.target.value;save();refresh()};
     o.querySelector('#dpbMpOri').onchange=function(e){orient_=e.target.value;save();refresh()};
