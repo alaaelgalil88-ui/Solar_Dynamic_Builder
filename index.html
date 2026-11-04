@@ -1039,9 +1039,11 @@ window.XLSX = (() => {
       return null;
     };
     const stylesXml=await z.get('xl/styles.xml');
-    const styleFills=[]; const cellXfs=[]; const styleFonts=[];
+    const styleFills=[]; const cellXfs=[]; const styleFonts=[]; const styleBorders=[];
     if(stylesXml){
       const sdoc=parseXml(te.decode(stylesXml));
+      const bordersEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='borders');
+      if(bordersEl){for(const bd of [...bordersEl.children]){const o={};for(const side of [...bd.children]){const nm=lname(side);if(['left','right','top','bottom'].indexOf(nm)<0)continue;const st=side.getAttribute('style');if(!st)continue;const ce=[...side.children].find(x=>lname(x)==='color');o[nm[0]]={st:st,c:readColor(ce)||'000000'};}styleBorders.push(o);}}
       const fontsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='fonts');
       if(fontsEl){for(const f of [...fontsEl.children]){const ch=[...f.children];const g=nm=>ch.find(x=>lname(x)===nm);
         const sz=g('sz'),col=g('color');styleFonts.push({bold:!!g('b'),italic:!!g('i'),sz:sz?Number(sz.getAttribute('val')):null,color:readColor(col)});}}
@@ -1057,7 +1059,7 @@ window.XLSX = (() => {
       }
       const xfsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='cellXfs');
       if(xfsEl){
-        for(const xf of [...xfsEl.children]){const al=[...xf.children].find(x=>lname(x)==='alignment');cellXfs.push({fillId:Number(xf.getAttribute('fillId')||0),fontId:Number(xf.getAttribute('fontId')||0),h:al?al.getAttribute('horizontal'):null,v:al?al.getAttribute('vertical'):null});}
+        for(const xf of [...xfsEl.children]){const al=[...xf.children].find(x=>lname(x)==='alignment');cellXfs.push({fillId:Number(xf.getAttribute('fillId')||0),fontId:Number(xf.getAttribute('fontId')||0),bId:Number(xf.getAttribute('borderId')||0),wrap:!!(al&&al.getAttribute('wrapText')==='1'),h:al?al.getAttribute('horizontal'):null,v:al?al.getAttribute('vertical'):null});}
       }
     }
     const defs=[...wb.getElementsByTagName('*')].filter(n=>lname(n)==='definedName');
@@ -1077,7 +1079,7 @@ window.XLSX = (() => {
         const xf=cellXfs[styleIndex]||{fillId:0};
         const fill=styleFills[xf.fillId]||{patternType:'none',fgColor:null,bgColor:null};
         const fnt=styleFonts[xf.fontId]||null;
-        ws[ref]={v,t:typ||'n',s:{fill:{patternType:fill.patternType,fgColor:fill.fgColor?{rgb:fill.fgColor}:null,bgColor:fill.bgColor?{rgb:fill.bgColor}:null},font:fnt?{bold:fnt.bold,italic:fnt.italic,sz:fnt.sz,color:fnt.color?{rgb:fnt.color}:null}:null,alignment:{horizontal:xf.h||null,vertical:xf.v||null}}};
+        ws[ref]={v,t:typ||'n',s:{fill:{patternType:fill.patternType,fgColor:fill.fgColor?{rgb:fill.fgColor}:null,bgColor:fill.bgColor?{rgb:fill.bgColor}:null},font:fnt?{bold:fnt.bold,italic:fnt.italic,sz:fnt.sz,color:fnt.color?{rgb:fnt.color}:null}:null,alignment:{horizontal:xf.h||null,vertical:xf.v||null,wrap:xf.wrap},border:styleBorders[xf.bId]||null}};
       }
       {const cols=[],rowsA=[];let dcw=null,drh=null;
        const fp=[...doc.getElementsByTagName('*')].find(n=>lname(n)==='sheetFormatPr');
@@ -22940,16 +22942,16 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbMat .dpbMatNote{margin-top:10px;border-radius:11px;padding:9px 12px;font-size:12px;line-height:1.7;background:rgba(45,140,255,.10);border:1px solid rgba(94,170,255,.35);color:#cfe6ff}
 #dpbMat .dpbMatNote.ok{background:rgba(31,157,118,.14);border-color:rgba(55,214,162,.45);color:#c9f6e6}
 #dpbMat .dpbMatNote.err{background:rgba(255,80,80,.12);border-color:rgba(255,120,120,.5);color:#ffd0d0}
-#dpbMat .dpbMatCounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:10px}
-#dpbMat .dpbMatCnt{background:#091827;border:1px solid #243b57;border-radius:14px;padding:10px}
-#dpbMat .dpbMatCnt label{text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:#dbe9f8;margin-bottom:7px}
+#dpbMat .dpbMatCounts{display:flex;flex-wrap:wrap;gap:8px}
+#dpbMat .dpbMatCnt{background:#091827;border:1px solid #243b57;border-radius:10px;padding:5px 8px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+#dpbMat .dpbMatCnt label{text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:800;color:#dbe9f8;margin:0}
 #dpbMat .dpbMatChip{width:14px;height:14px;border-radius:50%;border:1px solid rgba(255,255,255,.55);flex:none}
-#dpbMat .dpbMatCnt input{width:100%;box-sizing:border-box;height:42px;border-radius:11px;border:1px solid #31507a;background:#050d17;color:#fff;font-size:18px;font-weight:800;text-align:center;font-family:inherit;direction:ltr}
+#dpbMat .dpbMatCnt input{width:64px;box-sizing:border-box;height:30px;border-radius:8px;border:1px solid #31507a;background:#050d17;color:#fff;font-size:14px;font-weight:800;text-align:center;font-family:inherit;direction:ltr}
 #dpbMat .dpbMatCnt input:focus{outline:none;border-color:#37d6a2;box-shadow:0 0 0 3px rgba(55,214,162,.18)}
 #dpbMat .dpbMatCnt input:disabled{opacity:.45}
-#dpbMat .dpbMatCnt small{display:block;margin-top:6px;font-size:10.5px;color:#8fa7c2;min-height:14px}
+#dpbMat .dpbMatCnt small{display:block;margin:0;font-size:9.5px;color:#8fa7c2;min-height:14px}
 #dpbMat .dpbMatCnt small b{color:#7fe3c0;cursor:pointer;text-decoration:underline}
-#dpbMat .dpbMatScroll{overflow:auto;-webkit-overflow-scrolling:touch;border-radius:12px;border:1px solid #243b57;background:#fff;max-height:70vh}
+#dpbMat .dpbMatScroll{overflow:auto;-webkit-overflow-scrolling:touch;border-radius:4px;border:0;background:transparent;max-height:78vh}
 #dpbMat table.dpbMatTbl{border-collapse:collapse;direction:ltr;text-align:left;font-family:Calibri,Arial,sans-serif;font-size:12px;color:#111;min-width:100%}
 #dpbMat .dpbMatTbl td{border:1px solid #b8c0cc;padding:4px 7px;vertical-align:middle;background:#fff;color:#111;white-space:normal;word-break:normal;overflow-wrap:anywhere;min-width:66px}
 #dpbMat .dpbMatTbl td.n{text-align:center}
@@ -22967,6 +22969,22 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbMat .dpbMatTools .pr{background:linear-gradient(160deg,#1f9d76,#146c52);border-color:#37d6a2;font-size:13px}
 #dpbMat .dpbMatTools input[type=range]{flex:1;min-width:90px;accent-color:#37d6a2}
 #dpbMat .dpbMatTools .zv{min-width:46px;text-align:center;font-size:12.5px;font-weight:800;color:#cfe6ff}
+#dpbMat .dpbMatTbl.app{border-collapse:separate;border-spacing:0;color:#e3eefb;font-family:inherit;border:1px solid rgba(94,170,255,.30);border-radius:12px;overflow:hidden;background:rgba(7,16,28,.85)}
+#dpbMat .dpbMatTbl.app td{background:rgba(255,255,255,.025);color:#dbe8f6;border:0;border-bottom:1px solid rgba(94,170,255,.14);border-left:1px solid rgba(94,170,255,.10);transition:background .12s}
+#dpbMat .dpbMatTbl.app tr:hover td:not(.dk):not(.md){background:rgba(94,170,255,.07)}
+#dpbMat .dpbMatTbl.app td.soft{color:#9ec5ff;font-weight:800;letter-spacing:.3px;background-image:linear-gradient(90deg,rgba(94,170,255,.10),transparent)}
+#dpbMat .dpbMatTbl.app td.dk{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.45)}
+#dpbMat .dpbMatTbl.app td.md{color:#0b1624;font-weight:700}
+#dpbMat .dpbMatTbl.app td.h.dk{background-image:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0));font-weight:800;letter-spacing:.2px}
+#dpbMat .dpbMatTbl.app td.calc{font-size:14px;text-shadow:none}
+#dpbMat .dpbMatTbl.app td.calc.z{opacity:.4}
+#dpbMat .dpbMatTbl.app td.n{font-variant-numeric:tabular-nums}
+#dpbMat .dpbMatCounts{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+#dpbMat .dpbMatCnt{display:flex!important;flex-direction:column;align-items:stretch!important;gap:4px!important;padding:7px 8px!important;border-radius:12px!important}
+#dpbMat .dpbMatCnt label{font-size:11.5px!important;gap:6px!important;justify-content:flex-start;line-height:1.2}
+#dpbMat .dpbMatCnt input{width:100%!important;height:34px!important;min-height:0!important;padding:0 6px!important;font-size:15px!important;line-height:34px!important;border-radius:9px!important;margin:0!important}
+#dpbMat .dpbMatCnt small{font-size:9.5px!important;min-height:12px!important;line-height:1.2}
+#dpbMat .dpbMatScroll{direction:ltr}
 #dpbMat .dpbMatEmpty{padding:26px 12px;text-align:center;color:#8fa7c2;font-size:13px}
 </style>
 
@@ -23020,7 +23038,7 @@ body.print-activity #dpbBottomBar{display:none!important}
           var fl=x.s&&x.s.fill;
           if(fl&&fl.patternType==='solid'&&fl.fgColor&&fl.fgColor.rgb)f=String(fl.fgColor.rgb).slice(-6).toUpperCase();
           var fo=x.s&&x.s.font,al=x.s&&x.s.alignment;
-          if(fo||al)st={b:!!(fo&&fo.bold),i:!!(fo&&fo.italic),z:fo&&fo.sz||null,k:fo&&fo.color&&fo.color.rgb||null,h:al&&al.horizontal||null,vv:al&&al.vertical||null};
+          if(fo||al)st={b:!!(fo&&fo.bold),i:!!(fo&&fo.italic),z:fo&&fo.sz||null,k:fo&&fo.color&&fo.color.rgb||null,h:al&&al.horizontal||null,vv:al&&al.vertical||null,bd:x.s&&x.s.border||null};
         }
         row.push([v,f,st]);
       }
@@ -23123,8 +23141,8 @@ body.print-activity #dpbBottomBar{display:none!important}
   }
   function lum(h){var r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return (0.299*r+0.587*g+0.114*b)/255}
   function tblW(sn){var w=0;if(sn.colW)for(var i=0;i<sn.colW.length;i++)w+=sn.colW[i];return w}
-  function tableHtml(sn,an,calc,rowList){
-    var covered={},fx=!!(sn.colW&&sn.colW.length===sn.cols),h='<table class="dpbMatTbl'+(fx?' fx':'')+'"'+(fx?' style="width:'+tblW(sn)+'px"':'')+'>';
+  function tableHtml(sn,an,calc,rowList,forPrint){
+    var covered={},fx=!!(sn.colW&&sn.colW.length===sn.cols),h='<table class="dpbMatTbl'+(fx?' fx':'')+(forPrint?' pr':' app')+'"'+(fx?' style="width:'+tblW(sn)+'px"':'')+'>';
     if(fx){h+='<colgroup>';for(var ci=0;ci<sn.cols;ci++)h+='<col style="width:'+sn.colW[ci]+'px">';h+='</colgroup>'}
     sn.merges.forEach(function(m){for(var r=m[0];r<=m[2];r++)for(var c=m[1];c<=m[3];c++)if(r!==m[0]||c!==m[1])covered[r+'_'+c]=1});
     var list=rowList||null;if(!list){list=[];for(var rr=0;rr<sn.rows;rr++)list.push(rr)}
@@ -23145,16 +23163,26 @@ body.print-activity #dpbBottomBar{display:none!important}
             if(qn!=null&&n!=null){var p=qn*n;out=fmt(Math.round(p*1000)/1000);cls.push('calc');if(p===0)cls.push('z')}
           }
         }
-        if(f){style+='background:#'+f+';';if(lum(f)<0.5)style+='color:#fff;'}
+        if(f){
+          if(forPrint){style+='background:#'+f+';';if(lum(f)<0.5)style+='color:#fff;'}
+          else{
+            var L=lum(f),R_=parseInt(f.slice(0,2),16),G_=parseInt(f.slice(2,4),16),B_=parseInt(f.slice(4),16);
+            if(L>0.93){}                                   /* white -> app surface */
+            else if(L>0.62){style+='background:rgba('+R_+','+G_+','+B_+',.20);';cls.push('soft')}   /* pale tints -> soft glass */
+            else{style+='background:#'+f+';';cls.push(L<0.5?'dk':'md')}                                 /* real colour identity / headers */
+          }
+        }
         var sx=sn.cells[r]&&sn.cells[r][c]&&sn.cells[r][c][2];
         if(sx){
           if(sx.b||isCalc)style+='font-weight:800;';else style+='font-weight:400;';
           if(sx.i)style+='font-style:italic;';
           if(sx.z)style+='font-size:'+(Math.round(sx.z*96/72*10)/10)+'px;';
-          if(sx.k&&sx.k!=='000000'&&!(f&&lum(f)<0.5))style+='color:#'+sx.k+';';
+          if(forPrint&&sx.k&&sx.k!=='000000'&&!(f&&lum(f)<0.5))style+='color:#'+sx.k+';';
           var hh=sx.h==='center'||sx.h==='centerContinuous'?'center':(sx.h==='right'?'right':(sx.h==='left'?'left':''));
           if(hh)style+='text-align:'+hh+';';
           style+='vertical-align:'+(sx.vv==='top'?'top':(sx.vv==='bottom'?'bottom':'middle'))+';';
+          if(forPrint&&sx.bd){var bw={thin:1,hair:1,medium:2,thick:3,double:3,dotted:1,dashed:1},nm2={l:'left',r:'right',t:'top',b:'bottom'};
+            for(var kk in nm2){var bb=sx.bd[kk];style+='border-'+nm2[kk]+':'+(bb?(bw[bb.st]||1)+'px '+(bb.st==='dotted'?'dotted':bb.st==='dashed'?'dashed':'solid')+' #'+bb.c:'1px solid transparent')+';'}}
         }
         if(an&&r<an.dataStart)cls.push('h');
         else if(typeof v==='number'||(!isCalc&&/^\s*-?\d+(\.\d+)?\s*$/.test(String(v))))cls.push('n');
@@ -23258,7 +23286,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     host.style.cssText='position:absolute;left:-99999px;top:0;visibility:hidden;pointer-events:none;width:'+(tblW(sn)||1200)+'px';
     host.className='dpbMatMeasure';
     var wrap=document.createElement('div');wrap.id='dpbMat';wrap.style.cssText='display:block';
-    wrap.innerHTML=tableHtml(sn,an,true);host.appendChild(wrap);document.body.appendChild(host);
+    wrap.innerHTML=tableHtml(sn,an,true,null,true);host.appendChild(wrap);document.body.appendChild(host);
     var rows=host.querySelectorAll('tr'),hs=[];
     rows.forEach(function(tr){hs.push(tr.getBoundingClientRect().height)});
     var W=host.querySelector('table').getBoundingClientRect().width;
@@ -23309,7 +23337,7 @@ body.print-activity #dpbBottomBar{display:none!important}
       var last=pi===pl.groups.length-1;
       out+='<div class="pg" style="width:'+aw+'mm;height:'+ah+'mm;'+(last?'':'break-after:page;page-break-after:always;')+'">'+
         '<div class="pgH">'+pageTitle()+'</div>'+
-        '<div class="pgB"><div style="zoom:'+pl.sc.toFixed(4)+';width:'+W+'px">'+tableHtml(sn,an,true,rows)+'</div></div>'+
+        '<div class="pgB"><div style="zoom:'+pl.sc.toFixed(4)+';width:'+W+'px">'+tableHtml(sn,an,true,rows,true)+'</div></div>'+
         '<div class="pgF">'+(pi+1)+' / '+pl.groups.length+'</div></div>';
     });
     return out;
