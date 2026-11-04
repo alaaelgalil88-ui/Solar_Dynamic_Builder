@@ -971,8 +971,7 @@ window.XLSX = (() => {
     return {entries,get};
   }
 
-  async function read(data,opts){
-    const LAYOUT=!!(opts&&opts.dpbLayout);
+  async function read(data){
     const z=await unzip(data), names=[...z.entries.keys()];
     const out={SheetNames:[],Sheets:{},Workbook:{Names:[]}};
     const wbXml=await z.get('xl/workbook.xml'); if(!wbXml) throw new Error('Workbook XML is missing.');
@@ -1040,7 +1039,7 @@ window.XLSX = (() => {
       return null;
     };
     const stylesXml=await z.get('xl/styles.xml');
-    const styleFills=[]; const cellXfs=[]; const styleFonts=[];
+    const styleFills=[]; const cellXfs=[];
     if(stylesXml){
       const sdoc=parseXml(te.decode(stylesXml));
       const fillsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='fills');
@@ -1053,28 +1052,9 @@ window.XLSX = (() => {
           styleFills.push({patternType:pattern,fgColor:readColor(fg),bgColor:readColor(bg)});
         }
       }
-      if(LAYOUT){
-        const fontsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='fonts');
-        if(fontsEl){
-          for(const f of [...fontsEl.children]){
-            const k=[...f.children||[]], has=nm=>k.find(x=>lname(x)===nm);
-            const flag=el=>!!el&&el.getAttribute('val')!=='0'&&el.getAttribute('val')!=='false';
-            const szEl=has('sz'), colEl=has('color');
-            styleFonts.push({b:flag(has('b')),i:flag(has('i')),sz:szEl?Number(szEl.getAttribute('val')||0):0,c:readColor(colEl)});
-          }
-        }
-      }
       const xfsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='cellXfs');
       if(xfsEl){
-        for(const xf of [...xfsEl.children]){
-          const o={fillId:Number(xf.getAttribute('fillId')||0)};
-          if(LAYOUT){
-            o.fontId=Number(xf.getAttribute('fontId')||0);
-            const al=[...xf.children||[]].find(x=>lname(x)==='alignment');
-            if(al){const w=al.getAttribute('wrapText');o.al={h:al.getAttribute('horizontal')||'',v:al.getAttribute('vertical')||'',w:w==='1'||w==='true'};}
-          }
-          cellXfs.push(o);
-        }
+        for(const xf of [...xfsEl.children]) cellXfs.push({fillId:Number(xf.getAttribute('fillId')||0)});
       }
     }
     const defs=[...wb.getElementsByTagName('*')].filter(n=>lname(n)==='definedName');
@@ -1094,22 +1074,6 @@ window.XLSX = (() => {
         const xf=cellXfs[styleIndex]||{fillId:0};
         const fill=styleFills[xf.fillId]||{patternType:'none',fgColor:null,bgColor:null};
         ws[ref]={v,t:typ||'n',s:{fill:{patternType:fill.patternType,fgColor:fill.fgColor?{rgb:fill.fgColor}:null,bgColor:fill.bgColor?{rgb:fill.bgColor}:null}}};
-        if(LAYOUT){const sc=ws[ref].s,fo=styleFonts[xf.fontId||0];if(fo)sc.font=fo;if(xf.al)sc.al=xf.al;}
-      }
-      if(LAYOUT){
-        const cols=[],rowsH=[];
-        for(const cEl of doc.getElementsByTagNameNS('*','col')){
-          const mn=Number(cEl.getAttribute('min')||0),mx=Number(cEl.getAttribute('max')||0),w=Number(cEl.getAttribute('width')||0);
-          if(!mn||!w)continue;
-          for(let k=mn;k<=Math.min(mx||mn,512);k++)cols[k-1]=w;
-        }
-        for(const rEl of doc.getElementsByTagNameNS('*','row')){
-          const r=Number(rEl.getAttribute('r')||0),ht=Number(rEl.getAttribute('ht')||0);
-          if(r&&ht)rowsH[r-1]=ht;
-        }
-        const fp=doc.getElementsByTagNameNS('*','sheetFormatPr')[0];
-        ws['!cols']=cols;ws['!rows']=rowsH;
-        ws['!fmt']={w:fp?Number(fp.getAttribute('defaultColWidth')||0):0,h:fp?Number(fp.getAttribute('defaultRowHeight')||0):0};
       }
       const dim=[...doc.getElementsByTagName('*')].find(n=>lname(n)==='dimension'); if(dim?.getAttribute('ref')) ws['!ref']=dim.getAttribute('ref'); else ws['!ref']=encode_cell({r:maxR,c:maxC})+':A1';
       out.SheetNames.push(name); out.Sheets[name]=ws;
@@ -11113,35 +11077,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       </section>
     </div>
 
-    <div class="dpbAdminTabPanel" data-tab="material"><div id="dpbMat">
-      <section class="dpbMatCard">
-        <h3>📦 الماتريال (BOM)</h3>
-        <p class="dpbMatSub">كميات الماتريال المطلوبة لكل تراكر — بتتقرأ من ملف الإكسل (الـ Named Range <b>BOM</b> بس).</p>
-        <input type="file" id="dpbMatFile_in" accept=".xlsx,.xls" hidden>
-        <div class="dpbMatBtns">
-          <button type="button" class="dpbMatBtn primary" id="dpbMatUp">Upload</button>
-          <button type="button" class="dpbMatBtn" id="dpbMatApply" disabled>Apply</button>
-          <button type="button" class="dpbMatBtn danger" id="dpbMatRemove" disabled>Remove</button>
-        </div>
-        <div class="dpbMatFile" id="dpbMatFile">No file uploaded.</div>
-        <div class="dpbMatNote" id="dpbMatNote"></div>
-      </section>
-      <section class="dpbMatCard" id="dpbMatCountsCard" style="display:none">
-        <h3>عدد التراكرات لكل لون</h3>
-        <p class="dpbMatSub">الرقم بيتكتب لوحده من الـ Plan لو الألوان متطابقة، وتقدر تكتب رقم تاني بإيدك. كل بند بيتضرب في العدد وبيظهر في عمود لونه.</p>
-        <div class="dpbMatCounts" id="dpbMatCounts"></div>
-      </section>
-      <section class="dpbMatCard" style="padding:10px">
-        <div class="dpbMatTools" id="dpbMatTools" style="display:none">
-          <button type="button" class="dpbMatTb" data-z="out" aria-label="تصغير">−</button>
-          <span class="dpbMatZv" id="dpbMatZv">100%</span>
-          <button type="button" class="dpbMatTb" data-z="in" aria-label="تكبير">+</button>
-          <button type="button" class="dpbMatTb txt" data-z="fit">ملء العرض</button>
-          <button type="button" class="dpbMatTb txt" data-z="100">100%</button>
-          <button type="button" class="dpbMatTb print" id="dpbMatPrint">🖨️ طباعة</button>
-        </div>
-        <div id="dpbMatTable"></div></section>
-    </div></div>
+    <div class="dpbAdminTabPanel" data-tab="material"><div id="dpbBm"></div></div>
     <div class="dpbAdminTabPanel" data-tab="usage"><div id="dpbUsageHost"></div></div>
 
     <div class="dpbAdminTabPanel" data-tab="companies">
@@ -22957,88 +22893,108 @@ body.print-activity #dpbBottomBar{display:none!important}
 })();
 </script>
 
-<style id="dpbMaterialCss">
+<style id="dpbBmCss">
 #dpbAdminOverlay .dpbAdminTabPanel[data-tab="material"]{direction:rtl;text-align:right}
-#dpbMat{display:block;position:relative}
-#dpbMat .dpbMatCard{background:linear-gradient(180deg,rgba(14,30,48,.96),rgba(8,19,32,.98));border:1px solid rgba(94,170,255,.32);border-radius:18px;padding:14px;margin:0 0 12px;box-shadow:0 8px 22px rgba(0,0,0,.35)}
-#dpbMat h3{margin:0 0 4px;font-size:16px;color:#eaf4ff}
-#dpbMat .dpbMatSub{font-size:11.5px;color:#8fa7c2;margin:0 0 12px;line-height:1.7}
-#dpbMat .dpbMatBtns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-#dpbMat .dpbMatBtn{height:44px;border-radius:13px;border:1px solid rgba(94,170,255,.4);background:linear-gradient(160deg,rgba(255,255,255,.10),rgba(255,255,255,.03));color:#e6f1ff;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent}
-#dpbMat .dpbMatBtn.primary{background:linear-gradient(160deg,#1f9d76,#146c52);border-color:#37d6a2;color:#fff}
-#dpbMat .dpbMatBtn.danger{border-color:rgba(255,120,120,.5);color:#ffb3b3}
-#dpbMat .dpbMatBtn:disabled{opacity:.35;cursor:default;filter:grayscale(.5)}
-#dpbMat .dpbMatBtn:not(:disabled):active{transform:scale(.97)}
-#dpbMat .dpbMatFile{margin-top:10px;background:#091827;border:1px solid #243b57;border-radius:11px;padding:9px 12px;font-size:12.5px;color:#d6e3f0;overflow-wrap:anywhere;line-height:1.7}
-#dpbMat .dpbMatNote{margin-top:10px;border-radius:11px;padding:9px 12px;font-size:12px;line-height:1.7;background:rgba(45,140,255,.10);border:1px solid rgba(94,170,255,.35);color:#cfe6ff}
-#dpbMat .dpbMatNote.ok{background:rgba(31,157,118,.14);border-color:rgba(55,214,162,.45);color:#c9f6e6}
-#dpbMat .dpbMatNote.err{background:rgba(255,80,80,.12);border-color:rgba(255,120,120,.5);color:#ffd0d0}
-#dpbMat .dpbMatCounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:10px}
-#dpbMat .dpbMatCnt{background:#091827;border:1px solid #243b57;border-radius:14px;padding:10px}
-#dpbMat .dpbMatCnt label{text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:#dbe9f8;margin-bottom:7px}
-#dpbMat .dpbMatChip{width:14px;height:14px;border-radius:50%;border:1px solid rgba(255,255,255,.55);flex:none}
-#dpbMat .dpbMatCnt input{width:100%;box-sizing:border-box;height:42px;border-radius:11px;border:1px solid #31507a;background:#050d17;color:#fff;font-size:18px;font-weight:800;text-align:center;font-family:inherit;direction:ltr}
-#dpbMat .dpbMatCnt input:focus{outline:none;border-color:#37d6a2;box-shadow:0 0 0 3px rgba(55,214,162,.18)}
-#dpbMat .dpbMatCnt input:disabled{opacity:.45}
-#dpbMat .dpbMatCnt small{display:block;margin-top:6px;font-size:10.5px;color:#8fa7c2;min-height:14px}
-#dpbMat .dpbMatCnt small b{color:#7fe3c0;cursor:pointer;text-decoration:underline}
-#dpbMat .dpbMatTools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 10px}
-#dpbMat .dpbMatTb{min-width:40px;height:38px;padding:0 12px;border-radius:11px;border:1px solid rgba(94,170,255,.4);background:linear-gradient(160deg,rgba(255,255,255,.10),rgba(255,255,255,.03));color:#e6f1ff;font-size:16px;font-weight:800;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
-#dpbMat .dpbMatTb.txt{font-size:12.5px}
-#dpbMat .dpbMatTb.on{border-color:#37d6a2;color:#7fe3c0}
-#dpbMat .dpbMatTb.print{background:linear-gradient(160deg,#1f9d76,#146c52);border-color:#37d6a2;color:#fff;font-size:13px;margin-inline-start:auto}
-#dpbMat .dpbMatTb:active{transform:scale(.96)}
-#dpbMat .dpbMatZv{min-width:50px;text-align:center;font-size:13px;font-weight:800;color:#cfe6ff;direction:ltr}
-#dpbMat .dpbMatScroll{direction:ltr;text-align:left;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y;overscroll-behavior:contain;border-radius:12px;border:1px solid #243b57;background:#07111d;max-height:70vh;cursor:grab}
-#dpbMat .dpbMatScroll.grab{cursor:grabbing;user-select:none}
-#dpbMat .dpbMatZ{width:max-content}
-#dpbMat table.dpbMatTbl{border-collapse:collapse;direction:ltr;text-align:left;font-family:Calibri,Carlito,"Segoe UI",Arial,sans-serif;color:#e6f1ff}
-#dpbMat table.dpbMatTbl.fx{table-layout:fixed}
-#dpbMat .dpbMatTbl td{border:1px solid rgba(130,170,220,.38);padding:1px 4px;line-height:1.2;overflow:hidden;box-sizing:border-box;background:#0a1a2c;user-select:none;-webkit-user-select:none}
-#dpbMat .dpbMatTbl td.z{opacity:.5}
-#dpbMat .dpbMatMeasure{position:absolute;left:-99999px;top:0;visibility:hidden;pointer-events:none}
-#dpbMat .dpbMatMeasure td{background:#fff}
-#dpbMat .dpbMatEmpty{padding:26px 12px;text-align:center;color:#8fa7c2;font-size:13px}
+#dpbBm{display:block}
+#dpbBm .bmCard{background:linear-gradient(180deg,rgba(14,30,48,.96),rgba(8,19,32,.98));border:1px solid rgba(94,170,255,.32);border-radius:18px;padding:14px;margin:0 0 12px;box-shadow:0 8px 22px rgba(0,0,0,.35)}
+#dpbBm h3{margin:0 0 4px;font-size:16px;color:#eaf4ff}
+#dpbBm .bmSub{font-size:11.5px;color:#8fa7c2;margin:0 0 12px;line-height:1.7}
+#dpbBm .bmBtns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+#dpbBm .bmBtn{height:44px;border-radius:13px;border:1px solid rgba(94,170,255,.4);background:linear-gradient(160deg,rgba(255,255,255,.10),rgba(255,255,255,.03));color:#e6f1ff;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent}
+#dpbBm .bmBtn.primary{background:linear-gradient(160deg,#1f9d76,#146c52);border-color:#37d6a2;color:#fff}
+#dpbBm .bmBtn.danger{border-color:rgba(255,120,120,.5);color:#ffb3b3}
+#dpbBm .bmBtn.print{height:42px;padding:0 14px;flex:none;background:linear-gradient(160deg,#1f9d76,#146c52);border-color:#37d6a2;color:#fff}
+#dpbBm .bmBtn:disabled{opacity:.35;cursor:default;filter:grayscale(.5)}
+#dpbBm .bmBtn:not(:disabled):active{transform:scale(.97)}
+#dpbBm .bmFile{margin-top:10px;background:#091827;border:1px solid #243b57;border-radius:11px;padding:9px 12px;font-size:12.5px;color:#d6e3f0;overflow-wrap:anywhere;line-height:1.7}
+#dpbBm .bmNote{margin-top:10px;border-radius:11px;padding:9px 12px;font-size:12px;line-height:1.7;background:rgba(45,140,255,.10);border:1px solid rgba(94,170,255,.35);color:#cfe6ff}
+#dpbBm .bmNote.ok{background:rgba(31,157,118,.14);border-color:rgba(55,214,162,.45);color:#c9f6e6}
+#dpbBm .bmNote.err{background:rgba(255,80,80,.12);border-color:rgba(255,120,120,.5);color:#ffd0d0}
+#dpbBm .bmCounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:10px;margin-top:10px}
+#dpbBm .bmCnt{background:#091827;border:1px solid #243b57;border-radius:14px;padding:10px}
+#dpbBm .bmCnt label{text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:#dbe9f8;margin-bottom:7px}
+#dpbBm .bmCnt input{width:100%;box-sizing:border-box;height:42px;border-radius:11px;border:1px solid #31507a;background:#050d17;color:#fff;font-size:18px;font-weight:800;text-align:center;font-family:inherit;direction:ltr}
+#dpbBm .bmCnt input:focus,#dpbBm .bmSearch input:focus{outline:none;border-color:#37d6a2;box-shadow:0 0 0 3px rgba(55,214,162,.18)}
+#dpbBm .bmCnt small{display:block;margin-top:6px;font-size:10.5px;color:#8fa7c2;min-height:14px}
+#dpbBm .bmCnt small b{color:#7fe3c0;cursor:pointer;text-decoration:underline}
+#dpbBm .bmDot{display:inline-block;width:12px;height:12px;border-radius:50%;border:1px solid rgba(255,255,255,.55);flex:none}
+#dpbBm .bmDot.none{background:transparent;border-style:dashed;opacity:.5}
+#dpbBm .bmKpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+#dpbBm .bmK{background:linear-gradient(160deg,rgba(45,140,255,.16),rgba(14,30,48,.9));border:1px solid rgba(94,170,255,.3);border-radius:14px;padding:10px 6px;text-align:center}
+#dpbBm .bmK b{display:block;font-size:19px;color:#fff;direction:ltr}
+#dpbBm .bmK span{font-size:10.5px;color:#9fb6d0}
+#dpbBm .bmCats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:0 0 12px}
+#dpbBm .bmCat{position:relative;overflow:hidden;text-align:right;background:#0b1b2d;border:1px solid #243b57;border-radius:14px;padding:10px 12px 14px;color:#e6f1ff;font-family:inherit;cursor:pointer}
+#dpbBm .bmCat b{display:block;font-size:13px}
+#dpbBm .bmCat span{display:block;font-size:11px;color:#8fa7c2;margin-top:3px}
+#dpbBm .bmCat i{position:absolute;left:0;bottom:0;height:4px;background:linear-gradient(90deg,#37d6a2,#2d8cff);border-radius:0 4px 4px 0}
+#dpbBm .bmCat.on{border-color:#37d6a2;background:rgba(31,157,118,.16)}
+#dpbBm .bmFilter{padding:10px}
+#dpbBm .bmSearch{display:flex;gap:8px}
+#dpbBm .bmSearch input{flex:1;min-width:0;height:42px;border-radius:11px;border:1px solid #31507a;background:#050d17;color:#fff;font-size:14px;padding:0 12px;font-family:inherit}
+#dpbBm .bmChips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+#dpbBm .bmChip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:17px;border:1px solid #31507a;background:#0b1b2d;color:#dbe9f8;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer}
+#dpbBm .bmChip.on{border-color:#37d6a2;background:rgba(31,157,118,.22);color:#fff}
+#dpbBm .bmCg{background:linear-gradient(180deg,rgba(14,30,48,.96),rgba(8,19,32,.98));border:1px solid rgba(94,170,255,.28);border-radius:16px;margin:0 0 10px;overflow:hidden}
+#dpbBm .bmCgH{width:100%;display:flex;align-items:center;gap:10px;padding:12px 14px;background:rgba(45,140,255,.10);border:0;color:#eaf4ff;font-family:inherit;cursor:pointer;text-align:right}
+#dpbBm .bmCgT{flex:1;font-size:14px;font-weight:800}
+#dpbBm .bmCgT em{font-style:normal;display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;border-radius:11px;background:#2d8cff;color:#fff;font-size:12px;margin-left:8px}
+#dpbBm .bmCgN{font-size:11.5px;color:#9fb6d0}
+#dpbBm .bmCgN b{color:#7fe3c0}
+#dpbBm .bmChev{font-size:16px;color:#9fb6d0}
+#dpbBm .bmCgB{padding:6px 10px 10px}
+#dpbBm .bmIt{background:#091827;border:1px solid #1f3752;border-radius:13px;padding:10px 11px;margin-top:8px}
+#dpbBm .bmItTop{display:flex;align-items:flex-start;gap:9px}
+#dpbBm .bmNo{flex:none;min-width:34px;text-align:center;font-size:11.5px;font-weight:800;color:#7fb8ff;background:rgba(45,140,255,.14);border-radius:8px;padding:3px 6px;direction:ltr}
+#dpbBm .bmDesc{flex:1;font-size:13px;font-weight:700;color:#eaf4ff;line-height:1.45;direction:ltr;text-align:left;overflow-wrap:anywhere}
+#dpbBm .bmTot{flex:none;text-align:center;min-width:52px}
+#dpbBm .bmTot b{display:block;font-size:17px;color:#7fe3c0;direction:ltr}
+#dpbBm .bmTot small{font-size:10px;color:#8fa7c2}
+#dpbBm .bmMeta{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;align-items:center}
+#dpbBm .bmPn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#9fd0ff;background:#0e2238;border-radius:6px;padding:2px 7px;direction:ltr}
+#dpbBm .bmPill{font-size:11px;color:#dbe9f8;border:1px solid #3a5878;border-radius:10px;padding:1px 8px}
+#dpbBm .bmNoteT{font-size:11px;color:#f6c86b}
+#dpbBm .bmQs{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:6px;margin-top:9px}
+#dpbBm .bmQ{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto auto;column-gap:6px;align-items:center;background:#0d2033;border:1px solid #1f3752;border-radius:10px;padding:6px 8px}
+#dpbBm .bmQ span{font-size:10.5px;color:#9fb6d0;direction:ltr;text-align:left}
+#dpbBm .bmQ b{grid-column:1/3;font-size:16px;color:#fff;direction:ltr;text-align:center}
+#dpbBm .bmQ small{grid-column:1/3;font-size:9.5px;color:#7f98b3;text-align:center;direction:ltr}
+#dpbBm .bmQ.off{opacity:.4}
+#dpbBm .bmQ.on{border-color:#37d6a2;background:rgba(31,157,118,.18)}
+#dpbBm .bmEmpty{padding:26px 12px;text-align:center;color:#8fa7c2;font-size:13px}
+@media(max-width:420px){#dpbBm .bmKpi b{font-size:16px}}
 </style>
 
-<script id="dpbMaterialJs">
+<script id="dpbBmJs">
 (function(){
   "use strict";
-  var KEY='DPB_MATERIAL_V1';
-  var S=null, lastPid=null, lastNote=null, PLAN_CSS={};
-  var ZMIN=0.1,ZMAX=3,PXMM=25.4/96,MG=8,HEAD=13,FOOT=6;
+  var PKEY='DPB_BM_VIEW',S=null,lastPid=null,lastNote=null,PLAN_CSS={},saveT=null;
+  var UI={q:'',color:'',cat:-1,closed:{}};
   var PG={A0:[841,1189],A1:[594,841],A2:[420,594],A3:[297,420],A4:[210,297]};
   var q=function(id){return document.getElementById(id)};
-  var IDB_NAME='DPB_MATERIAL_VIEW',IDB_STORE='v',saveT=null;
-  function idbOpen(){return new Promise(function(res,rej){try{var r=indexedDB.open(IDB_NAME,1);r.onupgradeneeded=function(){r.result.createObjectStore(IDB_STORE)};r.onsuccess=function(){res(r.result)};r.onerror=function(){rej(r.error)}}catch(e){rej(e)}})}
-  function idbGet(k){return idbOpen().then(function(db){return new Promise(function(res){var t=db.transaction(IDB_STORE,'readonly').objectStore(IDB_STORE).get(k);t.onsuccess=function(){res(t.result||null)};t.onerror=function(){res(null)}})}).catch(function(){return null})}
-  function idbSet(k,v){return idbOpen().then(function(db){return new Promise(function(res){var tx=db.transaction(IDB_STORE,'readwrite'),st=tx.objectStore(IDB_STORE);if(v==null)st.delete(k);else st.put(v,k);tx.oncomplete=function(){res(1)};tx.onerror=function(){res(0)}})}).catch(function(){return 0})}
-  function pid(){return window.__dpbActiveProjectId||'LEGACY'}
-  function lsKey(){return KEY+'::'+pid()}
-  function legacy(){try{var r=JSON.parse(localStorage.getItem(lsKey())||'null');return r&&r.state?r:null}catch(_){return null}}
-  function dropLegacy(){try{localStorage.removeItem(lsKey())}catch(_){}}
-  function save(){clearTimeout(saveT);var k=lsKey(),v=(S&&S.state!=='empty')?S:null;saveT=setTimeout(function(){idbSet(k,v)},150)}
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]})}
   function norm(s){return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g,'')}
   function txt(v){return v==null?'':String(v).trim()}
+  function num(v){if(typeof v==='number'&&isFinite(v))return v;if(typeof v==='string'&&/^\s*-?\d+(\.\d+)?\s*$/.test(v))return Number(v);return null}
+  function fmtN(x){return (Math.round(x*100)/100).toLocaleString('en-US')}
+  function toast(m){try{if(typeof showToast==='function'){showToast(m);return}}catch(_){}alert(m)}
+
+  /* ---------- storage: its own IndexedDB (display-only data, never in localStorage / backup / sync) ---------- */
+  function idbOpen(){return new Promise(function(res,rej){try{var r=indexedDB.open(PKEY,1);r.onupgradeneeded=function(){r.result.createObjectStore('v')};r.onsuccess=function(){res(r.result)};r.onerror=function(){rej(r.error)}}catch(e){rej(e)}})}
+  function idbGet(k){return idbOpen().then(function(db){return new Promise(function(res){var t=db.transaction('v','readonly').objectStore('v').get(k);t.onsuccess=function(){res(t.result||null)};t.onerror=function(){res(null)}})}).catch(function(){return null})}
+  function idbSet(k,v){return idbOpen().then(function(db){return new Promise(function(res){var tx=db.transaction('v','readwrite'),st=tx.objectStore('v');if(v==null)st.delete(k);else st.put(v,k);tx.oncomplete=function(){res(1)};tx.onerror=function(){res(0)}})}).catch(function(){return 0})}
+  function pid(){return window.__dpbActiveProjectId||'LEGACY'}
+  function save(){clearTimeout(saveT);var k=pid(),v=(S&&S.state!=='empty')?S:null;saveT=setTimeout(function(){idbSet(k,v)},150)}
+  function blank(){return {state:'empty',fileName:'',bom:null,counts:{}}}
   function ensure(){
-    var p=pid();
-    if(S&&lastPid===p)return;
-    lastPid=p;
-    var lg=legacy();
-    S=lg||{state:'empty',fileName:'',snap:null,counts:{},zoom:'fit'};
-    if(lg){dropLegacy();save()}
-    if(!S.counts)S.counts={};if(S.zoom==null)S.zoom='fit';
-    if(!lg)idbGet(lsKey()).then(function(r){
-      if(lastPid!==p||!r||!r.state)return;
-      S=r;if(!S.counts)S.counts={};if(S.zoom==null)S.zoom='fit';render();
-    });
+    var p=pid();if(S&&lastPid===p)return;
+    lastPid=p;S=blank();UI={q:'',color:'',cat:-1,closed:{}};
+    idbGet(p).then(function(r){if(lastPid!==p||!r||!r.state)return;S=r;if(!S.counts)S.counts={};render()});
   }
 
-  /* ---------- reading: ONLY what is inside the named range BOM ---------- */
+  /* ---------- reading: ONLY the named range BOM ---------- */
   function parseRef(ref){
-    ref=String(ref||'').split(',')[0];
-    var i=ref.lastIndexOf('!');if(i<0)return null;
+    ref=String(ref||'').split(',')[0];var i=ref.lastIndexOf('!');if(i<0)return null;
     var sh=ref.slice(0,i).trim();if(sh.charAt(0)==="'"&&sh.slice(-1)==="'")sh=sh.slice(1,-1).replace(/''/g,"'");
     var a=ref.slice(i+1).replace(/\$/g,'').trim().split(':');
     function dec(x){var m=/^([A-Za-z]+)(\d+)$/.exec(x);if(!m)return null;var c=0,L=m[1].toUpperCase();for(var k=0;k<L.length;k++)c=c*26+(L.charCodeAt(k)-64);return {r:Number(m[2])-1,c:c-1}}
@@ -23048,82 +23004,56 @@ body.print-activity #dpbBottomBar{display:none!important}
   function addr(r,c){var s='',n=c+1;while(n>0){var m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=Math.floor((n-1)/26)}return s+(r+1)}
   async function readBom(file){
     if(!window.XLSX)throw new Error('قارئ الإكسل مش محمّل. اقفل التطبيق وافتحه تاني.');
-    var wb=await XLSX.read(await file.arrayBuffer(),{type:'array',cellStyles:true,dpbLayout:true});
+    var wb=await XLSX.read(await file.arrayBuffer(),{type:'array'});
     var names=(wb.Workbook&&wb.Workbook.Names)||[],pr=null;
     for(var i=0;i<names.length&&!pr;i++){
       var nm=String(names[i].Name||'').trim().replace(/^.*!/,'');
       if(/^bom$/i.test(nm)){var p=parseRef(names[i].Ref);if(p&&wb.Sheets[p.sheet])pr=p}
     }
-    if(!pr)throw new Error('مفيش Named Range اسمه BOM في الملف ده (أو مش بيشاور على شيت موجود). التطبيق بيقرأ جوه الـ BOM بس.');
-    var ws=wb.Sheets[pr.sheet],R=pr.e.r-pr.s.r+1,C=pr.e.c-pr.s.c+1,rows=[];
-    var cw=ws['!cols']||[],rh=ws['!rows']||[],fm=ws['!fmt']||{},colW=[],rowH=[];
-    for(var c0=0;c0<C;c0++){var w0=cw[pr.s.c+c0]||fm.w;colW.push(w0?Math.max(8,Math.round(w0*7)):64)}
-    for(var r0=0;r0<R;r0++){var h0=rh[pr.s.r+r0]||fm.h||15;rowH.push(Math.round(h0*96/72*10)/10)}
-    for(var r=0;r<R;r++){
-      var row=[];
-      for(var c=0;c<C;c++){
-        var x=ws[addr(pr.s.r+r,pr.s.c+c)],v='',f=null;
-        if(x){
-          v=x.v==null?'':x.v;
-          var fl=x.s&&x.s.fill;
-          if(fl&&fl.patternType==='solid'&&fl.fgColor&&fl.fgColor.rgb)f=String(fl.fgColor.rgb).slice(-6).toUpperCase();
-        }
-        var fo=x&&x.s&&x.s.font,al=x&&x.s&&x.s.al,fs=null;
-        if(fo||al){fs={};if(fo){if(fo.b)fs.b=1;if(fo.i)fs.i=1;if(fo.sz)fs.z=fo.sz;if(fo.c)fs.c=fo.c}if(al){if(al.h)fs.h=al.h;if(al.v)fs.va=al.v;if(al.w)fs.w=1}}
-        row.push([v,f,fs]);
-      }
-      rows.push(row);
-    }
-    var merges=[];
+    if(!pr)throw new Error('مفيش Named Range اسمه BOM في الملف ده. التطبيق بيقرأ جوه الـ BOM بس.');
+    var ws=wb.Sheets[pr.sheet],R=pr.e.r-pr.s.r+1,C=pr.e.c-pr.s.c+1,g=[],merges=[];
+    for(var r=0;r<R;r++){var row=[];for(var c=0;c<C;c++){var x=ws[addr(pr.s.r+r,pr.s.c+c)];row.push(x&&x.v!=null?x.v:'')}g.push(row)}
     (ws['!merges']||[]).forEach(function(m){
       var r1=Math.max(m.s.r,pr.s.r),c1=Math.max(m.s.c,pr.s.c),r2=Math.min(m.e.r,pr.e.r),c2=Math.min(m.e.c,pr.e.c);
       if(r1>r2||c1>c2||(r1===r2&&c1===c2))return;
-      merges.push([r1-pr.s.r,c1-pr.s.c,r2-pr.s.r,c2-pr.s.c]);
+      merges.push({r1:r1-pr.s.r,c1:c1-pr.s.c,r2:r2-pr.s.r,c2:c2-pr.s.c});
     });
-    return {sheet:pr.sheet,range:addr(pr.s.r,pr.s.c)+':'+addr(pr.e.r,pr.e.c),rows:R,cols:C,cells:rows,merges:merges,colW:colW,rowH:rowH};
+    return parseBom(g,merges,R,C);
   }
-
-  /* ---------- structure detection (no hardcoded rows/columns) ---------- */
-  function val(sn,r,c){var x=sn.cells[r]&&sn.cells[r][c];return x?x[0]:''}
-  function fillOf(sn,r,c){var x=sn.cells[r]&&sn.cells[r][c];return x?x[1]:null}
-  function mergeAt(sn,r,c){for(var i=0;i<sn.merges.length;i++){var m=sn.merges[i];if(r>=m[0]&&r<=m[2]&&c>=m[1]&&c<=m[3])return m}return null}
-  function groupSpan(sn,r,c){
-    var m=mergeAt(sn,r,c);
-    if(m)return {c1:m[1],c2:m[3],sub:m[2]+1};
-    var c2=c;for(var k=c+1;k<sn.cols;k++){if(txt(val(sn,r,k))||mergeAt(sn,r,k))break;c2=k}
-    return {c1:c,c2:c2,sub:r+1};
-  }
-  function analyze(sn){
-    if(!sn)return {err:'مفيش بيانات.'};
-    var lim=Math.min(sn.rows,8),req=null,qty=null;
-    for(var r=0;r<lim;r++)for(var c=0;c<sn.cols;c++){
-      var t=txt(val(sn,r,c));if(!t)continue;
-      var isReq=/^req/i.test(t),isQty=!isReq&&/quantit|qty|per\s*tracker/i.test(t);
-      if(!isReq&&!isQty)continue;
-      var g=groupSpan(sn,r,c);
-      if(g.c2-g.c1+1>=sn.cols)continue;           // a full-width title row, not a column group
-      if(isReq&&!req)req=g;
-      if(isQty&&!qty)qty=g;
+  function parseBom(g,merges,R,C){
+    function mAt(r,c){for(var i=0;i<merges.length;i++){var m=merges[i];if(r>=m.r1&&r<=m.r2&&c>=m.c1&&c<=m.c2)return m}return null}
+    function vm(r,c){var m=mAt(r,c);return m?g[m.r1][m.c1]:g[r][c]}
+    var qty=null,lim=Math.min(R,8);
+    outer:for(var r=0;r<lim;r++)for(var c=0;c<C;c++){
+      var t=txt(g[r][c]);if(!t||/^req/i.test(t)||!/quantit|qty|per\s*tracker/i.test(t))continue;
+      var m=mAt(r,c),c1=m?m.c1:c,c2=m?m.c2:c;
+      if(!m){for(var k=c+1;k<C;k++){if(txt(g[r][k])||mAt(r,k))break;c2=k}}
+      if(c2-c1+1>=C)continue;
+      qty={c1:c1,c2:c2,sub:(m?m.r2:r)+1};break outer;
     }
-    if(!req||!qty)return {err:'مش قادر ألاقي مجموعتين الأعمدة (الكميات لكل تراكر / الكميات المطلوبة) في الـ BOM.'};
-    var cols=[];
-    for(var c=req.c1;c<=req.c2;c++){
-      var color=txt(val(sn,req.sub,c));if(!color)continue;
-      var qc=-1;
-      for(var k=qty.c1;k<=qty.c2;k++)if(norm(txt(val(sn,qty.sub,k)))===norm(color)){qc=k;break}
-      if(qc<0){var k2=qty.c1+(c-req.c1);if(k2<=qty.c2)qc=k2}
-      if(qc<0)continue;
-      cols.push({c:c,qc:qc,color:color,key:norm(color),fill:fillOf(sn,req.sub,c)||fillOf(sn,qty.sub,qc)});
+    if(!qty)throw new Error('مش لاقي مجموعة «الكميات لكل تراكر» في الـ BOM.');
+    var colors=[];
+    for(var cc=qty.c1;cc<=qty.c2;cc++){var nm=txt(vm(qty.sub,cc));if(nm)colors.push({key:norm(nm),name:nm,c:cc})}
+    if(!colors.length)throw new Error('مش لاقي أسماء الألوان تحت «الكميات لكل تراكر».');
+    var ds=qty.sub+1,hs=[];
+    for(var c3=0;c3<C;c3++){var parts=[];for(var r3=0;r3<ds;r3++){var m3=mAt(r3,c3);if(m3&&m3.c2-m3.c1+1>=C)continue;var t3=txt(g[r3][c3]);if(t3)parts.push(t3)}hs.push(parts.join(' ').toLowerCase())}
+    function find(re,def){for(var i=0;i<hs.length;i++)if(re.test(hs[i]))return i;return def}
+    var noC=find(/category/,1),descC=find(/description/,2),pnC=find(/part\s*number/,3),colC=find(/^colou?r$/,4),noteC=find(/note|source/,C-1);
+    var cats=[],cur=null;
+    for(var rr=ds;rr<R;rr++){
+      var mc=mAt(rr,noC);
+      if(mc&&mc.r1===mc.r2&&mc.c2>=C-1&&txt(g[mc.r1][mc.c1])){
+        cur={sr:txt(g[rr][0]),title:txt(g[mc.r1][mc.c1]),items:[]};cats.push(cur);continue;
+      }
+      var desc=txt(vm(rr,descC)),pn=txt(vm(rr,pnC)),col=txt(vm(rr,colC)),note=txt(g[rr][noteC]),has=false,qv={};
+      colors.forEach(function(co){var mm=mAt(rr,co.c),v=(mm&&(mm.r1!==rr||mm.c1!==co.c))?null:num(g[rr][co.c]);qv[co.key]=v;if(v!=null)has=true});
+      if(!desc&&!pn&&!has)continue;
+      if(!cur){cur={sr:'',title:'—',items:[]};cats.push(cur)}
+      var hasNo=num(g[rr][noC])!=null||txt(g[rr][noC])!=='';
+      cur.items.push({no:hasNo?(cur.sr?cur.sr+'.':'')+(cur.items.filter(function(x){return x.no}).length+1):'',desc:desc,pn:pn,col:col,note:note,q:qv});
     }
-    if(!cols.length)return {err:'مش قادر أربط عمود كل لون في الكميات المطلوبة بعمود الكمية لكل تراكر.'};
-    return {cols:cols,dataStart:Math.max(req.sub,qty.sub)+1};
-  }
-  function qtyNum(sn,r,qc){
-    var m=mergeAt(sn,r,qc);if(m&&(m[0]!==r||m[1]!==qc))return null;
-    var v=val(sn,r,qc);
-    if(typeof v==='number'&&isFinite(v))return v;
-    if(typeof v==='string'&&/^\s*-?\d+(\.\d+)?\s*$/.test(v))return Number(v);
-    return null;
+    if(!cats.length)throw new Error('مفيش بنود تحت العناوين في الـ BOM.');
+    return {colors:colors.map(function(x){return {key:x.key,name:x.name}}),cats:cats};
   }
 
   /* ---------- tracker counts: automatic from the Plan, or typed ---------- */
@@ -23141,340 +23071,210 @@ body.print-activity #dpbBottomBar{display:none!important}
       return Object.keys(out).length?out:null;
     }catch(_){return null}
   }
-  function syncAutoCounts(an){
+  function syncCounts(){
     var pc=planCounts();
-    an.cols.forEach(function(col){
-      var e=S.counts[col.key]||(S.counts[col.key]={v:null,manual:false});
-      if(!e.manual){e.v=(pc&&pc[col.key]!=null)?pc[col.key]:null;e.auto=!!(pc&&pc[col.key]!=null)}
+    S.bom.colors.forEach(function(co){
+      var e=S.counts[co.key]||(S.counts[co.key]={v:null,manual:false});
+      if(!e.manual){e.v=(pc&&pc[co.key]!=null)?pc[co.key]:null;e.auto=!!(pc&&pc[co.key]!=null)}
     });
   }
-
   var CN={purple:[112,48,160],green:[46,158,79],red:[224,49,49],blue:[25,113,194],yellow:[242,200,15],orange:[240,140,0],pink:[240,101,149],brown:[139,90,43],black:[34,34,34],white:[255,255,255],gray:[134,142,150],grey:[134,142,150],silver:[192,192,192],cyan:[21,170,191],teal:[12,166,120]};
-  function chipColor(name,key){
-    if(PLAN_CSS[key])return PLAN_CSS[key];
-    var base=null,mod=0;String(name).toLowerCase().split(/[^a-z]+/).forEach(function(w){if(w==='dark')mod=-1;else if(w==='light')mod=1;else if(CN[w])base=CN[w]});
-    if(!base)return null;
-    var t=mod<0?0:255,a=mod?0.38:0;
-    return 'rgb('+base.map(function(v){return Math.round(v+(t-v)*a)}).join(',')+')';
+  function dot(name,key){
+    var c=PLAN_CSS[key];
+    if(!c){var base=null,mod=0;String(name).toLowerCase().split(/[^a-z]+/).forEach(function(w){if(w==='dark')mod=-1;else if(w==='light')mod=1;else if(CN[w])base=CN[w]});
+      if(base){var t=mod<0?0:255,a=mod?0.38:0;c='rgb('+base.map(function(v){return Math.round(v+(t-v)*a)}).join(',')+')'}}
+    return c?'<i class="bmDot" style="background:'+esc(c)+'"></i>':'<i class="bmDot none"></i>';
   }
+  function cnt(key){var e=S.counts[key];return e&&e.v!=null?e.v:0}
+
+  /* ---------- numbers ---------- */
+  function need(it,key){var v=it.q[key];return v==null?null:v*cnt(key)}
+  function itemTotal(it){var t=0;S.bom.colors.forEach(function(co){var n=need(it,co.key);if(n)t+=n});return t}
+  function visible(it){
+    var qs=UI.q.trim().toLowerCase();
+    if(qs&&(it.no+' '+it.desc+' '+it.pn+' '+it.col+' '+it.note).toLowerCase().indexOf(qs)<0)return false;
+    if(UI.color){var v=it.q[UI.color];if(!(v>0))return false}
+    return true;
+  }
+  function catView(){
+    return S.bom.cats.map(function(c,i){return {i:i,c:c,items:UI.cat>=0&&UI.cat!==i?[]:c.items.filter(visible)}});
+  }
+
   /* ---------- rendering ---------- */
-  function fmt(x){
-    if(typeof x==='number'){var y=+x.toPrecision(12);return String(y)}
-    return String(x);
-  }
-  function lum(h){var r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return (0.299*r+0.587*g+0.114*b)/255}
-  function natW(){var s=S&&S.snap,t=0;if(!s||!s.colW)return 0;s.colW.forEach(function(w){t+=w});return t}
-  function txtColor(fc,fill,paper){
-    if(paper)return '#'+(fc||'000000');
-    if(fill){if(fc)return '#'+fc;return lum(fill)<0.5?'#fff':'#111'}
-    if(!fc||lum(fc)<0.4)return '#e6f1ff';
-    return '#'+fc;
-  }
-  function tdStyle(cell,isCalc,paper,v){
-    var fs=cell&&cell[2]||{},f=cell&&cell[1]||null,st='';
-    if(f)st+='background:#'+f+';';
-    st+='font-size:'+(Math.round((fs.z||11)*96/72*100)/100)+'px;color:'+txtColor(fs.c,f,paper)+';';
-    if(fs.b||isCalc)st+='font-weight:700;';
-    if(fs.i)st+='font-style:italic;';
-    var h=fs.h;
-    if(!h||h==='general')h=(isCalc||typeof v==='number')?(isCalc?'center':'right'):'left';
-    st+='text-align:'+(h==='centerContinuous'?'center':(h==='right'||h==='center'?h:'left'))+';';
-    st+='vertical-align:'+(fs.va==='center'?'middle':(fs.va==='top'?'top':'bottom'))+';';
-    st+=fs.w?'white-space:normal;overflow-wrap:anywhere;':'white-space:nowrap;';
-    return st;
-  }
-  function tableHtml(sn,an,calc,o){
-    o=o||{};
-    var covered={},fx=!!(sn.colW&&sn.rowH),tw=0,list=o.rows;
-    if(!list){list=[];for(var i0=0;i0<sn.rows;i0++)list.push(i0)}
-    sn.merges.forEach(function(m){for(var r=m[0];r<=m[2];r++)for(var c=m[1];c<=m[3];c++)if(r!==m[0]||c!==m[1])covered[r+'_'+c]=1});
-    if(fx)sn.colW.forEach(function(w){tw+=w});
-    var h='<table class="dpbMatTbl'+(fx?' fx':'')+'"'+(fx?' style="width:'+tw+'px"':'')+'>';
-    if(fx)h+='<colgroup>'+sn.colW.map(function(w){return '<col style="width:'+w+'px">'}).join('')+'</colgroup>';
-    list.forEach(function(r){
-      h+='<tr'+(fx?' style="height:'+sn.rowH[r]+'px"':'')+'>';
-      for(var c=0;c<sn.cols;c++){
-        if(covered[r+'_'+c])continue;
-        var m=mergeAt(sn,r,c),v=val(sn,r,c),cell=sn.cells[r]&&sn.cells[r][c],cls=[];
-        var rc=null;
-        if(an)for(var i=0;i<an.cols.length;i++)if(an.cols[i].c===c){rc=an.cols[i];break}
-        var isCalc=!!(rc&&r>=an.dataStart);
-        var out=v===''?'':fmt(v);
-        if(isCalc){
-          out='';
-          if(calc){
-            var cnt=S.counts[rc.key],n=cnt&&cnt.v!=null?cnt.v:null,qn=qtyNum(sn,r,rc.qc);
-            if(qn!=null&&n!=null){var p=qn*n;out=fmt(Math.round(p*1000)/1000);if(p===0)cls.push('z')}
-          }
-        }
-        h+='<td'+(m&&m[3]>m[1]?' colspan="'+(m[3]-m[1]+1)+'"':'')+(m&&m[2]>m[0]?' rowspan="'+(m[2]-m[0]+1)+'"':'')+(cls.length?' class="'+cls.join(' ')+'"':'')+' style="'+tdStyle(cell,isCalc&&out!=='',!!o.paper,v)+'">'+esc(out)+'</td>';
-      }
-      h+='</tr>';
-    });
-    return h+'</table>';
-  }
-  function setNote(html,kind){lastNote={h:html,k:kind||''}}
+  function setNote(h,k){lastNote={h:h,k:k||''}}
   function render(){
-    var host=q('dpbMat');if(!host)return;
-    ensure();
-    var st=S.state,an=S.snap?analyze(S.snap):null,valid=!!(an&&an.cols);
-    var up=q('dpbMatUp'),ap=q('dpbMatApply'),rm=q('dpbMatRemove');
-    /* exact state machine, same as the Plan / process files:
-       empty -> Upload ON / Apply OFF / Remove OFF
-       uploaded -> Upload ON / Apply ON (when valid) / Remove OFF
-       applied -> Upload OFF / Apply OFF / Remove ON */
-    up.disabled=(st==='applied');
-    ap.disabled=!(st==='uploaded'&&valid);
-    rm.disabled=(st!=='applied');
-    q('dpbMatFile').textContent=S.fileName?(S.fileName+(st==='applied'?'  ·  Applied':(st==='uploaded'?'  ·  analyzed — اضغط Apply':''))):'No file uploaded.';
-    var nt=q('dpbMatNote');
-    if(lastNote){nt.className='dpbMatNote '+lastNote.k;nt.innerHTML=lastNote.h}
-    else if(st==='empty'){nt.className='dpbMatNote';nt.innerHTML='ارفع ملف الـ BOM. التطبيق بيقرأ <b>الـ Named Range اسمه BOM</b> بس، وأي حاجة برّاه مش بتتعرض.'}
-    else if(st==='uploaded'){nt.className='dpbMatNote';nt.innerHTML='الملف اتقرأ. ده شكل الجدول زي ما هو — اضغط <b>Apply</b> علشان تدخل أعداد التراكرات وتتحسب الكميات.'}
-    else{nt.className='dpbMatNote ok';nt.innerHTML='✅ الـ BOM متطبّق. اكتب عدد التراكرات لكل لون (أو سيب الرقم التلقائي) والكميات المطلوبة بتتحسب لوحدها.'}
-    var cbox=q('dpbMatCountsCard'),cnt=q('dpbMatCounts'),tw=q('dpbMatTable'),tools=q('dpbMatTools');
-    if(tools)tools.style.display=S.snap?'':'none';
-    if(!S.snap){cbox.style.display='none';tw.innerHTML='<div class="dpbMatEmpty">لسه مفيش BOM. اضغط Upload.</div>';return}
-    if(!valid){cbox.style.display='none';paintTable(null,false);nt.className='dpbMatNote err';nt.innerHTML='⚠️ '+esc(an.err);return}
-    var applied=(st==='applied');
-    cbox.style.display='';
-    if(applied)syncAutoCounts(an);
-    cnt.innerHTML=an.cols.map(function(col){
-      var e=S.counts[col.key]||{},auto=applied&&!e.manual&&e.auto;
-      var cc=chipColor(col.color,col.key),chip=cc?'<span class="dpbMatChip" style="background:'+esc(cc)+'"></span>':'';
-      var hint=!applied?'':(e.manual?'يدوي · <b data-reset="'+esc(col.key)+'">رجّع التلقائي</b>':(auto?'تلقائي من الـ Plan':'اكتب العدد'));
-      return '<div class="dpbMatCnt"><label>'+chip+esc(col.color)+'</label><input inputmode="numeric" maxlength="6" data-key="'+esc(col.key)+'" value="'+(e.v==null?'':e.v)+'" placeholder="0"'+(applied?'':' disabled')+'><small>'+hint+'</small></div>';
+    var host=q('dpbBm');if(!host)return;ensure();
+    var st=S.state,ap=(st==='applied');
+    var h='<section class="bmCard"><h3>📦 الماتريال (BOM)</h3><p class="bmSub">كميات الماتريال المطلوبة لكل تراكر — بتتقرأ من الـ Named Range <b>BOM</b> بس.</p>'+
+      '<input type="file" id="bmFile" accept=".xlsx,.xls" hidden>'+
+      '<div class="bmBtns"><button type="button" class="bmBtn primary" data-a="up"'+(st==='applied'?' disabled':'')+'>Upload</button>'+
+      '<button type="button" class="bmBtn" data-a="apply"'+(st==='uploaded'?'':' disabled')+'>Apply</button>'+
+      '<button type="button" class="bmBtn danger" data-a="remove"'+(ap?'':' disabled')+'>Remove</button></div>'+
+      '<div class="bmFile">'+(S.fileName?esc(S.fileName)+(ap?'  ·  Applied':'  ·  analyzed — اضغط Apply'):'No file uploaded.')+'</div>';
+    var nk='',nt='';
+    if(lastNote){nk=lastNote.k;nt=lastNote.h}
+    else if(st==='empty')nt='ارفع ملف الـ BOM. أي حاجة برّا الـ Named Range اسمه BOM مش بتتعرض.';
+    else if(st==='uploaded'){var nI=0;S.bom.cats.forEach(function(c){nI+=c.items.length});nt='الملف اتقرأ: '+S.bom.cats.length+' فئة · '+nI+' بند · '+S.bom.colors.length+' ألوان ('+esc(S.bom.colors.map(function(c){return c.name}).join(' / '))+'). اضغط <b>Apply</b>.'}
+    else{nk='ok';nt='✅ الـ BOM متطبّق. عدد التراكرات بيتجاب من الـ Plan لو الألوان متطابقة، وتقدر تكتبه بإيدك.'}
+    h+='<div class="bmNote '+nk+'">'+nt+'</div></section>';
+    if(ap){
+      syncCounts();
+      h+='<section class="bmCard"><h3>عدد التراكرات لكل لون</h3><div class="bmCounts">'+S.bom.colors.map(function(co){
+        var e=S.counts[co.key]||{},hint=e.manual?'يدوي · <b data-reset="'+esc(co.key)+'">رجّع التلقائي</b>':(e.auto?'تلقائي من الـ Plan':'اكتب العدد');
+        return '<div class="bmCnt"><label>'+dot(co.name,co.key)+esc(co.name)+'</label><input inputmode="numeric" maxlength="6" data-key="'+esc(co.key)+'" value="'+(e.v==null?'':e.v)+'" placeholder="0"><small>'+hint+'</small></div>';
+      }).join('')+'</div></section>'+
+      '<div id="bmKpi" class="bmKpi"></div><div id="bmCats" class="bmCats"></div>'+
+      '<section class="bmCard bmFilter"><div class="bmSearch"><input id="bmQ" type="search" placeholder="ابحث: وصف / رقم قطعة / لون" value="'+esc(UI.q)+'" autocomplete="off"><button type="button" class="bmBtn print" data-a="print">🖨️ طباعة</button></div><div id="bmChips" class="bmChips"></div></section>'+
+      '<div id="bmList"></div>';
+    }
+    host.innerHTML=h;
+    if(ap)renderDyn();
+  }
+  function renderDyn(){
+    if(!S||S.state!=='applied')return;
+    var cv=catView(),nItems=0,pieces=0,trk=0,all=0;
+    S.bom.colors.forEach(function(co){trk+=cnt(co.key)});
+    S.bom.cats.forEach(function(c){all+=c.items.length});
+    var totalAll=0,catTot=S.bom.cats.map(function(c){var t=0;c.items.forEach(function(it){t+=itemTotal(it)});totalAll+=t;return t});
+    cv.forEach(function(v){nItems+=v.items.length;v.items.forEach(function(it){pieces+=itemTotal(it)})});
+    q('bmKpi').innerHTML=[['التراكرات',fmtN(trk)],['الفئات',S.bom.cats.length],['البنود',all],['إجمالي القطع',fmtN(totalAll)]].map(function(x){return '<div class="bmK"><b>'+x[1]+'</b><span>'+x[0]+'</span></div>'}).join('');
+    q('bmCats').innerHTML=S.bom.cats.map(function(c,i){
+      var share=totalAll?Math.round(catTot[i]*100/totalAll):0;
+      return '<button type="button" class="bmCat'+(UI.cat===i?' on':'')+'" data-cat="'+i+'"><b>'+esc(c.title)+'</b><span>'+c.items.length+' بند · '+fmtN(catTot[i])+' قطعة</span><i style="width:'+share+'%"></i></button>';
     }).join('');
-    paintTable(an,applied);
-  }
-  function scEl(){var t=q('dpbMatTable');return t&&t.querySelector('.dpbMatScroll')}
-  function paintTable(an,calc){
-    var tw=q('dpbMatTable');if(!tw||!S.snap)return;
-    var sc=scEl(),keepL=sc?sc.scrollLeft:0,keepT=sc?sc.scrollTop:0;
-    if(!sc){tw.innerHTML='<div class="dpbMatScroll"><div class="dpbMatZ"></div></div>';sc=scEl()}
-    sc.firstChild.innerHTML=tableHtml(S.snap,an,calc);
-    applyZoom();
-    sc.scrollLeft=keepL;sc.scrollTop=keepT;
-  }
-  function renderTableOnly(){
-    var an=S.snap?analyze(S.snap):null;if(!an||!an.cols)return;
-    paintTable(an,S.state==='applied');
-  }
-
-  /* ---------- zoom (buttons, pinch, ctrl+wheel) + drag to pan ---------- */
-  function clampZ(z){return Math.max(ZMIN,Math.min(ZMAX,z))}
-  function fitZ(){var sc=scEl(),W=natW();if(!sc||!W||!sc.clientWidth)return null;return Math.max(ZMIN,Math.min(2,(sc.clientWidth-2)/W))}
-  function curZ(){var z=S&&S.zoom;if(z==='fit'||z==null){if(!natW())return 1;var f=fitZ();return f==null?0.5:f}return Number(z)||1}
-  function applyZoom(cx,cy,oldZ){
-    var sc=scEl(),ze=sc&&sc.firstChild;if(!ze)return;
-    var z=curZ();ze.style.zoom=String(z);
-    if(oldZ&&cx!=null&&oldZ!==z){var px=(sc.scrollLeft+cx)/oldZ,py=(sc.scrollTop+cy)/oldZ;sc.scrollLeft=px*z-cx;sc.scrollTop=py*z-cy}
-    var lb=q('dpbMatZv');if(lb)lb.textContent=Math.round(z*100)+'%';
-    var fb=document.querySelector('#dpbMatTools [data-z="fit"]');if(fb)fb.classList.toggle('on',S.zoom==='fit'||S.zoom==null);
-  }
-  function setZoom(v,cx,cy){
-    ensure();var sc=scEl();if(!sc)return;
-    if(cx==null){cx=sc.clientWidth/2;cy=sc.clientHeight/2}
-    var old=curZ();S.zoom=(v==='fit')?'fit':clampZ(v);save();applyZoom(cx,cy,old);
-  }
-  function bindZoom(){
-    var tools=q('dpbMatTools'),host=q('dpbMatTable');
-    tools.addEventListener('click',function(e){
-      var b=e.target.closest&&e.target.closest('[data-z]');if(!b)return;ensure();var k=b.getAttribute('data-z');
-      if(k==='in')setZoom(curZ()*1.2);else if(k==='out')setZoom(curZ()/1.2);else if(k==='fit')setZoom('fit');else if(k==='100')setZoom(1);
+    q('bmChips').innerHTML='<button type="button" class="bmChip'+(UI.color?'':' on')+'" data-color="">كل الألوان</button>'+S.bom.colors.map(function(co){return '<button type="button" class="bmChip'+(UI.color===co.key?' on':'')+'" data-color="'+esc(co.key)+'">'+dot(co.name,co.key)+esc(co.name)+'</button>'}).join('');
+    var h='';
+    cv.forEach(function(v){
+      if(!v.items.length)return;
+      var closed=UI.closed[v.i]&&!UI.q&&!UI.color,t=0;v.items.forEach(function(it){t+=itemTotal(it)});
+      h+='<section class="bmCg"><button type="button" class="bmCgH" data-tog="'+v.i+'"><span class="bmCgT">'+(v.c.sr?'<em>'+esc(v.c.sr)+'</em>':'')+esc(v.c.title)+'</span><span class="bmCgN">'+v.items.length+' بند · <b>'+fmtN(t)+'</b></span><span class="bmChev">'+(closed?'‹':'⌄')+'</span></button>';
+      if(!closed)h+='<div class="bmCgB">'+v.items.map(itemHtml).join('')+'</div>';
+      h+='</section>';
     });
-    var pr=q('dpbMatPrint');if(pr)pr.addEventListener('click',openPrint);
-    function dist(t){var dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;return Math.sqrt(dx*dx+dy*dy)}
-    var pin=null;
-    host.addEventListener('touchstart',function(e){
-      var sc=e.target.closest&&e.target.closest('.dpbMatScroll');
-      if(sc&&e.touches.length===2){ensure();pin={d:dist(e.touches),z:curZ()}}
-    },{passive:true});
-    host.addEventListener('touchmove',function(e){
-      if(!pin||e.touches.length!==2)return;
-      e.preventDefault();var sc=scEl();if(!sc)return;
-      var r=sc.getBoundingClientRect(),cx=(e.touches[0].clientX+e.touches[1].clientX)/2-r.left,cy=(e.touches[0].clientY+e.touches[1].clientY)/2-r.top;
-      var old=curZ();S.zoom=clampZ(pin.z*dist(e.touches)/pin.d);applyZoom(cx,cy,old);
-    },{passive:false});
-    host.addEventListener('touchend',function(e){if(e.touches.length<2){if(pin)save();pin=null}},{passive:true});
-    host.addEventListener('wheel',function(e){
-      if(!(e.ctrlKey||e.metaKey))return;var sc=scEl();if(!sc)return;e.preventDefault();ensure();
-      var r=sc.getBoundingClientRect();setZoom(curZ()*(e.deltaY<0?1.1:1/1.1),e.clientX-r.left,e.clientY-r.top);
-    },{passive:false});
-    var drag=null;
-    host.addEventListener('mousedown',function(e){
-      var sc=e.target.closest&&e.target.closest('.dpbMatScroll');if(!sc||e.button!==0)return;
-      drag={sc:sc,x:e.clientX,y:e.clientY,l:sc.scrollLeft,t:sc.scrollTop};sc.classList.add('grab');
-    });
-    document.addEventListener('mousemove',function(e){if(!drag)return;drag.sc.scrollLeft=drag.l-(e.clientX-drag.x);drag.sc.scrollTop=drag.t-(e.clientY-drag.y)});
-    document.addEventListener('mouseup',function(){if(drag){drag.sc.classList.remove('grab');drag=null}});
-    window.addEventListener('resize',function(){if(S&&(S.zoom==='fit'||S.zoom==null))applyZoom()});
+    q('bmList').innerHTML=h||'<div class="bmEmpty">مفيش بنود مطابقة للبحث أو الفلتر.</div>';
   }
-
-  /* ---------- print: white paper, A0-A4, orientation, auto-fit (same concept as the maps) ---------- */
-  function measure(sn,an){
-    var host=q('dpbMat'),d=document.createElement('div');
-    d.className='dpbMatMeasure';d.innerHTML=tableHtml(sn,an,true,{paper:true});host.appendChild(d);
-    var t=d.querySelector('table'),rh=[];
-    for(var i=0;i<t.rows.length;i++)rh.push(t.rows[i].offsetHeight);
-    var m={W:t.offsetWidth,H:t.offsetHeight,rh:rh};d.remove();return m;
-  }
-  function pageBlocks(sn,an){
-    var glue={};
-    sn.merges.forEach(function(m){for(var r=m[0]+1;r<=m[2];r++)glue[r]=1;if(m[0]===m[2]&&m[1]<=1&&m[3]>=sn.cols-1)glue[m[0]+1]=1});
-    var blocks=[],cur=null;
-    for(var r=an.dataStart;r<sn.rows;r++){if(!cur||!glue[r]){cur=[];blocks.push(cur)}cur.push(r)}
-    return blocks;
-  }
-  function plan(sn,an,m,size,orient,mode){
-    var pg=PG[size]||PG.A4,cand=orient==='auto'?['portrait','landscape']:[orient],best=null,hdr=[];
-    for(var i=0;i<an.dataStart;i++)hdr.push(i);
-    cand.forEach(function(o){
-      var pw=o==='portrait'?pg[0]:pg[1],ph=o==='portrait'?pg[1]:pg[0],aw=pw-2*MG,ah=ph-2*MG-HEAD-FOOT;
-      var Wm=m.W*PXMM,Hm=m.H*PXMM,sc,pages=[];
-      if(mode==='one'){sc=Math.min(aw/Wm,ah/(Hm*1.06),4);var all=[];for(var r=0;r<sn.rows;r++)all.push(r);pages=[all]}
-      else{
-        sc=Math.min(aw/Wm,4);var avail=ah/PXMM/sc/1.06,hh=0,hdr2=hdr.filter(function(r){return !sn.merges.some(function(g){return g[0]===r&&g[2]===r&&g[1]===0&&g[3]>=sn.cols-1})}),hh2=0;
-        hdr.forEach(function(r){hh+=m.rh[r]});hdr2.forEach(function(r){hh2+=m.rh[r]});
-        var cur=hdr.slice(),curH=hh,hasBody=false;
-        pageBlocks(sn,an).forEach(function(b){
-          var bh=0;b.forEach(function(r){bh+=m.rh[r]});
-          if(hasBody&&curH+bh>avail){pages.push(cur);cur=hdr2.slice();curH=hh2;hasBody=false}
-          cur=cur.concat(b);curH+=bh;hasBody=true;
-        });
-        pages.push(cur);
-      }
-      var c={o:o,pw:pw,ph:ph,aw:aw,ah:ah,s:sc,pages:pages,pt:10*sc};
-      if(!best||(mode==='one'?c.s>best.s:(c.pages.length<best.pages.length||(c.pages.length===best.pages.length&&c.s>best.s))))best=c;
-    });
-    return best;
-  }
-  function printCss(pl){
-    return '*{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}'+
-    'html,body{margin:0;padding:0;background:#fff;color:#000;font-family:Calibri,Carlito,Arial,sans-serif}'+
-    '@page{size:'+pl.pw+'mm '+pl.ph+'mm;margin:0}'+
-    '.mPg{width:'+pl.pw+'mm;height:'+pl.ph+'mm;padding:'+MG+'mm;display:flex;flex-direction:column;overflow:hidden;break-after:page;page-break-after:always;background:#fff;margin:0 auto}'+
-    '.mPg:last-child{break-after:auto;page-break-after:auto}'+
-    '.mH{height:'+HEAD+'mm;flex:none;overflow:hidden;display:flex;justify-content:space-between;align-items:flex-start;gap:6mm}'+
-    '.mH b{font-size:13pt;display:block}.mH span{font-size:7.5pt;color:#444;display:block;margin-top:.6mm}.mH i{font-style:normal;font-size:8pt;color:#444;white-space:nowrap}'+
-    '.mB{flex:1;min-height:0;overflow:hidden}.mZ{width:max-content}'+
-    '.mF{height:'+FOOT+'mm;flex:none;text-align:center;font-size:8pt;color:#555}'+
-    'table.dpbMatTbl{border-collapse:collapse;direction:ltr;text-align:left;font-family:Calibri,Carlito,Arial,sans-serif;background:#fff;color:#000}'+
-    'table.dpbMatTbl.fx{table-layout:fixed}'+
-    '.dpbMatTbl td{border:1px solid #000;padding:1px 4px;overflow:hidden;line-height:1.2;box-sizing:border-box}';
-  }
-  function buildPrint(P){
-    var sn=S.snap,an=analyze(sn),m=measure(sn,an),pl=plan(sn,an,m,P.size,P.orient,P.mode);
-    var d=new Date(),p2=function(x){return x<10?'0'+x:''+x},stamp=p2(d.getDate())+'/'+p2(d.getMonth()+1)+'/'+d.getFullYear();
-    var sub=an.cols.map(function(c){var e=S.counts[c.key];return c.color+' × '+(e&&e.v!=null?e.v:0)}).join('   ·   ');
-    var N=pl.pages.length;
-    var body=pl.pages.map(function(rows,i){
-      return '<div class="mPg"><div class="mH"><div><b>BOM — Material Requirements</b><span>Trackers: '+esc(sub)+'</span></div><i>'+stamp+'</i></div>'+
-        '<div class="mB"><div class="mZ" style="zoom:'+pl.s+'">'+tableHtml(sn,an,true,{paper:true,rows:rows})+'</div></div>'+
-        '<div class="mF">'+(i+1)+' / '+N+'</div></div>';
+  function itemHtml(it){
+    var tot=itemTotal(it);
+    var cells=S.bom.colors.map(function(co){
+      var v=it.q[co.key],on=UI.color===co.key;
+      if(v==null||v===0)return '<div class="bmQ off'+(on?' on':'')+'">'+dot(co.name,co.key)+'<span>'+esc(co.name)+'</span><b>—</b></div>';
+      return '<div class="bmQ'+(on?' on':'')+'">'+dot(co.name,co.key)+'<span>'+esc(co.name)+'</span><b>'+fmtN(v*cnt(co.key))+'</b><small>'+fmtN(v)+' / تراكر</small></div>';
     }).join('');
-    return {pl:pl,html:'<!DOCTYPE html><html><head><meta charset="utf-8"><title>BOM</title><style>'+printCss(pl)+'</style></head><body>'+body+'</body></html>'};
-  }
-  function runPrint(P){
-    var b;try{b=buildPrint(P)}catch(e){toast('تعذّر تجهيز الطباعة: '+(e&&e.message||e));return}
-    window.__dpbPrintOpts={landscape:b.pl.o==='landscape',size:P.size};
-    var w=window.open('','_blank');
-    if(!w){toast('المتصفح منع فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة وحاول تاني.');return}
-    w.document.write(b.html);w.document.close();
-    var did=false,go=function(){if(did)return;did=true;try{w.focus();w.print()}catch(_){}};
-    w.onload=go;setTimeout(go,400);
-  }
-  function toast(m){try{if(typeof showToast==='function'){showToast(m);return}}catch(_){}alert(m)}
-  function openPrint(){
-    ensure();var sn=S.snap,an=sn?analyze(sn):null;if(!an||!an.cols){toast('ارفع ملف BOM الأول.');return}
-    var m;try{m=measure(sn,an)}catch(e){toast('تعذّر قياس الجدول.');return}
-    var P={size:'A4',orient:'auto',mode:'one'};
-    try{var pf=JSON.parse(localStorage.getItem('DPB_MAT_PRINT_PREF')||'{}');if(PG[pf.size])P.size=pf.size;if(['auto','portrait','landscape'].indexOf(pf.orient)>=0)P.orient=pf.orient;if(pf.mode==='one'||pf.mode==='width')P.mode=pf.mode}catch(_){}
-    var native=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()&&Capacitor.Plugins&&Capacitor.Plugins.DpbPrint),bigOk=false;
-    var old=document.getElementById('dpbMatPrintDlg');if(old)old.remove();
-    var o=document.createElement('div');o.id='dpbMatPrintDlg';
-    o.style.cssText='position:fixed;inset:0;z-index:2147482000;background:rgba(3,10,20,.72);display:flex;align-items:center;justify-content:center;padding:14px';
-    var selSt='width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e';
-    o.innerHTML='<div dir="rtl" style="background:#0e1b2c;border:1px solid #29405e;border-radius:14px;padding:14px;max-width:420px;width:100%;color:#eef5ff;font-family:system-ui;text-align:right">'+
-      '<div style="font-weight:900;font-size:15px;margin-bottom:10px">طباعة جدول الماتريال</div>'+
-      '<div style="display:flex;gap:8px;margin-bottom:8px"><label style="flex:1;font-size:11px;color:#8fa7c2">الورق<select id="dpbMpSize" style="'+selSt+'"><option>A0</option><option>A1</option><option>A2</option><option>A3</option><option>A4</option></select></label>'+
-      '<label style="flex:1;font-size:11px;color:#8fa7c2">الاتجاه<select id="dpbMpOri" style="'+selSt+'"><option value="auto">تلقائي</option><option value="portrait">طولي</option><option value="landscape">عرضي</option></select></label></div>'+
-      '<label style="display:block;font-size:11px;color:#8fa7c2;margin-bottom:8px">التوزيع<select id="dpbMpMode" style="'+selSt+'"><option value="one">الجدول كله في صفحة واحدة</option><option value="width">ملء عرض الصفحة (أكتر من صفحة لو لزم)</option></select></label>'+
-      '<div id="dpbMpSum" style="font-size:12.5px;line-height:1.7;background:#0b1828;border:1px solid #29405e;border-radius:10px;padding:9px 11px;margin-bottom:10px"></div>'+
-      '<div style="display:flex;gap:8px"><button id="dpbMpGo" style="flex:1;padding:11px;border:0;border-radius:10px;background:#1f8f5f;color:#fff;font-weight:900">طباعة</button><button id="dpbMpNo" style="flex:1;padding:11px;border:1px solid #29405e;border-radius:10px;background:transparent;color:#eef5ff;font-weight:800">إلغاء</button></div></div>';
-    document.body.appendChild(o);
-    var refresh=function(){
-      var pl=plan(sn,an,m,P.size,P.orient,P.mode),ori=pl.o==='portrait'?'طولي':'عرضي';
-      var h=pl.pages.length+' صفحة '+P.size+' '+ori+'<br>حجم الخط على الورق ≈ '+(Math.round(pl.pt*10)/10)+' pt (الأصل 10 pt)';
-      if(pl.pt<5)h+='<br><span style="color:#f6c86b">الخط صغير؛ جرّب ورق أكبر أو «ملء عرض الصفحة».</span>';
-      if(!native)h+='<br><span style="color:#f6c86b">⚠ في المتصفح اختار من نافذة الطباعة نفس الورق والاتجاه: <b>'+P.size+' '+ori+'</b>.</span>';
-      var big=native&&!bigOk&&['A0','A1','A2'].indexOf(P.size)>=0,go=o.querySelector('#dpbMpGo');
-      go.disabled=big;go.style.opacity=big?'.45':'1';
-      if(big)h+='<br><span style="color:#f6c86b">⚠ الـ APK ده قديم وبيطبع A3 وA4 بس.</span>';
-      o.querySelector('#dpbMpSum').innerHTML=h;
-    };
-    var savePref=function(){try{localStorage.setItem('DPB_MAT_PRINT_PREF',JSON.stringify(P))}catch(_){}};
-    o.querySelector('#dpbMpSize').value=P.size;o.querySelector('#dpbMpOri').value=P.orient;o.querySelector('#dpbMpMode').value=P.mode;
-    o.querySelector('#dpbMpSize').onchange=function(e){P.size=e.target.value;savePref();refresh()};
-    o.querySelector('#dpbMpOri').onchange=function(e){P.orient=e.target.value;savePref();refresh()};
-    o.querySelector('#dpbMpMode').onchange=function(e){P.mode=e.target.value;savePref();refresh()};
-    o.querySelector('#dpbMpNo').onclick=function(){o.remove()};
-    o.querySelector('#dpbMpGo').onclick=function(){o.remove();runPrint({size:P.size,orient:P.orient,mode:P.mode})};
-    refresh();
-    if(native){try{var D=Capacitor.Plugins.DpbPrint;if(D&&typeof D.info==='function')D.info().then(function(){bigOk=true;refresh()}).catch(function(){})}catch(_){}}
+    return '<div class="bmIt"><div class="bmItTop">'+(it.no?'<span class="bmNo">'+esc(it.no)+'</span>':'')+'<div class="bmDesc">'+esc(it.desc||it.pn||'—')+'</div><div class="bmTot"><b>'+fmtN(tot)+'</b><small>إجمالي</small></div></div>'+
+      '<div class="bmMeta">'+(it.pn?'<span class="bmPn">'+esc(it.pn)+'</span>':'')+(it.col?'<span class="bmPill">'+esc(it.col)+'</span>':'')+(it.note?'<span class="bmNoteT">'+esc(it.note)+'</span>':'')+'</div>'+
+      '<div class="bmQs">'+cells+'</div></div>';
   }
 
   /* ---------- actions ---------- */
   async function onFile(ev){
-    var f=ev.target.files&&ev.target.files[0];ev.target.value='';if(!f)return;
-    ensure();q('dpbMatFile').textContent='Reading '+f.name+' …';
-    try{
-      var snap=await readBom(f);
-      S={state:'uploaded',fileName:f.name,snap:snap,counts:{},zoom:'fit'};
-      var an=analyze(snap);lastNote=null;
-      if(an.err)setNote('⚠️ '+esc(an.err),'err');
-      save();
-    }catch(err){
-      setNote('❌ '+esc(err&&err.message||err),'err');
-      if(S&&S.state==='empty'){S.fileName=''}
-    }
+    var f=ev.target.files&&ev.target.files[0];ev.target.value='';if(!f)return;ensure();
+    try{var bom=await readBom(f);S={state:'uploaded',fileName:f.name,bom:bom,counts:{}};lastNote=null;UI={q:'',color:'',cat:-1,closed:{}};save()}
+    catch(err){setNote('❌ '+esc(err&&err.message||err),'err')}
     render();
   }
-  function onApply(){
-    ensure();var an=analyze(S.snap);if(S.state!=='uploaded'||!an||!an.cols)return;
-    S.state='applied';lastNote=null;save();render();
+  function onClick(e){
+    var t=e.target;ensure();
+    var b=t.closest&&t.closest('[data-a]');
+    if(b&&!b.disabled){
+      var a=b.getAttribute('data-a');
+      if(a==='up'){var fi=q('bmFile');if(fi)fi.click()}
+      else if(a==='apply'&&S.state==='uploaded'){S.state='applied';lastNote=null;save();render()}
+      else if(a==='remove'&&S.state==='applied'){if(!window.confirm('تمسح ملف الماتريال (BOM) وأعداد التراكرات؟'))return;S=blank();lastNote=null;UI={q:'',color:'',cat:-1,closed:{}};save();render()}
+      else if(a==='print')openPrint();
+      return;
+    }
+    var r=t.closest&&t.closest('[data-reset]');
+    if(r){var e2=S.counts[r.getAttribute('data-reset')];if(e2){e2.manual=false;e2.v=null}save();render();return}
+    var c=t.closest&&t.closest('[data-cat]');
+    if(c){var i=Number(c.getAttribute('data-cat'));UI.cat=UI.cat===i?-1:i;renderDyn();return}
+    var k=t.closest&&t.closest('[data-color]');
+    if(k){UI.color=k.getAttribute('data-color')||'';renderDyn();return}
+    var g=t.closest&&t.closest('[data-tog]');
+    if(g){var n=Number(g.getAttribute('data-tog'));UI.closed[n]=!UI.closed[n];renderDyn();return}
   }
-  function onRemove(){
-    ensure();if(S.state!=='applied')return;
-    if(!window.confirm('تمسح ملف الماتريال (BOM) وأعداد التراكرات؟'))return;
-    S={state:'empty',fileName:'',snap:null,counts:{},zoom:'fit'};lastNote=null;save();render();
+  function onInput(e){
+    var t=e.target;if(!t||!t.matches)return;ensure();
+    if(t.matches('.bmCnt input')){
+      var d=t.value.replace(/[^0-9]/g,'').slice(0,6);if(d!==t.value)t.value=d;
+      var k=t.getAttribute('data-key'),en=S.counts[k]||(S.counts[k]={v:null,manual:false});
+      en.v=d===''?null:Number(d);en.manual=true;en.auto=false;save();
+      var sm=t.parentNode.querySelector('small');if(sm)sm.innerHTML='يدوي · <b data-reset="'+esc(k)+'">رجّع التلقائي</b>';
+      renderDyn();
+    }else if(t.id==='bmQ'){UI.q=t.value;renderDyn()}
   }
-  function onCount(ev){
-    var t=ev.target;if(!t.matches||!t.matches('#dpbMatCounts input'))return;
-    ensure();var d=t.value.replace(/[^0-9]/g,'').slice(0,6);if(d!==t.value)t.value=d;
-    var k=t.getAttribute('data-key'),e=S.counts[k]||(S.counts[k]={v:null,manual:false});
-    e.v=d===''?null:Number(d);e.manual=true;e.auto=false;save();
-    var sm=t.parentNode.querySelector('small');if(sm)sm.innerHTML='يدوي · <b data-reset="'+esc(k)+'">رجّع التلقائي</b>';
-    renderTableOnly();
+
+  /* ---------- print: white paper, same idea as the maps (paper size + orientation) ---------- */
+  function printHtml(size,ori){
+    var pg=PG[size]||PG.A4,pw=ori==='landscape'?pg[1]:pg[0],ph=ori==='landscape'?pg[0]:pg[1];
+    var fs=Math.round(8.5*Math.min(pg[0],pg[1])/210*10)/10,cols=S.bom.colors,cv=catView().filter(function(v){return v.items.length});
+    var d=new Date(),p2=function(x){return x<10?'0'+x:''+x},stamp=p2(d.getDate())+'/'+p2(d.getMonth()+1)+'/'+d.getFullYear();
+    var sub=cols.map(function(c){return esc(c.name)+' × '+cnt(c.key)}).join('  ·  ');
+    var filt=(UI.q?' · بحث: '+esc(UI.q):'')+(UI.color?' · لون: '+esc((cols.filter(function(c){return c.key===UI.color})[0]||{}).name||''):'');
+    var colTot={};cols.forEach(function(c){colTot[c.key]=0});var grand=0;
+    var body=cv.map(function(v){
+      var r='<tr class="cat"><td colspan="'+(6+cols.length)+'">'+(v.c.sr?esc(v.c.sr)+' — ':'')+esc(v.c.title)+'</td></tr>';
+      v.items.forEach(function(it){
+        var t=itemTotal(it);grand+=t;
+        r+='<tr><td class="c">'+esc(it.no)+'</td><td>'+esc(it.desc)+'</td><td>'+esc(it.pn)+'</td><td class="c">'+esc(it.col)+'</td>'+
+          cols.map(function(co){var n=need(it,co.key);if(n)colTot[co.key]+=n;return '<td class="n">'+(n==null?'':fmtN(n))+'</td>'}).join('')+
+          '<td class="n b">'+fmtN(t)+'</td><td class="nt">'+esc(it.note)+'</td></tr>';
+      });
+      return r;
+    }).join('');
+    var foot='<tr class="tot"><td colspan="4">TOTAL</td>'+cols.map(function(co){return '<td class="n">'+fmtN(colTot[co.key])+'</td>'}).join('')+'<td class="n b">'+fmtN(grand)+'</td><td></td></tr>';
+    var css='*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}'+
+      'html,body{margin:0;padding:0;background:#fff;color:#111;font-family:Calibri,Carlito,Arial,sans-serif}'+
+      '@page{size:'+pw+'mm '+ph+'mm;margin:10mm 9mm 12mm;@bottom-center{content:counter(page) " / " counter(pages);font-size:8pt;color:#666}}'+
+      '.bmH{display:flex;justify-content:space-between;gap:6mm;margin:0 0 3mm}.bmH b{font-size:'+(fs*1.6)+'pt;display:block}.bmH span{font-size:'+(fs*0.9)+'pt;color:#444;display:block;margin-top:.8mm}.bmH i{font-style:normal;font-size:'+fs+'pt;color:#444;white-space:nowrap}'+
+      'table.bmT{width:100%;border-collapse:collapse;font-size:'+fs+'pt}'+
+      '.bmT thead{display:table-header-group}.bmT tr{break-inside:avoid;page-break-inside:avoid}'+
+      '.bmT th{background:#1f4e78;color:#fff;border:1px solid #333;padding:1.2mm 1.6mm;text-align:center}'+
+      '.bmT td{border:1px solid #777;padding:.9mm 1.6mm;vertical-align:middle}'+
+      '.bmT td.c{text-align:center;white-space:nowrap}.bmT td.n{text-align:center;font-weight:600;white-space:nowrap}.bmT td.b{background:#eef3f8;font-weight:800}.bmT td.nt{font-size:'+(fs*0.85)+'pt;color:#444}'+
+      '.bmT tr.cat td{background:#d9e1f2;font-weight:800}.bmT tr.tot td{background:#1f4e78;color:#fff;font-weight:800;text-align:center}';
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>BOM</title><style>'+css+'</style></head><body>'+
+      '<div class="bmH"><div><b>BOM — Material Requirements</b><span>Trackers: '+sub+esc(filt)+'</span></div><i>'+stamp+'</i></div>'+
+      '<table class="bmT"><thead><tr><th>No.</th><th>Part Description</th><th>Part Number</th><th>Color</th>'+cols.map(function(c){return '<th>'+esc(c.name)+'</th>'}).join('')+'<th>Total</th><th>Note</th></tr></thead><tbody>'+body+foot+'</tbody></table></body></html>';
   }
-  function onReset(ev){
-    var b=ev.target.closest&&ev.target.closest('[data-reset]');if(!b)return;
-    ensure();var e=S.counts[b.getAttribute('data-reset')];if(e){e.manual=false;e.v=null}
-    save();render();
+  function runPrint(size,ori){
+    window.__dpbPrintOpts={landscape:ori==='landscape',size:size};
+    var w=window.open('','_blank');
+    if(!w){toast('المتصفح منع فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة وحاول تاني.');return}
+    w.document.write(printHtml(size,ori));w.document.close();
+    var did=false,go=function(){if(did)return;did=true;try{w.focus();w.print()}catch(_){}};
+    w.onload=go;setTimeout(go,400);
   }
+  function openPrint(){
+    var old=q('bmPrintDlg');if(old)old.remove();
+    var native=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()&&Capacitor.Plugins&&Capacitor.Plugins.DpbPrint),bigOk=false;
+    var o=document.createElement('div');o.id='bmPrintDlg';
+    o.style.cssText='position:fixed;inset:0;z-index:2147482000;background:rgba(3,10,20,.72);display:flex;align-items:center;justify-content:center;padding:14px';
+    var sel='width:100%;padding:8px;border-radius:8px;background:#0b1828;color:#eef5ff;border:1px solid #29405e';
+    o.innerHTML='<div dir="rtl" style="background:#0e1b2c;border:1px solid #29405e;border-radius:14px;padding:14px;max-width:380px;width:100%;color:#eef5ff;font-family:system-ui;text-align:right"><div style="font-weight:900;font-size:15px;margin-bottom:6px">طباعة الماتريال</div>'+
+      '<div style="font-size:11.5px;color:#8fa7c2;margin-bottom:10px">بيطبع اللي معروض دلوقتي (حسب البحث والفلتر).</div>'+
+      '<div style="display:flex;gap:8px;margin-bottom:10px"><label style="flex:1;font-size:11px;color:#8fa7c2">الورق<select id="bmPs" style="'+sel+'"><option>A4</option><option>A3</option><option>A2</option><option>A1</option><option>A0</option></select></label>'+
+      '<label style="flex:1;font-size:11px;color:#8fa7c2">الاتجاه<select id="bmPo" style="'+sel+'"><option value="portrait">طولي</option><option value="landscape">عرضي</option></select></label></div>'+
+      '<div id="bmPw" style="font-size:11.5px;color:#f6c86b;line-height:1.7;margin-bottom:8px"></div>'+
+      '<div style="display:flex;gap:8px"><button id="bmPg" style="flex:1;padding:11px;border:0;border-radius:10px;background:#1f8f5f;color:#fff;font-weight:900">طباعة</button><button id="bmPn" style="flex:1;padding:11px;border:1px solid #29405e;border-radius:10px;background:transparent;color:#eef5ff;font-weight:800">إلغاء</button></div></div>';
+    document.body.appendChild(o);
+    var ps=o.querySelector('#bmPs'),po=o.querySelector('#bmPo'),go=o.querySelector('#bmPg');
+    var chk=function(){var big=native&&!bigOk&&['A0','A1','A2'].indexOf(ps.value)>=0;go.disabled=big;go.style.opacity=big?'.45':'1';
+      o.querySelector('#bmPw').innerHTML=big?'⚠ الـ APK ده قديم وبيطبع A3 وA4 بس.':(native?'':'⚠ في المتصفح اختار نفس الورق والاتجاه من نافذة الطباعة.')};
+    ps.onchange=chk;chk();
+    o.querySelector('#bmPn').onclick=function(){o.remove()};
+    go.onclick=function(){var s=ps.value,r=po.value;o.remove();runPrint(s,r)};
+    if(native){try{var D=Capacitor.Plugins.DpbPrint;if(D&&typeof D.info==='function')D.info().then(function(){bigOk=true;chk()}).catch(function(){})}catch(_){}}
+  }
+
   function init(){
-    var host=q('dpbMat');if(!host||host.getAttribute('data-ready'))return;
+    var host=q('dpbBm');if(!host||host.getAttribute('data-ready'))return;
     host.setAttribute('data-ready','1');
-    q('dpbMatUp').onclick=function(){q('dpbMatFile_in').click()};
-    q('dpbMatFile_in').addEventListener('change',onFile);
-    q('dpbMatApply').onclick=onApply;q('dpbMatRemove').onclick=onRemove;
-    q('dpbMatCounts').addEventListener('input',onCount);
-    q('dpbMatCounts').addEventListener('click',onReset);
-    bindZoom();
+    host.addEventListener('click',onClick);host.addEventListener('input',onInput);
+    host.addEventListener('change',function(e){if(e.target&&e.target.id==='bmFile')onFile(e)});
     document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('.dpbAdminTabBtn[data-tab="material"]'))setTimeout(render,0)});
     render();
   }
-  window.__dpbMaterialRender=render;
+  window.__dpbBmRender=render;
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
 </script>
