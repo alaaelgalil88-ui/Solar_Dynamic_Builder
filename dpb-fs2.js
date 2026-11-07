@@ -87,7 +87,7 @@
     if (/^(users|projects)$/.test(k)) return 'users';
     if (/^basecells$/.test(k)) return 'base';
     if (/^master$/.test(k)) return 'master';
-    if (/^(msga_|msgs_|fcm_)/.test(k)) return 'msg';
+    if (/^(msga_|msgs_|fcm_|matbom_|matst_)/.test(k)) return 'msg';
     if (/^(buildresult|buildmeta|mapcat)/.test(k)) return 'build';
     if (/^(xlfile_|mapsnap_)/.test(k)) return 'xl';
     if (/^rest/.test(k)) return 'rest';
@@ -981,7 +981,7 @@
   }
   window.__dpbCutOps = cutOps;
   var KV_CHUNK = 600000;
-  function kvMine(key) { return /^(mapcat|mapsnap_|xlfile_|msga_|msgs_|fcm_)/.test(String(key || '')) || String(key || '') === 'master'; }   // msga_/msgs_ = admin<->supervisor messages (one writer per doc)
+  function kvMine(key) { return /^(mapcat|mapsnap_|xlfile_|msga_|msgs_|fcm_|matbom_|matst_)/.test(String(key || '')) || String(key || '') === 'master'; }   // msga_/msgs_ = admin<->supervisor messages (one writer per doc); matbom_<project> = Material list published by the admin, matst_<project>_<user> = storekeeper deliveries (display-only, never part of a backup)
   function kvDoc(key) {
     var k = String(key).replace(/[^A-Za-z0-9_\-]/g, '_');
     if (/^(msg[as]|fcm)_/.test(k)) return 'dpb2/' + nsName() + '/kv/' + k;   // messages follow the supervisor account, not the open project
@@ -1526,6 +1526,7 @@
      Restore = make Firestore equal to the file: preview first, a safety copy of the CURRENT state is downloaded before anything is written, writes go in size-limited batches,
      Excel-file parts are written before their pointer and removed after it, so a reader never sees a half file. ---- */
   var BK_COLLS = ['rows', 'kv'], BK_FORMAT = 'dpb-fs2-backup', bkAutoRun = false, BK_SRV_GAP = 6 * 3600000;
+  var BK_MAT_RE = /(^|__)(matbom_|matst_)/;   /* Material tab data is display-only and stays outside every backup / restore */
   function bkP(c) { return 'dpb2/' + nsName() + '/' + c; }
   function bkStamp() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()); }
   function stable(v) { if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']'; if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ':' + stable(v[k]); }).join(',') + '}'; return JSON.stringify(v); }
@@ -1540,7 +1541,7 @@
     BK_COLLS.forEach(function (c) {
       p = p.then(function () { return a.listCache(bkP(c)); }).then(function (r) {
         if (!r) throw new Error('no-cache');
-        out[c] = {}; tot += r.length; r.forEach(function (d) { out[c][d.id] = clean(d.data); });
+        out[c] = {}; tot += r.length; r.forEach(function (d) { if (BK_MAT_RE.test(String(d.id))) return; out[c][d.id] = clean(d.data); });
       });
     });
     return p.then(function () {
@@ -1558,7 +1559,7 @@
         if (bkAutoRun && Date.now() - (Number(ls('dpb_fs2_bk_srv_last', '0')) || 0) < BK_SRV_GAP) throw Object.assign(new Error('bk-skip-server'), { code: 'bk-skip' });
         bkStep('read-server'); lsSet('dpb_fs2_bk_src', 'server'); lsSet('dpb_fs2_bk_srv_last', String(Date.now()));
         var out = {}, tot = 0, p = Promise.resolve();
-        BK_COLLS.forEach(function (c) { p = p.then(function () { return a.list(bkP(c)); }).then(function (r) { out[c] = {}; tot += r.length; r.forEach(function (d) { out[c][d.id] = clean(d.data); }); }); });
+        BK_COLLS.forEach(function (c) { p = p.then(function () { return a.list(bkP(c)); }).then(function (r) { out[c] = {}; tot += r.length; r.forEach(function (d) { if (BK_MAT_RE.test(String(d.id))) return; out[c][d.id] = clean(d.data); }); }); });
         return p.then(function () { lsSet('dpb_fs2_bk_docs', String(tot)); return out; });
       });
     });
