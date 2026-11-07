@@ -23457,16 +23457,28 @@ body.print-activity #dpbBottomBar{display:none!important}
       var j=-1;items.forEach(function(it,x){if(it.k===mk)j=x});
       if(j>=0){assign[i]=j;used[j]++;for(var a=0;a<zk.length;a++)rem[j][a]-=fv[i][a]}
     });
+    var nl=items.map(function(){return false}),codesOf=items.map(itemCodes);
+    sc.fills.forEach(function(f,i){ /* link by the BOM Color column first: colour name <-> map fill */
+      if(assign[i]!==undefined||!fv[i].some(function(x){return x>0}))return;
+      var fc=fillCode(f),white=(f==='none'||fc==='WH'),c=[];
+      items.forEach(function(it,j){
+        var col=String(it.col==null?'':it.col).trim(),none=!col||/^no\s*colou?r$/i.test(col),cs=codesOf[j];
+        if(none){if(white)c.push(j)}
+        else if(cs.length===1&&(cs[0]===fc||(fc==='BR'&&cs[0]==='RD')))c.push(j);
+      });
+      if(c.length===1){var j=c[0];assign[i]=j;used[j]++;nl[j]=true;for(var a=0;a<zk.length;a++)rem[j][a]-=fv[i][a]}
+    });
     var free=[];sc.fills.forEach(function(f,i){if(assign[i]===undefined&&fv[i].some(function(x){return x>0}))free.push(i)});
     var sols=[],cur={},steps=0;
     (function rec(p){
       if(sols.length>20||steps++>300000)return;
       if(p===free.length){
-        for(var j=0;j<items.length;j++){var zero=rem[j].every(function(x){return x===0}),same=rem[j].every(function(x,a){return x===qv[j][a]});if(!(zero||(same&&used[j]===0)))return}
+        for(var j=0;j<items.length;j++){if(nl[j])continue;var zero=rem[j].every(function(x){return x===0}),same=rem[j].every(function(x,a){return x===qv[j][a]});if(!(zero||(same&&used[j]===0)))return}
         sols.push(free.map(function(i){return cur[i]}));return;
       }
       var i=free[p];
       for(var j=0;j<items.length;j++){
+        if(nl[j])continue;
         var ok=true;for(var a=0;a<zk.length;a++)if(fv[i][a]>rem[j][a]){ok=false;break}
         if(!ok)continue;
         for(var a2=0;a2<zk.length;a2++)rem[j][a2]-=fv[i][a2];used[j]++;cur[i]=j;rec(p+1);used[j]--;
@@ -23477,7 +23489,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     if(sols.length===1)free.forEach(function(i,p){assign[i]=sols[0][p]});
     else if(sols.length>1)amb=true;
     else{ // no exact grouping: link only the colours that match one item exactly
-      free.forEach(function(i){var c=[];items.forEach(function(it,j){if(fv[i].every(function(x,a){return x===qv[j][a]}))c.push(j)});if(c.length===1)assign[i]=c[0]});
+      free.forEach(function(i){var c=[];items.forEach(function(it,j){if(nl[j])return;if(fv[i].every(function(x,a){return x===qv[j][a]}))c.push(j)});if(c.length===1)assign[i]=c[0]});
     }
     var rows=items.map(function(it,j){
       var fl=[];sc.fills.forEach(function(f,i){if(assign[i]===j)fl.push(f)});
@@ -23502,7 +23514,9 @@ body.print-activity #dpbBottomBar{display:none!important}
       });
     });
     var bad=0;rows.forEach(function(r){if(r.fills.length)r.zs.forEach(function(z){if(z.exp!==z.act)bad++})});
-    return {proc:proc,rows:rows,unl:unl,anom:anom,amb:amb,um:sc.um,items:items,ok:!bad&&!amb&&!unl.length,bad:bad};
+    var nolink=0;rows.forEach(function(r){if(!r.fills.length&&r.zs.some(function(z){return z.exp>0}))nolink++});
+    var ign=[];sc.fills.forEach(function(f,i){if(assign[i]===-1){var tt=0;zk.forEach(function(k){var z=sc.zones[k];if(z)tt+=z.tot[f]||0});if(tt)ign.push({f:f,tot:tt})}});
+    return {proc:proc,rows:rows,unl:unl,anom:anom,amb:amb,um:sc.um,items:items,ok:!bad&&!amb&&!unl.length&&!nolink,bad:bad,nolink:nolink,ign:ign};
   }
   function needZones(r,x){
     var zs=S.bom.colors.filter(function(c){return x.it.q[c.key]>0});
@@ -23528,7 +23542,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     if(r.nocolor)return '';
     if(r.skip)return head+'</div><div class="bmMapNote">'+esc(r.skip)+'</div></div>';
     if(r.err)return head+'</div><div class="bmMapNote">'+esc(r.err)+'</div></div>';
-    head+='<span class="'+(r.ok?'ok':'warn')+'">'+(r.ok?'✓ مطابق':'⚠ '+(r.bad+r.unl.length+(r.amb?1:0)+(r.man&&r.man.length?1:0)+((r.mode==='cell'&&r.anom)?r.anom.length:0))+' ملاحظة')+'</span></div>';
+    head+='<span class="'+(r.ok?'ok':'warn')+'">'+(r.ok?'✓ مطابق':'⚠ '+(r.bad+r.unl.length+(r.nolink||0)+(r.amb?1:0)+(r.man&&r.man.length?1:0)+((r.mode==='cell'&&r.anom)?r.anom.length:0))+' ملاحظة')+'</span></div>';
     var h=head;
     if(r.amb)h+='<div class="bmMapNote">فيه أكتر من طريقة لربط الألوان بالبنود — حدّد الألوان يدويًا تحت.</div>';
     var manH={};
@@ -23565,7 +23579,7 @@ body.print-activity #dpbBottomBar{display:none!important}
           var z=x.zs.filter(function(y){return y.k===k})[0]||{exp:0,act:0,fl:[]},lk=z.fl&&z.fl.length>0,okz=z.exp===z.act,chip;
           if(lk)chip='<span class="bmCz '+(okz?'ok':'bad')+'">'+fmtN(z.act)+(okz?' ✓':' / '+fmtN(z.exp)+' ('+(z.act-z.exp>0?'+':'−')+fmtN(Math.abs(z.act-z.exp))+')')+'</span>';
           else if(r.scan&&!zz)chip='<span class="bmCz warn">الزون مش في الخريطة</span>';
-          else chip='<span class="bmCz warn">'+(r.mode==='cell'?'محتاج عينة':'لسه مش مربوط بلون')+'</span>';
+          else chip='<span class="bmCz warn">'+(r.mode==='cell'?'محتاج عينة':(r.ign&&r.ign.length?'لونه متجاهَل يدويًا':'مفيش خلايا بلون «'+esc(String(x.it.col||'').trim()||'بدون لون')+'» في الزون ده'))+'</span>';
           return '<div class="bmCkR'+(lk?'':' off')+'"><div class="bmCkT">'+(x.it.no?'<em>'+esc(x.it.no)+'</em>':'')+'<span>'+esc(x.it.desc||x.it.pn||'—')+'</span><s>'+(z.fl||[]).map(swatch).join('')+'</s></div><div class="bmCkZ"><span class="bmCz ok" style="background:none;color:#8fa7c2;direction:rtl">'+fmtN(x.it.q[k])+' لكل تراكر</span>'+chip+'</div></div>';
         }).join('');
         if(manH[k])body+='<div class="bmCkS">عرّف خلايا العينة</div><div class="bmMapNote">اختار البند وبعدين دوس على خلاياه في العينة. اللي يفضل بند واحد بيتحسب لوحده.</div>'+manH[k];
@@ -23577,6 +23591,7 @@ body.print-activity #dpbBottomBar{display:none!important}
         return '<div class="bmCkU">'+swatch(u.f)+'<span>'+fmtN(u.tot)+' خلية</span><select data-fm="'+esc(r.proc+'|'+u.f)+'"><option value="">— اختار البند —</option>'+r.items.map(function(it){return '<option value="'+esc(it.k)+'">'+esc((it.no?it.no+' · ':'')+String(it.desc||it.pn).slice(0,34))+'</option>'}).join('')+'<option value="-">— تجاهل اللون ده —</option></select></div>';
       }).join('');
     }
+    if(r.ign&&r.ign.length)h+='<div class="bmCkS">ألوان متجاهَلة يدويًا</div><div class="bmCkA">'+r.ign.map(function(u){return swatch(u.f)+'<span>'+fmtN(u.tot)+' خلية</span>'}).join('')+'</div><button type="button" class="bmCkRst" data-fmreset="'+esc(r.proc)+'">↺ رجّع الألوان المتجاهَلة</button>';
     if(r.anom.length){
       h+='<div class="bmCkS">تراكرات مختلفة عن عينة زونها</div>'+r.anom.slice(0,8).map(function(a){
         var co=S.bom.colors.filter(function(c){return c.key===a.k})[0]||{name:a.k,key:a.k};
@@ -23836,7 +23851,8 @@ body.print-activity #dpbBottomBar{display:none!important}
       return '<button type="button" class="bmCat'+(UI.cat===i?' on':'')+'" data-cat="'+i+'"><b class="fit" data-l="2" data-min="8.5" style="font-size:12px">'+esc(c.title)+'</b><span class="fit" data-min="7.5" style="font-size:10px">'+c.items.length+' بند</span><span class="fit" data-min="7.5" style="font-size:10px">'+fmtPct(cs[i].p)+' وصل</span><i style="width:'+Math.round(cs[i].p)+'%"></i></button>';
     }).join('');
     q('bmChips').innerHTML='<div class="bmRow"><button type="button" class="bmChip'+(UI.color?'':' on')+'" data-color="">كل الألوان</button>'+S.bom.colors.map(function(co){return '<button type="button" class="bmChip'+(UI.color===co.key?' on':'')+'" data-color="'+esc(co.key)+'" title="'+esc(co.name)+'" aria-label="'+esc(co.name)+'">'+dot(co.name,co.key)+'</button>'}).join('')+'</div>'+
-      '<div class="bmRow">'+[['','الكل'],['miss','ناقص ('+nMiss+')'],['done','اكتمل ('+nDone+')']].map(function(x){return '<button type="button" class="bmChip'+(UI.st===x[0]?' on':'')+'" data-st="'+x[0]+'">'+x[1]+'</button>'}).join('')+'</div>';
+      '<div class="bmRow">'+[['','الكل'],['miss','ناقص ('+nMiss+')'],['done','اكتمل ('+nDone+')']].map(function(x){return '<button type="button" class="bmChip'+(UI.st===x[0]?' on':'')+'" data-st="'+x[0]+'">'+x[1]+'</button>'}).join('')+'</div>'+
+      '<div class="bmRow"><button type="button" id="bmPub" class="bmChip" data-bmpub="1">'+pubTxt()+'</button></div>';
     S.bom.cats.forEach(function(c,i){var e=document.querySelector('.bmCgN[data-cg="'+i+'"] em');if(e)e.textContent='📦'+fmtPct(cs[i].p)});
     fitAll();
   }
@@ -23862,9 +23878,21 @@ body.print-activity #dpbBottomBar{display:none!important}
     return {v:1,colors:S.bom.colors,counts:cn,css:PLAN_CSS||{},cats:S.bom.cats.map(function(c){return {sr:c.sr,title:c.title,items:c.items.map(function(it){return {k:it.k,no:it.no,desc:it.desc,pn:it.pn,col:it.col,note:it.note,q:it.q}})}})};
   }
   function pubSoon(){clearTimeout(pubT);pubT=setTimeout(pubNow,1500)}
-  function pubNow(){
-    var pk=pubPack();if(!pk)return Promise.resolve();var js=JSON.stringify(pk);if(js===pubOk)return Promise.resolve();
-    return kvp({action:'kvPatch',key:'matbom_'+pid(),set:{d:js,t:new Date().toISOString()},replace:true}).then(function(r){if(r&&r.ok)pubOk=js;else{clearTimeout(pubT);pubT=setTimeout(pubNow,30000)}});
+  var pubSt={s:'',t:0};
+  function pubTxt(){
+    if(pubSt.s==='wait')return '⏳ بيتنشر للمخزن…';
+    if(pubSt.s==='ok'){var d=new Date(pubSt.t);return '✓ اتنشرت للمخزن '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}
+    if(pubSt.s==='fail')return '✗ فشل النشر — دوس لإعادة المحاولة';
+    return '📤 نشر القايمة لأمين المخزن';
+  }
+  function pubChip(){var e=document.getElementById('bmPub');if(e){e.textContent=pubTxt();e.className='bmChip'+(pubSt.s==='fail'?' warn':(pubSt.s==='ok'?' on':''))}}
+  function pubNow(force){
+    var pk=pubPack();if(!pk)return Promise.resolve();var js=JSON.stringify(pk);if(js===pubOk&&force!==true){if(pubSt.s!=='ok'){pubSt={s:'ok',t:pubSt.t||Date.now()};pubChip()}return Promise.resolve()}
+    pubSt.s='wait';pubChip();
+    return kvp({action:'kvPatch',key:'matbom_'+pid(),set:{d:js,t:new Date().toISOString()},replace:true}).then(function(r){
+      if(r&&r.ok){pubOk=js;pubSt={s:'ok',t:Date.now()}}else{pubSt.s='fail';clearTimeout(pubT);pubT=setTimeout(pubNow,30000)}
+      pubChip();
+    });
   }
   function pullSoon(){if(Date.now()-pullT<15000)return;pullT=Date.now();pullNow()}
   async function pullNow(){
@@ -23886,7 +23914,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     stNeedRe=false;renderSummary();renderList();
   }
   window.__dpbBmPull=function(){pullT=0;return pullNow()};
-  window.__dpbBmPublish=function(){return pubNow()};
+  window.__dpbBmPublish=function(){return pubNow(true)};
   setInterval(function(){var h=q('dpbBm');if(h&&h.getClientRects().length){pullSoon();stRerender()}},20000);
 
   function openCatNow(cv){
@@ -23995,6 +24023,10 @@ body.print-activity #dpbBottomBar{display:none!important}
     if(ct){var ck0=ct.getAttribute('data-ckt');UI.ckOne=(UI.ckOne===ck0?'':ck0);renderCheck();return}
     var dp=t.closest&&t.closest('[data-dmp]');
     if(dp){var nm=dp.getAttribute('data-dmp'),cur=dmProcNames().slice(),ix2=cur.indexOf(nm);if(ix2>=0)cur.splice(ix2,1);else cur.push(nm);S.dmProcs=cur;save();renderDyn();return}
+    var bp=t.closest&&t.closest('[data-bmpub]');
+    if(bp){pubNow(true);return}
+    var fr=t.closest&&t.closest('[data-fmreset]');
+    if(fr){var fp=fr.getAttribute('data-fmreset')+'|';Object.keys(S.fillMap).forEach(function(k){if(k.indexOf(fp)===0&&S.fillMap[k]==='-')delete S.fillMap[k]});save();renderDyn();return}
     var cr=t.closest&&t.closest('[data-cmreset]');
     if(cr){var pp=cr.getAttribute('data-cmreset')+'|';Object.keys(S.cellMap).forEach(function(k){if(k.indexOf(pp)===0)delete S.cellMap[k]});save();renderDyn();return}
     var ur=t.closest&&t.closest('[data-ureset]');
@@ -24188,6 +24220,7 @@ window.__dpbIsStore=function(a){
     return ids.indexOf('__store')>=0&&ids.indexOf('*')<0;
   }catch(_){return false}
 };
+var pullSt='';
 var U='',B=null,ST={rcv:{},av:{},dirty:false,t:''},UI={cat:-1,zone:{},add:''},pushT=null,tick=null,loadedFor='';
 var CN={black:'#111',white:'#fff',red:'#e53935',purple:'#7e3fa8',pink:'#ff4fa3',yellow:'#ffe600',orange:'#ff9800',darkblue:'#1f3a7a',lightblue:'#9cc2e5',darkgreen:'#385623',lightgreen:'#a8d08d',brown:'#8d5524',nocolor:'#fff',green:'#2e9d4a',blue:'#2d6cdf',gray:'#999',grey:'#999'};
 function css(key){var c=B&&B.css&&B.css[key];if(c)return c;return CN[String(key).toLowerCase().replace(/[^a-z]/g,'')]||'#7a8ba3'}
@@ -24211,9 +24244,9 @@ async function push(){
 }
 function chip(){var e=$('stChip');if(!e)return;e.className='stChip'+(ST.dirty?' w':'');e.textContent=ST.dirty?'⏳ محفوظ على الجهاز':'✓ وصل للإدارة'}
 async function pullBom(){
-  var r=await post({action:'kvGet',key:KB+pid()});if(!r||!r.ok)return false;
-  try{var doc=JSON.parse(r.json||'{}');if(doc&&doc.d){var nb=JSON.parse(doc.d);B=nb;lsSet('DPB_MATBOM_'+pid(),doc.d);return true}}catch(_){}
-  return false;
+  var r=await post({action:'kvGet',key:KB+pid()});if(!r){pullSt='net';return false}if(!r.ok){pullSt='err';return false}
+  try{var doc=JSON.parse(r.json||'{}');if(doc&&doc.d){var nb=JSON.parse(doc.d);B=nb;lsSet('DPB_MATBOM_'+pid(),doc.d);pullSt='ok';return true}}catch(_){}
+  pullSt='none';return false;
 }
 async function pullMine(){
   if(ST.dirty)return false;
@@ -24270,7 +24303,7 @@ function render(){
   var proj='';try{var cp=(window.__dpbProjectRecords||[]).find(function(x){return x.id===window.__dpbActiveProjectId});proj=cp&&cp.name?cp.name:''}catch(_){}
   var h='<div class="stHead"><b>📦 أمين المخزن<small>'+esc(U)+(proj?' · '+esc(proj):'')+'</small></b><span id="stChip" class="stChip">…</span></div>';
   if(!B||!B.cats||!B.cats.length){
-    h+='<div class="stEmpty">الإدارة لسه ما نشرتش قايمة الماتريال للمشروع ده.<br>افتح الإنترنت وجرّب تاني.<br><button class="stBtn g" data-sr="1" style="margin-top:12px">تحديث</button></div>';
+    h+='<div class="stEmpty">'+(pullSt==='net'?'مش قادر أوصل للسيرفر.<br>اتأكد من الإنترنت وجرّب تاني.':(pullSt==='err'?'السيرفر ما ردّش صح.<br>جرّب تاني بعد شوية.':'الإدارة لسه ما نشرتش قايمة الماتريال للمشروع ده.<br>اطلب من الأدمن يفتح تاب الماتريال وهو أونلاين، وبعدها دوس تحديث.'))+'<br><button class="stBtn g" data-sr="1" style="margin-top:12px">تحديث</button></div>';
     r.innerHTML=h;chip();return;
   }
   if(UI.cat<0||!B.cats[UI.cat])UI.cat=0;
@@ -24311,7 +24344,7 @@ function onInput(e){
   }
 }
 async function refresh(){
-  var a=await pullBom(),b=await pullMine();if(a||b)render();
+  var a=await pullBom(),b=await pullMine();if(a||b||!B||!B.cats||!B.cats.length)render();
 }
 window.__dpbStoreOpen=function(user){
   U=String(user||'');var r=$('dpbStoreRoot');if(!r)return;
