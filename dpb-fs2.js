@@ -8,6 +8,13 @@
   /* startup timing: how long each stage of opening the app took (ms since the page started). The last 6 launches stay on the device and show in the orange-badge details box. */
   var STUP = { fcp: 0, dcl: 0, load: 0, fb: 0 };
   function stNow() { return Math.round(performance.now()); }
+  function stText() {   // lines for the "app opening time" box in the cloud/backup screen
+    var f1 = function (ms) { return (ms / 1000).toFixed(1); }, L = [];
+    L.push('الفتحة الحالية: أول ظهور ' + f1(STUP.fcp) + ' | الصفحة جاهزة ' + f1(STUP.load) + ' | Firebase جاهز ' + (STUP.fb ? f1(STUP.fb) : '—'));
+    try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.slice().reverse().forEach(function (r) { L.push('• أول ظهور ' + f1(r.fcp) + ' | الصفحة جاهزة ' + f1(r.load) + ' | Firebase جاهز ' + (r.fb ? f1(r.fb) : '—') + (r.apk ? ' (APK)' : ' (متصفح)')); }); } catch (e) {}
+    L.push('الأرقام بالثواني من لحظة بداية الفتح.');
+    return L.join('<br>');
+  }
   try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.name === 'first-contentful-paint') STUP.fcp = Math.round(e.startTime); }); }).observe({ type: 'paint', buffered: true }); } catch (e) {}
   document.addEventListener('DOMContentLoaded', function () { STUP.dcl = stNow(); });
   window.addEventListener('load', function () { STUP.load = stNow(); setTimeout(function () { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.push({ t: Date.now(), fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb: STUP.fb, apk: !!window.Capacitor }); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }, 8000); });
@@ -2243,9 +2250,11 @@
       '</details>' +
       '<div class="fs2Sec">الحالة</div>' +
       boxH('حالة الطبقة', 'dpbFs2State') +
-      boxH('رسائل', 'dpbFs2Msg');
+      boxH('رسائل', 'dpbFs2Msg') +
+      boxH('⏱️ زمن فتح التطبيق', 'dpbFs2Startup', stText());
     var old = document.getElementById('dpbFsCard');
     if (old && old.parentNode === host) host.insertBefore(c, old.nextSibling); else host.appendChild(c);
+    setInterval(function () { var e = document.getElementById('dpbFs2Startup'); if (e) e.innerHTML = stText(); }, 2000);   // the card is built at app start: keep the opening-time box current
     function paint() { paintState(); if (on() && !store) getStore().catch(function () {}); }
     // ---- connection report (live) ----
     function hms(t) { var d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }
