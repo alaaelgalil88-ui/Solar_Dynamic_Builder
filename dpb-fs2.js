@@ -6,20 +6,56 @@
 (function () {
   'use strict';
   /* startup timing: how long each stage of opening the app took (ms since the page started). The last 6 launches stay on the device and show in the orange-badge details box. */
-  var STUP = { id: Date.now(), fcp: 0, dcl: 0, load: 0, fb0: 0, sdk: 0, db: 0, rs: 0, how: '', auth: 0, fb: 0 };
+  var STUP = { id: Date.now(), fcp: 0, dcl: 0, load: 0, fb0: 0, sdk: 0, db: 0, rs: 0, how: '', al: '', auth: 0, fb: 0, splash: 0, lt: { n: 0, ms: 0, top: [] }, lo: [], tm: [] };
   function stNow() { return Math.round(performance.now()); }
-  function stSave() { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'), r = { t: STUP.id, fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb0: STUP.fb0, sdk: STUP.sdk, db: STUP.db, rs: STUP.rs, how: STUP.how, auth: STUP.auth, fb: STUP.fb, apk: !!window.Capacitor }, k = -1; a.forEach(function (x, n) { if (x.t === STUP.id) k = n; }); if (k >= 0) a[k] = r; else a.push(r); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
+  var earlyRes, earlyP = new Promise(function (r) { earlyRes = r; });   // resolves with a read-from-this-phone-only helper as soon as Firestore exists (does not wait for sign-in / network)
+  function stSave() { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'), r = { t: STUP.id, fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb0: STUP.fb0, sdk: STUP.sdk, db: STUP.db, rs: STUP.rs, how: STUP.how, al: STUP.al, splash: STUP.splash, lt: STUP.lt, lo: STUP.lo, tm: STUP.tm, auth: STUP.auth, fb: STUP.fb, apk: !!window.Capacitor }, k = -1; a.forEach(function (x, n) { if (x.t === STUP.id) k = n; }); if (k >= 0) a[k] = r; else a.push(r); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
   function stMark(n) { if (!STUP[n]) { STUP[n] = stNow(); if (STUP.load) stSave(); } }   // after the page finished loading every later step updates this launch's saved row at once
   try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.name === 'first-contentful-paint') STUP.fcp = Math.round(e.startTime); }); }).observe({ type: 'paint', buffered: true }); } catch (e) {}
   document.addEventListener('DOMContentLoaded', function () { STUP.dcl = stNow(); });
-  window.addEventListener('load', function () { STUP.load = stNow(); setTimeout(stSave, 1500); });
+  // stutter measurement (timing only, changes nothing): every task that blocks the screen > 50 ms in the first 12 s, and the moment the loading splash starts to fade
+  try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.startTime > 12000) return; var L = STUP.lt; L.n++; L.ms += e.duration; L.top.push([Math.round(e.startTime), Math.round(e.duration)]); L.top.sort(function (a, b) { return b[1] - a[1]; }); if (L.top.length > 4) L.top.length = 4; }); }).observe({ type: 'longtask', buffered: true }); } catch (e) {}
+  // WHO is freezing the screen (timing only, changes nothing): setTimeout/setInterval callbacks that run > 200 ms are recorded with the start of their code; and, where the WebView supports it, the browser's own Long-Animation-Frame report (which script/function, and how much was style/layout instead of JavaScript)
+  (function () {
+    function keep(list, row, key) { list.push(row); list.sort(function (a, b) { return b[key] - a[key]; }); if (list.length > 4) list.length = 4; }
+    try {
+      var oST = window.setTimeout, oSI = window.setInterval;
+      var wrap = function (kind, orig) { return function (fn, ms) {
+        if (typeof fn !== 'function' || performance.now() > 14000) return orig.apply(this, arguments);
+        var rest = Array.prototype.slice.call(arguments, 2), d = +ms || 0;
+        var w = function () { var t = performance.now(); try { return fn.apply(this, arguments); } finally { var dt = performance.now() - t; if (dt > 200 && t < 40000) keep(STUP.tm, [Math.round(t), Math.round(dt), kind + ' ' + d + 'ms', String(fn).replace(/\s+/g, ' ').slice(0, 100)], 1); } };
+        return orig.apply(this, [w, ms].concat(rest));
+      }; };
+      window.setTimeout = wrap('timeout', oST); window.setInterval = wrap('interval', oSI);
+    } catch (e) {}
+    try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) {
+      if (e.startTime > 30000 || e.duration < 300) return;
+      var js = 0, top = null; (e.scripts || []).forEach(function (sc) { js += sc.duration; if (!top || sc.duration > top.duration) top = sc; });
+      var end = e.startTime + e.duration, sl = e.styleAndLayoutStart ? Math.round(end - e.styleAndLayoutStart) : 0;
+      keep(STUP.lo, [Math.round(e.startTime), Math.round(e.duration), Math.round(js), sl, top ? String((top.invoker || '') + ' ' + String(top.sourceURL || '').split('/').pop() + ':' + (top.sourceFunctionName || '?') + '@' + (top.sourceCharPosition || 0)).slice(0, 110) : '-'], 1);
+    }); }).observe({ type: 'long-animation-frame', buffered: true }); } catch (e) {}
+  })();
+  (function () { var n = 0, iv = setInterval(function () { var b = document.getElementById('dpbBoot'); if ((!b && document.readyState !== 'loading') || (b && b.style.opacity === '0')) { clearInterval(iv); STUP.splash = stNow(); if (STUP.load) stSave(); } else if (++n > 160) clearInterval(iv); }, 150); })();
+  window.addEventListener('load', function () { STUP.load = stNow(); setTimeout(stSave, 1500); setTimeout(stSave, 13000); setTimeout(stSave, 31000); });
   function stLine(r) {
     var f = function (ms) { return ms ? (ms / 1000).toFixed(1) : '—'; };
-    return 'ظهور ' + f(r.fcp) + ' | الصفحة ' + f(r.load) + ' | Firebase: بدأ ' + f(r.fb0) + '، المكتبة ' + f(r.sdk) + '، القاعدة ' + f(r.db) + '، المستخدم ' + f(r.rs) + '، الدخول ' + f(r.auth) + '، جاهز ' + f(r.fb) + (r.how ? ' [' + ({ saved: 'مستخدم محفوظ', email: 'دخول بالإيميل من الشبكة', anon: 'دخول مجهول من الشبكة' }[r.how] || r.how) + ']' : '');
+    return 'ظهور ' + f(r.fcp) + ' | الصفحة ' + f(r.load) + ' | Firebase: بدأ ' + f(r.fb0) + '، المكتبة ' + f(r.sdk) + '، القاعدة ' + f(r.db) + '، المستخدم ' + f(r.rs) + '، الدخول ' + f(r.auth) + '، جاهز ' + f(r.fb) + (r.how ? ' [' + ({ saved: 'مستخدم محفوظ', email: 'دخول بالإيميل من الشبكة', anon: 'دخول مجهول من الشبكة' }[r.how] || r.how) + ']' : '') + (r.al ? ' {auth:' + r.al + '}' : '');
+  }
+  function stLt(r) {
+    var f = function (ms) { return (ms / 1000).toFixed(1); }, L = r.lt || { n: 0, ms: 0, top: [] };
+    if (!r.lt) return '';
+    return 'التقطيع: ' + L.n + ' مرة بإجمالي ' + f(L.ms) + ' ث' + (L.top.length ? ' (أطولهم: ' + L.top.map(function (t) { return f(t[1]) + ' ث عند ' + f(t[0]); }).join('، ') + ')' : '') + ' | الشاشة اتشالت عند ' + (r.splash ? f(r.splash) : '—');
+  }
+  function stWho(r) {
+    var f = function (ms) { return (ms / 1000).toFixed(1); }, o = [];
+    (r.tm || []).forEach(function (t) { o.push('   ⏱ تايمر بطيء: ' + f(t[1]) + ' ث عند ' + f(t[0]) + ' — ' + t[2] + ' — ' + t[3]); });
+    (r.lo || []).forEach(function (t) { o.push('   🎞 فريم ثقيل: ' + f(t[1]) + ' ث عند ' + f(t[0]) + ' (سكربت ' + f(t[2]) + ' ث، ستايل/تخطيط ' + f(t[3]) + ' ث) — ' + t[4]); });
+    return o;
   }
   function stText() {   // lines for the "app opening time" box in the cloud/backup screen
-    var L = ['الفتحة الحالية: ' + stLine(STUP)];
-    try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.slice().reverse().forEach(function (r) { if (r.t !== STUP.id) L.push('• ' + stLine(r) + (r.apk ? ' (APK)' : ' (متصفح)')); }); } catch (e) {}
+    var L = ['الفتحة الحالية: ' + stLine(STUP), stLt(STUP)].concat(stWho(STUP));
+    try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.slice().reverse().forEach(function (r) { if (r.t === STUP.id) return; L.push('• ' + stLine(r) + (r.apk ? ' (APK)' : ' (متصفح)')); var q = stLt(r); if (q) L.push('   ' + q); stWho(r).forEach(function (x) { L.push(x); }); }); } catch (e) {}
+    try { var ll = JSON.parse(localStorage.getItem('dpb_login_log') || '[]'); if (ll.length) { L.push('آخر دخول بالـ PIN:'); ll.slice().reverse().forEach(function (r) { L.push('• ' + (r.ms / 1000).toFixed(1) + ' ث — ' + (r.via === 'local' ? 'من الجهاز' : 'من السيرفر')); }); } } catch (e) {}
     L.push('الأرقام بالثواني من لحظة بداية الفتح. (الدخول = تسجيل دخول Firebase)');
     return L.join('<br>');
   }
@@ -435,7 +471,13 @@
         if (window.__dpbFs2Db) { db = window.__dpbFs2Db; } else try { var tr = ls('dpb_fs2_transport', 'lp'), st0 = { localCache: fs.persistentLocalCache({ tabManager: (window.Capacitor && fs.persistentSingleTabManager) ? fs.persistentSingleTabManager({ forceOwnership: true }) : fs.persistentMultipleTabManager() }) }; if (tr === 'lp') st0.experimentalForceLongPolling = true; else if (tr === 'auto') st0.experimentalAutoDetectLongPolling = true; dlog('transport', tr); db = fs.initializeFirestore(app, st0); window.__dpbFs2Db = db; } catch (e) { try { console.warn('[dpb-fs2] initializeFirestore failed, using default instance', e && e.message); } catch (x) {} db = fs.getFirestore(app); window.__dpbFs2Db = db; }
       }
       stMark('db');
-      var auth = authM.getAuth(app), ac; window.__dpbFs2Tok = function (force) { try { return auth.currentUser ? auth.currentUser.getIdToken(!!force) : Promise.resolve(); } catch (e) { return Promise.reject(e); } }; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
+      var auth, ac;
+      /* getAuth() also loads Google's popup/redirect iframe + script at start, and the saved user is only released after that finishes (seconds on a phone).
+         This app never signs in with a popup or redirect, so create the auth object without it, on the same IndexedDB storage the saved user already lives in.
+         If the SDK refuses (already created elsewhere, or the bundle lacks these names) it falls back to the old getAuth() unchanged; the timing box shows which one ran. */
+      try { if (!emu() && authM.initializeAuth && authM.indexedDBLocalPersistence) { auth = authM.initializeAuth(app, { persistence: [authM.indexedDBLocalPersistence, authM.browserLocalPersistence].filter(Boolean) }); STUP.al = 'lite'; } } catch (e) { STUP.al = 'err:' + String((e && e.code) || e).slice(0, 40); }
+      if (!auth) { auth = authM.getAuth(app); if (!STUP.al) STUP.al = 'default'; }
+      window.__dpbFs2Tok = function (force) { try { return auth.currentUser ? auth.currentUser.getIdToken(!!force) : Promise.resolve(); } catch (e) { return Promise.reject(e); } }; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       // Offline start: auth.currentUser is empty until the SDK has restored the saved user from the device, so wait for that FIRST.
       // Before this the code saw "no user", tried to sign in over the network, failed offline (auth/network-request-failed) and the whole layer
       // (maps, overlay) never started. Now a user saved on the device is reused with no network call; a sign-in that fails while a saved user
@@ -455,6 +497,8 @@
       // answer is still awaited, so a refused write (rules / quota) is still reported.
       var commitOrQueue = makeCommitter({ onEvent: function (k, x) { dlog(k, x); if (k === 'rejected') { try { window.__dpbFs2Warn && window.__dpbFs2Warn(); } catch (e) {} } } });
       function dref(p) { return fs.doc.apply(null, [db].concat(p.split('/'))); }
+      // same Firestore object as the adapter below (never a second one): lets the PIN login read the saved users list from this phone without waiting for sign-in
+      try { earlyRes({ getCached: function (path) { if (!fs.getDocFromCache) return Promise.resolve(null); return fs.getDocFromCache(dref(path)).then(function (x) { return x.exists() ? x.data() : null; }, function () { return null; }); } }); } catch (e) {}
       // v126: one explicit HTTPS request (Firestore REST) with the signed-in user's token: used when the SDK write channel is silent, and by the connection test
       var DOCS = 'projects/' + conf.projectId + '/databases/(default)/documents';
       function restSend(writes, noCount) {
@@ -1097,8 +1141,9 @@
   }
   function usersSave(a, list) { return kvWriteStr(a, U_KEY, JSON.stringify(list)); }
   // resolves null when the accounts were not moved to Firestore yet (the caller then sends the request to Apps Script)
-  function usersOp(a, body) {
-    return usersLoad(a).then(function (list) {
+  function usersOp(a, body) { return usersLoad(a).then(function (list) { return usersOpList(list, a, body); }); }
+  function usersOpList(list, a, body) {
+    return Promise.resolve(list).then(function (list) {
       if (!list) {
         // no users list on Firebase yet (Apps Script is gone, so there is nothing to fall back to): the first Admin code is created from the app
         if (body.action === 'saveUser') list = [];
@@ -1137,7 +1182,27 @@
   }
   // v94: الدخول مبقاش بيستنى Firebase للأبد. لو الاتصال اتأخر أكتر من 10 ثواني أو فشل، الرد بيرجع فورًا بخطأ واضح
   // (error => التطبيق يعتبره "مفيش اتصال" ويجرّب الرقم/البصمة المحفوظة على الجهاز) بدل ما يعلّق، ومبقاش بيروح لعنوان dpb-firebase.local اللي مش موجود.
+  // PIN login from the users list this phone already holds (login only READS: it compares the PIN hash and the active flag, it writes nothing, so a stale copy can never overwrite anything).
+  // Only a SUCCESS is accepted from the local copy; a wrong PIN or a missing user is never decided from it (the list may be older than a change made elsewhere), the normal server path decides those.
+  function usersLoginCached(body) {
+    return Promise.race([earlyP, new Promise(function (r) { setTimeout(function () { r(null); }, 6000); })]).then(function (e) {
+      if (!e) return null;
+      return kvReadStr({ get: e.getCached }, U_KEY).then(function (str) {
+        if (!str) return null;
+        var l; try { l = JSON.parse(str); } catch (x) { return null; }
+        return Array.isArray(l) ? usersOpList(l, null, body) : null;
+      });
+    }).then(function (r) { return (r && r.ok === true && r.user) ? r : null; }, function () { return null; });
+  }
+  function loginLog(t0, via) { try { var a = JSON.parse(localStorage.getItem('dpb_login_log') || '[]'); a.push({ t: t0, ms: Date.now() - t0, via: via }); localStorage.setItem('dpb_login_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
   function usersHandle(body, input, init) {
+    var isLogin = !!(body && body.action === 'login'), t0 = Date.now(), done = false;
+    var main = usersHandleMain(body, input, init);
+    if (!isLogin) return main;
+    var fastWin = usersLoginCached(body).then(function (r) { if (!r || done) return new Promise(function () {}); done = true; loginLog(t0, 'local'); return jsonRes(r); });
+    return Promise.race([fastWin, main.then(function (res) { if (!done) { done = true; loginLog(t0, 'server'); } return res; })]);
+  }
+  function usersHandleMain(body, input, init) {
     var url = String(typeof input === 'string' ? input : (input && input.url) || '');
     var internal = url.indexOf('https://dpb-firebase.local/') === 0;
     var work = getAdapter().then(function (a) { return usersOp(a, body); });
