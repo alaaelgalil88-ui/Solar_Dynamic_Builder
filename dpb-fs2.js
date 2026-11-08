@@ -5,6 +5,12 @@
  * Everything else goes to the layer underneath (dpb-fs.js or Apps Script) untouched. */
 (function () {
   'use strict';
+  /* startup timing: how long each stage of opening the app took (ms since the page started). The last 6 launches stay on the device and show in the orange-badge details box. */
+  var STUP = { fcp: 0, dcl: 0, load: 0, fb: 0 };
+  function stNow() { return Math.round(performance.now()); }
+  try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.name === 'first-contentful-paint') STUP.fcp = Math.round(e.startTime); }); }).observe({ type: 'paint', buffered: true }); } catch (e) {}
+  document.addEventListener('DOMContentLoaded', function () { STUP.dcl = stNow(); });
+  window.addEventListener('load', function () { STUP.load = stNow(); setTimeout(function () { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.push({ t: Date.now(), fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb: STUP.fb, apk: !!window.Capacitor }); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }, 8000); });
   if (window.DPB_FS2) return;
   var prevFetch = window.fetch.bind(window), CORE = window.DPB_FS2_CORE;
   var LS = { mode: 'dpb_fs2_mode', procs: 'dpb_fs2_procs', cfg: 'dpb_fs_cfg', ns: 'dpb_fs_ns', auth: 'dpb_fs_auth' };
@@ -709,7 +715,7 @@
   // ONE connection for the whole app (login, users list, clock) - not tied to a project
   function getAdapter() {
     if (window.__DPB_FS2_ADAPTER) return Promise.resolve(window.__DPB_FS2_ADAPTER);
-    if (!adapterP) adapterP = makeAdapter().catch(function (e) { adapterP = null; throw e; });
+    if (!adapterP) adapterP = makeAdapter().then(function (a) { if (!STUP.fb) STUP.fb = stNow(); return a; }).catch(function (e) { adapterP = null; throw e; });
     return adapterP;
   }
   // the cell store belongs to ONE project; when another project is opened the old listener is stopped and a new one is started
@@ -823,6 +829,7 @@
     if (W.refused) L.push('آخر رفض من السيرفر: ' + W.refused);
     if (W.rescued) L.push('اتبعت بالطريق البديل بنجاح: ' + W.rescued + ' مرة');
     if (W.fastN) L.push('كتابات كبيرة اتبعتت HTTPS مباشرة: ' + W.fastN + ' مرة');
+    try { var sl = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); if (sl.length) { L.push(''); L.push('زمن فتح التطبيق (آخر ' + sl.length + ' مرات، بالثواني):'); var f1 = function (ms) { return (ms / 1000).toFixed(1); }; sl.slice().reverse().forEach(function (r) { L.push('• أول ظهور ' + f1(r.fcp) + ' | الصفحة جاهزة ' + f1(r.load) + ' | Firebase جاهز ' + (r.fb ? f1(r.fb) : '—') + (r.apk ? ' (APK)' : ' (متصفح)')); }); } } catch (e) {}
     return L.join('\n');
   }
   function showWarnBox() {
