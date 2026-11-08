@@ -6,18 +6,23 @@
 (function () {
   'use strict';
   /* startup timing: how long each stage of opening the app took (ms since the page started). The last 6 launches stay on the device and show in the orange-badge details box. */
-  var STUP = { fcp: 0, dcl: 0, load: 0, fb: 0 };
+  var STUP = { id: Date.now(), fcp: 0, dcl: 0, load: 0, fb0: 0, sdk: 0, db: 0, auth: 0, fb: 0 };
   function stNow() { return Math.round(performance.now()); }
-  function stText() {   // lines for the "app opening time" box in the cloud/backup screen
-    var f1 = function (ms) { return (ms / 1000).toFixed(1); }, L = [];
-    L.push('الفتحة الحالية: أول ظهور ' + f1(STUP.fcp) + ' | الصفحة جاهزة ' + f1(STUP.load) + ' | Firebase جاهز ' + (STUP.fb ? f1(STUP.fb) : '—'));
-    try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.slice().reverse().forEach(function (r) { L.push('• أول ظهور ' + f1(r.fcp) + ' | الصفحة جاهزة ' + f1(r.load) + ' | Firebase جاهز ' + (r.fb ? f1(r.fb) : '—') + (r.apk ? ' (APK)' : ' (متصفح)')); }); } catch (e) {}
-    L.push('الأرقام بالثواني من لحظة بداية الفتح.');
-    return L.join('<br>');
-  }
+  function stSave() { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'), r = { t: STUP.id, fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb0: STUP.fb0, sdk: STUP.sdk, db: STUP.db, auth: STUP.auth, fb: STUP.fb, apk: !!window.Capacitor }, k = -1; a.forEach(function (x, n) { if (x.t === STUP.id) k = n; }); if (k >= 0) a[k] = r; else a.push(r); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
+  function stMark(n) { if (!STUP[n]) { STUP[n] = stNow(); if (STUP.load) stSave(); } }   // after the page finished loading every later step updates this launch's saved row at once
   try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.name === 'first-contentful-paint') STUP.fcp = Math.round(e.startTime); }); }).observe({ type: 'paint', buffered: true }); } catch (e) {}
   document.addEventListener('DOMContentLoaded', function () { STUP.dcl = stNow(); });
-  window.addEventListener('load', function () { STUP.load = stNow(); setTimeout(function () { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.push({ t: Date.now(), fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb: STUP.fb, apk: !!window.Capacitor }); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }, 8000); });
+  window.addEventListener('load', function () { STUP.load = stNow(); setTimeout(stSave, 1500); });
+  function stLine(r) {
+    var f = function (ms) { return ms ? (ms / 1000).toFixed(1) : '—'; };
+    return 'ظهور ' + f(r.fcp) + ' | الصفحة ' + f(r.load) + ' | Firebase: بدأ ' + f(r.fb0) + '، المكتبة ' + f(r.sdk) + '، القاعدة ' + f(r.db) + '، الدخول ' + f(r.auth) + '، جاهز ' + f(r.fb);
+  }
+  function stText() {   // lines for the "app opening time" box in the cloud/backup screen
+    var L = ['الفتحة الحالية: ' + stLine(STUP)];
+    try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.slice().reverse().forEach(function (r) { if (r.t !== STUP.id) L.push('• ' + stLine(r) + (r.apk ? ' (APK)' : ' (متصفح)')); }); } catch (e) {}
+    L.push('الأرقام بالثواني من لحظة بداية الفتح. (الدخول = تسجيل دخول Firebase)');
+    return L.join('<br>');
+  }
   if (window.DPB_FS2) return;
   var prevFetch = window.fetch.bind(window), CORE = window.DPB_FS2_CORE;
   var LS = { mode: 'dpb_fs2_mode', procs: 'dpb_fs2_procs', cfg: 'dpb_fs_cfg', ns: 'dpb_fs_ns', auth: 'dpb_fs_auth' };
@@ -408,6 +413,7 @@
     if (!conf || !conf.projectId) return Promise.reject(new Error('مفيش Firebase config'));
     // المكتبة جوه الـ APK/الموقع نفسه (vendor/firebase-bundle.js): بتفتح من الجهاز من غير نت. لو الملف مش موجود بنرجع للتحميل من الإنترنت زي الأول.
       return loadSdk().then(function (m) {
+      stMark('sdk');
       var appM = m[0], fs = m[1], authM = m[2], db, app;
       if (emu()) {
         // own named app + own Firestore instance: dpb-fs.js already calls getFirestore() on the DEFAULT app (real config), and two layers
@@ -428,6 +434,7 @@
         // Long polling uses plain request/response calls that such networks let through. Never combined with auto-detect (the SDK refuses both together).
         if (window.__dpbFs2Db) { db = window.__dpbFs2Db; } else try { var tr = ls('dpb_fs2_transport', 'lp'), st0 = { localCache: fs.persistentLocalCache({ tabManager: (window.Capacitor && fs.persistentSingleTabManager) ? fs.persistentSingleTabManager({ forceOwnership: true }) : fs.persistentMultipleTabManager() }) }; if (tr === 'lp') st0.experimentalForceLongPolling = true; else if (tr === 'auto') st0.experimentalAutoDetectLongPolling = true; dlog('transport', tr); db = fs.initializeFirestore(app, st0); window.__dpbFs2Db = db; } catch (e) { try { console.warn('[dpb-fs2] initializeFirestore failed, using default instance', e && e.message); } catch (x) {} db = fs.getFirestore(app); window.__dpbFs2Db = db; }
       }
+      stMark('db');
       var auth = authM.getAuth(app), ac; window.__dpbFs2Tok = function (force) { try { return auth.currentUser ? auth.currentUser.getIdToken(!!force) : Promise.resolve(); } catch (e) { return Promise.reject(e); } }; try { ac = JSON.parse(ls(LS.auth, 'null')); } catch (e) { ac = null; }
       // Offline start: auth.currentUser is empty until the SDK has restored the saved user from the device, so wait for that FIRST.
       // Before this the code saw "no user", tried to sign in over the network, failed offline (auth/network-request-failed) and the whole layer
@@ -439,7 +446,7 @@
         if (cu && (!want || String(cu.email || '').toLowerCase() === String(ac.email).toLowerCase())) return;   // already signed in as the right user: no network needed
         var p = want ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (cu ? Promise.resolve() : authM.signInAnonymously(auth));
         return p.catch(function (e) { if (auth.currentUser) return; throw e; });
-      });
+      }).then(function () { stMark('auth'); });
       // Firestore's commit() only resolves when the SERVER acknowledges. Offline it stays pending forever, so the app never counted the cells as executed
       // until the data was switched on again. The write is already saved on the device (persistent cache) and queued: it is sent by itself when the
       // network returns and the local listener shows it at once. So offline (or no answer within 4 s) the write is treated as accepted; online the real
@@ -722,7 +729,7 @@
   // ONE connection for the whole app (login, users list, clock) - not tied to a project
   function getAdapter() {
     if (window.__DPB_FS2_ADAPTER) return Promise.resolve(window.__DPB_FS2_ADAPTER);
-    if (!adapterP) adapterP = makeAdapter().then(function (a) { if (!STUP.fb) STUP.fb = stNow(); return a; }).catch(function (e) { adapterP = null; throw e; });
+    if (!adapterP) { stMark('fb0'); adapterP = makeAdapter().then(function (a) { stMark('fb'); return a; }).catch(function (e) { adapterP = null; throw e; }); }
     return adapterP;
   }
   // the cell store belongs to ONE project; when another project is opened the old listener is stopped and a new one is started
@@ -836,7 +843,7 @@
     if (W.refused) L.push('آخر رفض من السيرفر: ' + W.refused);
     if (W.rescued) L.push('اتبعت بالطريق البديل بنجاح: ' + W.rescued + ' مرة');
     if (W.fastN) L.push('كتابات كبيرة اتبعتت HTTPS مباشرة: ' + W.fastN + ' مرة');
-    try { var sl = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); if (sl.length) { L.push(''); L.push('زمن فتح التطبيق (آخر ' + sl.length + ' مرات، بالثواني):'); var f1 = function (ms) { return (ms / 1000).toFixed(1); }; sl.slice().reverse().forEach(function (r) { L.push('• أول ظهور ' + f1(r.fcp) + ' | الصفحة جاهزة ' + f1(r.load) + ' | Firebase جاهز ' + (r.fb ? f1(r.fb) : '—') + (r.apk ? ' (APK)' : ' (متصفح)')); }); } } catch (e) {}
+    try { L.push(''); L.push('زمن فتح التطبيق:'); stText().split('<br>').forEach(function (x) { L.push(x); }); } catch (e) {}
     return L.join('\n');
   }
   function showWarnBox() {
