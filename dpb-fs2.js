@@ -6,16 +6,16 @@
 (function () {
   'use strict';
   /* startup timing: how long each stage of opening the app took (ms since the page started). The last 6 launches stay on the device and show in the orange-badge details box. */
-  var STUP = { id: Date.now(), fcp: 0, dcl: 0, load: 0, fb0: 0, sdk: 0, db: 0, auth: 0, fb: 0 };
+  var STUP = { id: Date.now(), fcp: 0, dcl: 0, load: 0, fb0: 0, sdk: 0, db: 0, rs: 0, how: '', auth: 0, fb: 0 };
   function stNow() { return Math.round(performance.now()); }
-  function stSave() { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'), r = { t: STUP.id, fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb0: STUP.fb0, sdk: STUP.sdk, db: STUP.db, auth: STUP.auth, fb: STUP.fb, apk: !!window.Capacitor }, k = -1; a.forEach(function (x, n) { if (x.t === STUP.id) k = n; }); if (k >= 0) a[k] = r; else a.push(r); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
+  function stSave() { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'), r = { t: STUP.id, fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb0: STUP.fb0, sdk: STUP.sdk, db: STUP.db, rs: STUP.rs, how: STUP.how, auth: STUP.auth, fb: STUP.fb, apk: !!window.Capacitor }, k = -1; a.forEach(function (x, n) { if (x.t === STUP.id) k = n; }); if (k >= 0) a[k] = r; else a.push(r); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
   function stMark(n) { if (!STUP[n]) { STUP[n] = stNow(); if (STUP.load) stSave(); } }   // after the page finished loading every later step updates this launch's saved row at once
   try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.name === 'first-contentful-paint') STUP.fcp = Math.round(e.startTime); }); }).observe({ type: 'paint', buffered: true }); } catch (e) {}
   document.addEventListener('DOMContentLoaded', function () { STUP.dcl = stNow(); });
   window.addEventListener('load', function () { STUP.load = stNow(); setTimeout(stSave, 1500); });
   function stLine(r) {
     var f = function (ms) { return ms ? (ms / 1000).toFixed(1) : '—'; };
-    return 'ظهور ' + f(r.fcp) + ' | الصفحة ' + f(r.load) + ' | Firebase: بدأ ' + f(r.fb0) + '، المكتبة ' + f(r.sdk) + '، القاعدة ' + f(r.db) + '، الدخول ' + f(r.auth) + '، جاهز ' + f(r.fb);
+    return 'ظهور ' + f(r.fcp) + ' | الصفحة ' + f(r.load) + ' | Firebase: بدأ ' + f(r.fb0) + '، المكتبة ' + f(r.sdk) + '، القاعدة ' + f(r.db) + '، المستخدم ' + f(r.rs) + '، الدخول ' + f(r.auth) + '، جاهز ' + f(r.fb) + (r.how ? ' [' + ({ saved: 'مستخدم محفوظ', email: 'دخول بالإيميل من الشبكة', anon: 'دخول مجهول من الشبكة' }[r.how] || r.how) + ']' : '');
   }
   function stText() {   // lines for the "app opening time" box in the cloud/backup screen
     var L = ['الفتحة الحالية: ' + stLine(STUP)];
@@ -442,8 +442,10 @@
       // exists falls back to that user, so the persistent cache on the phone still serves the maps.
       var restored = (typeof auth.authStateReady === 'function') ? auth.authStateReady() : new Promise(function (res) { var u = authM.onAuthStateChanged(auth, function () { try { u(); } catch (e) {} res(); }); });
       var ready = emu() ? Promise.resolve() : Promise.resolve(restored).catch(function () {}).then(function () {
+        stMark('rs');   // timing only: the saved user has been read back
         var cu = auth.currentUser, want = !!(ac && ac.email && ac.password);
-        if (cu && (!want || String(cu.email || '').toLowerCase() === String(ac.email).toLowerCase())) return;   // already signed in as the right user: no network needed
+        if (cu && (!want || String(cu.email || '').toLowerCase() === String(ac.email).toLowerCase())) { STUP.how = 'saved'; return; }   // already signed in as the right user: no network needed
+        STUP.how = want ? 'email' : 'anon';
         var p = want ? authM.signInWithEmailAndPassword(auth, ac.email, ac.password) : (cu ? Promise.resolve() : authM.signInAnonymously(auth));
         return p.catch(function (e) { if (auth.currentUser) return; throw e; });
       }).then(function () { stMark('auth'); });
@@ -2421,5 +2423,6 @@
     if (now && on()) getStore().then(function () { try { if (typeof window.__dpbFetchLiveGrid === 'function') window.__dpbFetchLiveGrid(); } catch (e) {} }).catch(function () {});
   }
   try { window.addEventListener('dpb-project-switched', onProjectChange); setInterval(onProjectChange, 1000); } catch (e) {}
+  if (on()) { try { getAdapter().catch(function () {}); } catch (e) {} }   // start the SDK + sign-in right now (they run while the page is still drawing); the store below then finds them ready
   if (on()) setTimeout(function () { getStore().catch(function () {}); }, 1500); // connect early so a problem shows in the card instead of on the first tap
 })();
