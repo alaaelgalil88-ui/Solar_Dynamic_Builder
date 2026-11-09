@@ -5263,6 +5263,22 @@ function progDone(op,u){
   if(rec&&Number.isFinite(Number(rec.done)))return Math.max(0,Number(rec.done));
   return Math.max(0,Number(stageValue(op,u))||0);
 }
+window.__dpbProgOf=function(name){
+  try{
+    const c=currentCatalog();if(!c||!c.maps)return null;
+    const want=norm(name);if(!want)return null;
+    const mp=c.maps.find(x=>x.mode==='dynamic'&&x.op&&x.op.kind!=='notstarted'&&x.op.name&&norm(x.op.name)===want);
+    if(!mp||!mp.snap||mp.snap==='plan')return null;
+    const model=modelForKey(mp.snap);if(!model||!model.ok||!progressInfoOfModel(model))return null;
+    const out=[];
+    for(const t of model.trackers.values()){
+      const u=t.units&&t.units[0];if(!u)continue;
+      const total=progTotal(model,u);
+      out.push({row:t.rowLabel,number:t.no,label:t.label,total:total,done:Math.min(progDone(mp.op,u),total)});
+    }
+    return out;
+  }catch(_){return null;}
+};
 function progPct(d,t){
   const dd=Math.max(0,Math.min(d,t||d));let p=t>0?Math.round(dd*100/t):0;
   if(dd>0&&p===0)p=1;if(t>0&&dd<t&&p===100)p=99;return p;
@@ -23157,7 +23173,7 @@ body.print-activity #dpbBottomBar{display:none!important}
   function save(){clearTimeout(saveT);var k=pid(),v=(S&&S.state!=='empty')?S:null;saveT=setTimeout(function(){idbSet(k,v)},150);pubSoon()}
   function blank(){return {state:'empty',fileName:'',bom:null,counts:{},recv:{},map:{},used:{},fillMap:{},cellMap:{},marks:null,dmProcs:null}}
   function assignKeys(bom){var seen={};bom.cats.forEach(function(c){c.items.forEach(function(it){var b=norm(it.desc)+'|'+norm(it.pn);seen[b]=(seen[b]||0)+1;it.k=seen[b]>1?b+'#'+seen[b]:b})})}
-  function fixLoaded(){if(!S.counts)S.counts={};if(!S.recv)S.recv={};if(!S.map)S.map={};if(!S.used)S.used={};if(!S.fillMap)S.fillMap={};if(!S.cellMap)S.cellMap={};if(S.dmProcs===undefined)S.dmProcs=null;if(!S.st)S.st={};if(S.marks===undefined)S.marks=null;if(S.bom)assignKeys(S.bom)}
+  function fixLoaded(){if(!S.counts)S.counts={};if(!S.recv)S.recv={};if(!S.map)S.map={};if(!S.used)S.used={};if(!S.fillMap)S.fillMap={};if(!S.cellMap)S.cellMap={};if(S.dmProcs===undefined)S.dmProcs=null;if(!S.meth)S.meth={};if(!S.im)S.im={};if(!S.st)S.st={};if(S.marks===undefined)S.marks=null;if(S.bom)assignKeys(S.bom)}
   function ensure(){
     var p=pid();if(S&&lastPid===p)return;
     lastPid=p;S=blank();UI={q:'',color:'',st:'',cat:-1,closed:{},ckC:{}};
@@ -23298,7 +23314,7 @@ body.print-activity #dpbBottomBar{display:none!important}
         var u=t.units&&t.units[0];if(!u)return;
         var row=m.siteCodes.get(String(tt(u)||'').trim().toLowerCase().slice(0,1)),nm=row&&row.name;if(!nm)return;
         var key=norm(nm),rn=String(t.rowLabel||'').replace(/\D/g,''),tn=Number(t.no)||Number(String(t.label||'').replace(/\D/g,''))||0;
-        var ent={k:key,u:t.units.length};byKey.set(rn+'|'+tn,ent);if(byNum.has(tn))dup.add(tn);else byNum.set(tn,ent);
+        var ent={k:key,u:t.units.length,l:String(tt(u)||'').trim().toLowerCase().slice(0,1)};byKey.set(rn+'|'+tn,ent);if(byNum.has(tn))dup.add(tn);else byNum.set(tn,ent);
       });
       dup.forEach(function(n){byNum.delete(n)});
       var letters={};m.siteCodes.forEach(function(row,code){if(row&&row.name)letters[String(code).toLowerCase()]=norm(row.name)});
@@ -23329,7 +23345,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     var ps=procList();if(!ps.length||!S.bom)return;
     S.bom.cats.forEach(function(c){
       var k=norm(c.title);if(S.map[k]!==undefined)return;
-      var hit=ps.filter(function(p){var n=norm(p.name);return n&&k&&(n===k||n.indexOf(k)>=0||k.indexOf(n)>=0)})[0]||ps.filter(function(p){return k==='posts'&&norm(p.name)==='ramming'})[0]||ps.filter(function(p){return k==='purlin'&&/module|panel/i.test(p.name)})[0];
+      var hit=ps.filter(function(p){var n=norm(p.name);return n&&k&&(n===k||n.indexOf(k)>=0||k.indexOf(n)>=0)})[0]; 
       if(hit)S.map[k]=hit.name;
     });
   }
@@ -23767,51 +23783,116 @@ body.print-activity #dpbBottomBar{display:none!important}
     });
     return {file:file.name,sheet:sheetName,z:z};
   }
-  function dmType(it,c){if(c&&/^squeeze/.test(norm(c.title)))return 'S';if(!c||!/^(actuator|damp|damb)/.test(norm(c.title)))return '';var t=String(it.desc||'');if(/damper/i.test(t))return 'D';if(/charging module/i.test(t))return 'M';if(/actuator|drive system/i.test(t))return 'X';return ''}
+  /* The calculation of each item comes from what the person chose (process + method), never from names.
+     Item choice overrides the category choice. methods: '' / cells, splice, markX, markD, prog, trk */
+  var METH=[['','خلايا العملية'],['splice','نصفين لكل وصلة'],['markX','علامة X'],['markD','علامة /'],['prog','نسبة تقدّم العملية'],['trk','واحد لكل تراكر لما يكمل']];
+  function itemProc(it,c){var o=S&&S.im&&S.im[it.k];return (o&&o.p)||(S&&S.map&&c&&S.map[norm(c.title)])||''}
+  function itemMeth(it,c){var o=S&&S.im&&S.im[it.k];if(o&&o.m)return o.m==='cells'?'':o.m;return (S&&S.meth&&c&&S.meth[norm(c.title)])||''}
+  function dmType(it,c){var m=itemMeth(it,c);return m==='splice'?'S':m==='prog'?'P':m==='trk'?'M':m==='markX'?'X':m==='markD'?'D':''}
   function dmZones(){
     var ix=planColorIndex(),out={};if(!S.marks||!ix)return out;
     Object.keys(S.marks.z).forEach(function(l){var k=ix.letters[l];if(k)out[k]={nD:S.marks.z[l].d.length,nX:S.marks.z[l].x.length}});
     return out;
   }
-  function dmProcNames(){
-    var all=procList().map(function(p){return p.name});
-    if(S.dmProcs)return S.dmProcs.filter(function(n){return all.indexOf(n)>=0});
-    return all.filter(function(n){return /torque|module|panel/i.test(n)});
+  function dmMapProc(it,c){var p=itemProc(it,c);return p&&procList().some(function(x){return x.name===p})?p:null}
+  function dmMarkStats(name){
+    try{
+      var ix=planColorIndex();if(!ix||!S.marks)return null;
+      var by=window.__dpbLiveGridByProcess||{},lk=Object.keys(by).filter(function(k){return k.toLowerCase()===String(name).trim().toLowerCase()})[0],lg=lk&&by[lk];
+      var tr=window.__dpbProcTrackers&&window.__dpbProcTrackers(name);if(!lg||!lg.valuesByCoord||!tr||!tr.length)return null;
+      var op=procList().filter(function(p){return String(p.name).trim().toLowerCase()===String(name).trim().toLowerCase()})[0],k=op?Number(op.code):0,grouped=!!(op&&op.grouped);
+      var out={D:{n:0,d:0},X:{n:0,d:0},um:0,bad:0};
+      tr.forEach(function(t){
+        var units=t.units||[];if(!units.length)return;
+        var rn=String(t.row||'').replace(/\D/g,''),tn=Number(t.number)||Number(String(t.label||'').replace(/\D/g,''))||0;
+        var ent=ix.byKey.get(rn+'|'+tn)||ix.byNum.get(tn);if(!ent){out.um++;return}
+        var z=S.marks.z[ent.l];if(!z||z.n!==units.length){out.bad++;return}
+        function dn(i){var u=units[i],v=Number(lg.valuesByCoord.get(Number(u.r1)+'|'+Number(u.c1)))||0;return grouped&&k>0?v>=k:v>0}
+        z.d.forEach(function(i){out.D.n++;if(dn(i))out.D.d++});
+        z.x.forEach(function(i){out.X.n++;if(dn(i))out.X.d++});
+      });
+      return out;
+    }catch(_){return null}
   }
-  function dmIsMod(n){return /module|panel/i.test(String(n))}
-  function dmCompute(){
-    DMV={};if(!S||!S.bom)return;
-    var zs=dmZones(),ix=planColorIndex();if(!ix)return;
-    var doneT={},doneM={},anyT=false,anyM=false,joint={};
-    dmProcNames().forEach(function(name){
-      var isM=dmIsMod(name),done=isM?doneM:doneT;
+  /* Squeeze splice = 2 halves per joint between neighbouring cells of a tracker in the chosen process: (cells-1) joints x 2.
+     Progress / per-tracker methods read the chosen process only. */
+  function procRows(name){
+    try{
+      var ix=planColorIndex();if(!ix)return null;
       var m=procModel(name),by=window.__dpbLiveGridByProcess||{},lk=Object.keys(by).filter(function(k){return k.toLowerCase()===String(name).trim().toLowerCase()})[0],lg=lk&&by[lk];
-      if(!m||!m.trackers||!lg||!lg.valuesByCoord)return;
       var op=procList().filter(function(p){return p.name===name})[0],code=op?Number(op.code):0,grouped=!!(op&&op.grouped);
+      var pg=window.__dpbProgOf&&window.__dpbProgOf(name),pgm=null;
+      if(pg&&pg.length){pgm=new Map();pg.forEach(function(x){pgm.set(String(x.row||'').replace(/\D/g,'')+'|'+(Number(x.number)||0),x)})}
+      if(!m||!m.trackers)return null;
+      if(!pgm&&(!lg||!lg.valuesByCoord))return null;
+      var out=[];
       m.trackers.forEach(function(t){
-        var rn=String(t.rowLabel||'').replace(/\D/g,''),tn=Number(t.no)||0,ent=ix.byKey.get(rn+'|'+tn)||ix.byNum.get(tn);
-        if(!ent||!t.units||!t.units.length)return;
-        var ok=t.units.every(function(u){var v=Number(lg.valuesByCoord.get(Number(u.r1)+'|'+Number(u.c1)))||0;return grouped&&code>0?v>=code:v>0});
-        if(ok){(done[ent.k]||(done[ent.k]={}))[rn+'|'+tn]=1;if(isM)anyM=true;else anyT=true}
-        if(!isM&&/torque|tube/i.test(name)&&t.units.length>1){var dc=t.units.filter(function(u){var v=Number(lg.valuesByCoord.get(Number(u.r1)+'|'+Number(u.c1)))||0;return grouped&&code>0?v>=code:v>0}).length,fr=Math.max(0,dc-1)/(t.units.length-1);joint[ent.k]=(joint[ent.k]||0)+fr;if(dc>0)anyT=true}
+        var rn=String(t.rowLabel||'').replace(/\D/g,''),tn=Number(t.no)||0,ent=ix.byKey.get(rn+'|'+tn)||ix.byNum.get(tn),us=t.units||[];
+        if(!ent||!us.length)return;
+        var r={ent:ent,fl:null,done:0,total:0},px=pgm&&pgm.get(rn+'|'+tn);
+        if(px&&px.total>0){r.done=px.done;r.total=px.total}
+        else if(lg&&lg.valuesByCoord){r.fl=us.map(function(u){var v=Number(lg.valuesByCoord.get(Number(u.r1)+'|'+Number(u.c1)))||0;return grouped&&code>0?v>=code:v>0});r.done=r.fl.filter(Boolean).length;r.total=us.length}
+        else return;
+        out.push(r);
+      });
+      return out;
+    }catch(_){return null}
+  }
+  function dmSqStats(name){
+    var rows=procRows(name);if(!rows)return null;
+    var o={req:0,done:0,tr:0,zr:{},zj:{}};
+    rows.forEach(function(r){
+      if(!r.fl||r.fl.length<2)return;
+      var n=r.fl.length,pairs=0;for(var i=0;i+1<n;i++)if(r.fl[i]&&r.fl[i+1])pairs++;
+      o.tr++;o.req+=2*(n-1);o.done+=2*pairs;(o.zr[r.ent.k]||(o.zr[r.ent.k]={}))[2*(n-1)]=1;o.zj[r.ent.k]=(o.zj[r.ent.k]||0)+pairs/(n-1);
+    });
+    return o.tr?o:null;
+  }
+  function dmPurlinStats(name){
+    var rows=procRows(name);if(!rows)return null;
+    var o={tr:0,done:0,full:0,zf:{}};
+    rows.forEach(function(r){if(!(r.total>0))return;o.tr++;o.done+=r.done/r.total;if(r.done>=r.total)o.full++;o.zf[r.ent.k]=(o.zf[r.ent.k]||0)+r.done/r.total});
+    return o.tr?o:null;
+  }
+  function dmTrkStats(name){
+    var rows=procRows(name);if(!rows)return null;
+    var o={tr:0,full:0,zfull:{}};
+    rows.forEach(function(r){if(!(r.total>0))return;o.tr++;if(r.done>=r.total){o.full++;o.zfull[r.ent.k]=(o.zfull[r.ent.k]||0)+1}});
+    return o.tr?o:null;
+  }
+  function dmWarns(c,cur,st){
+    var w=[];if(!st||!st.zr)return w;
+    c.items.forEach(function(it){
+      if(dmType(it,c)!=='S'||itemProc(it,c)!==cur)return;
+      S.bom.colors.forEach(function(co){
+        var q=Number(it.q[co.key])||0,zr=st.zr[co.key];if(!(q>0)||!zr)return;
+        var ex=Object.keys(zr).map(Number);
+        if(ex.length&&ex.indexOf(q)<0)w.push((it.no?it.no+' ':'')+co.name+': BOM '+fmtN(q)+' / cells '+ex.map(fmtN).join(' | '));
       });
     });
+    return w;
+  }
+  function dmCompute(){
+    DMV={};if(!S||!S.bom)return;
+    var MS={},PS={},SQ={},TK={},any=false;
     S.bom.cats.forEach(function(c){c.items.forEach(function(it){
-      var t=dmType(it,c);if(!t)return;var tot=0;
-      if(t==='S'){S.bom.colors.forEach(function(co){tot+=(joint[co.key]||0)*(Number(it.q[co.key])||0)});tot=Math.round(tot)}
-      else if(t==='M'){S.bom.colors.forEach(function(co){tot+=(doneM[co.key]?Object.keys(doneM[co.key]).length:0)*(Number(it.q[co.key])||0)})}
-      else{if(!S.marks)return;Object.keys(zs).forEach(function(k){tot+=(doneT[k]?Object.keys(doneT[k]).length:0)*(t==='D'?zs[k].nD:zs[k].nX)})}
-      DMV[it.k]=tot;
+      var t=dmType(it,c);if(!t)return;var mp=dmMapProc(it,c);if(!mp)return;
+      var tot=0;function qk(co){return Number(it.q[co.key])||0}
+      if(t==='S'){var a=SQ[mp]||(SQ[mp]=dmSqStats(mp));if(!a)return;S.bom.colors.forEach(function(co){tot+=(a.zj[co.key]||0)*qk(co)})}
+      else if(t==='P'){var b=PS[mp]||(PS[mp]=dmPurlinStats(mp));if(!b)return;S.bom.colors.forEach(function(co){tot+=(b.zf[co.key]||0)*qk(co)})}
+      else if(t==='M'){var d=TK[mp]||(TK[mp]=dmTrkStats(mp));if(!d)return;S.bom.colors.forEach(function(co){tot+=(d.zfull[co.key]||0)*qk(co)})}
+      else{if(!S.marks)return;var e=MS[mp]||(MS[mp]=dmMarkStats(mp));if(!e)return;tot=t==='D'?e.D.d:e.X.d}
+      DMV[it.k]=Math.round(tot);any=true;
     })});
-    DMV.__any=anyT||anyM;
+    DMV.__any=any;
   }
   function renderDm(){
     var b=q('bmDmB');if(!b||!S||!S.bom)return;
     var zs=dmZones();dmCompute();
-    var items=[],mItems=[],sItems=[];S.bom.cats.forEach(function(c){c.items.forEach(function(it){var ty=dmType(it,c);if(ty==='S')sItems.push(it);else if(ty==='M')mItems.push(it);else if(ty)items.push({it:it,t:ty})})});
+    var items=[];S.bom.cats.forEach(function(c){c.items.forEach(function(it){var ty=dmType(it,c);if(ty==='X'||ty==='D')items.push({it:it,t:ty})})});
     var nn=q('bmDmN');if(nn)nn.textContent=S.marks?'(✓)':'';
     if(!UI.dmOpen)return;
-    var h='<div class="bmMapNote">العلامات بتتقرا من العينات في ملف EXECUTION: <b>\\</b> أو <b>/</b> = Damper، و<b>X</b> = Actuator وDrive System Kit. بتتسجل منفّذة لما التراكر يكمل انبوب العزم. الـ Charging Module بيتسجل مع الموديولز، لما التراكر يكمل الموديولز.</div>'+
+    var h='<div class="bmMapNote">العلامات بتتقرا من العينات في ملف EXECUTION: <b>\\</b> أو <b>/</b> = Damper، و<b>X</b> = Actuator وDrive System Kit. البند اللي تختار له «علامة X» أو «علامة /» من كارت ربط الفئات بيتحسب من الخلايا المعلّمة بس، في العملية اللي ربطتها.</div>'+
       '<input type="file" id="bmExeFile" accept=".xlsx" hidden><button type="button" class="bmBtn" data-a="dmup" style="width:100%;margin-bottom:8px">'+(S.marks?'استبدال ملف EXECUTION':'رفع ملف EXECUTION')+'</button>';
     if(dmErr)h+='<div class="bmNote err">❌ '+esc(dmErr)+'</div>';
     if(S.marks){
@@ -23829,11 +23910,7 @@ body.print-activity #dpbBottomBar{display:none!important}
             return '<span class="bmCz '+(okz?'ok':'bad')+'">'+dot(co.name,co.key)+(okz?fmtN(act)+' / تراكر ✓':fmtN(act)+' مقابل '+fmtN(exp)+' في الـ BOM')+'</span>';
           }).join('')+'</div></div>';
         }).join('');
-      }else h+='<div class="bmMapNote">مفيش بنود Damper أو Actuator جوه الـ Named Range BOM. مدّه لآخر صف.</div>';
-      if(mItems.length)h+='<div class="bmMapNote">🔌 '+mItems.map(function(it){return esc(it.desc)}).join('، ')+': بيتحسب «اتركب» لما التراكر يكمل عملية الموديولز (شريحة الموديولز تحت لازم تكون شغالة).</div>';
-      if(sItems.length)h+='<div class="bmMapNote">🔗 '+sItems.map(function(it){return esc(it.desc)}).join('، ')+': بيربط كل أنبوبين، فالمركّب = (الأنابيب المنفّذة في التراكر − 1) من إجمالي (أنابيب التراكر − 1) × كمية البند في الـ BOM، من خريطة انبوب العزم.</div>';
-      var ps=procList();
-      h+='<div class="bmCkS">يتسجل منفّذ لما التراكر يكمل:</div><div class="bmRow">'+(ps.length?ps.map(function(p){return '<button type="button" class="bmChip'+(dmProcNames().indexOf(p.name)>=0?' on':'')+'" data-dmp="'+esc(p.name)+'">'+esc(p.name)+'</button>'}).join(''):'<div class="bmMapNote">مفيش عمليات متاحة دلوقتي.</div>')+'</div>';
+      }else h+='<div class="bmMapNote">مفيش بنود اخترت لها «علامة X» أو «علامة /» من كارت ربط الفئات.</div>';
     }
     b.innerHTML=h;
   }
@@ -23864,7 +23941,7 @@ body.print-activity #dpbBottomBar{display:none!important}
       }).join('')+'</div></section>'+
       '<section class="bmCard bmMapCard"><button type="button" class="bmMapH" data-a="map">🔧 ربط الفئات بعمليات التركيب <span id="bmMapN"></span><span class="bmChev">'+(UI.mapOpen?'⌄':'‹')+'</span></button><div id="bmMapB" class="bmMapB"'+(UI.mapOpen?'':' hidden')+'></div></section>'+
       '<section class="bmCard bmMapCard bmCkCard"><button type="button" class="bmMapH" data-a="ck">🔎 مطابقة الحصر مع الخرائط <span id="bmCkN"></span><span class="bmChev">'+(UI.ckOpen?'⌄':'‹')+'</span></button><div id="bmCkB" class="bmMapB"'+(UI.ckOpen?'':' hidden')+'></div></section>'+
-      '<section class="bmCard bmMapCard bmDmCard"><button type="button" class="bmMapH" data-a="dm">⚙️ Damper وActuator <span id="bmDmN"></span><span class="bmChev">'+(UI.dmOpen?'⌄':'‹')+'</span></button><div id="bmDmB" class="bmMapB"'+(UI.dmOpen?'':' hidden')+'></div></section>'+
+      '<section class="bmCard bmMapCard bmDmCard"><button type="button" class="bmMapH" data-a="dm">⚙️ علامات X و / <span id="bmDmN"></span><span class="bmChev">'+(UI.dmOpen?'⌄':'‹')+'</span></button><div id="bmDmB" class="bmMapB"'+(UI.dmOpen?'':' hidden')+'></div></section>'+
       '<div id="bmKpi" class="bmKpi"></div><div id="bmCats" class="bmCats"></div>'+
       '<section class="bmCard bmFilter"><div class="bmSearch"><input id="bmQ" type="search" placeholder="ابحث: وصف / رقم قطعة / لون" value="'+esc(UI.q)+'" autocomplete="off"><button type="button" class="bmBtn print" data-a="print">🖨️ طباعة</button></div><div id="bmChips" class="bmChips"></div></section>'+
       '<div id="bmList"></div>';
@@ -23879,14 +23956,33 @@ body.print-activity #dpbBottomBar{display:none!important}
     var nn=q('bmMapN');if(nn)nn.textContent=n?'('+n+')':'';
     if(!UI.mapOpen)return;
     if(!ps.length){b.innerHTML='<div class="bmMapNote">مفيش عمليات تركيب متاحة دلوقتي. افتح الـ Plan والخرائط الأول وبعدين ارجع هنا.</div>';return}
-    b.innerHTML='<div class="bmMapNote">اختار لكل فئة العملية اللي بتقيس تركيبها. التركيب بيتحسب من الوحدات المنفّذة في خريطة العملية دي، لكل لون تراكر.</div>'+
+    function procSel(attr,val,first){return '<select '+attr+'><option value="">'+first+'</option>'+ps.map(function(p){return '<option value="'+esc(p.name)+'"'+(p.name===val?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'</select>'}
+    function methSel(attr,val,same){return '<select '+attr+'>'+(same?'<option value="same">زي الفئة</option>':'')+METH.map(function(m){var v=m[0]||'cells';return '<option value="'+v+'"'+(v===val?' selected':'')+'>'+m[1]+'</option>'}).join('')+'</select>'}
+    function line(pr,m){
+      var lb='<b dir="ltr">'+esc(pr)+'</b> · ';
+      if(m==='splice'){var sq=dmSqStats(pr);if(!sq)return '<div class="bmMapV">'+lb+'مفيش بيانات للعملية دي لسه.</div>';return '<div class="bmMapV ok">'+lb+'نصفين لكل وصلة: '+fmtN(sq.req)+' نصف · منفّذ '+fmtN(sq.done)+'</div>'}
+      if(m==='prog'){var pu=dmPurlinStats(pr);if(!pu)return '<div class="bmMapV">'+lb+'مفيش بيانات للعملية دي لسه.</div>';return '<div class="bmMapV ok">'+lb+fmtN(pu.tr)+' تراكر · اكتمل '+fmtN(pu.full)+' · تقدّم '+Math.round(pu.done*100/pu.tr)+'%</div>'}
+      if(m==='trk'){var tk=dmTrkStats(pr);if(!tk)return '<div class="bmMapV">'+lb+'مفيش بيانات للعملية دي لسه.</div>';return '<div class="bmMapV ok">'+lb+fmtN(tk.tr)+' تراكر · منفّذ '+fmtN(tk.full)+'</div>'}
+      if(!S.marks)return '<div class="bmMapV">'+lb+'ارفع ملف EXECUTION من كارت ⚙️ علامات X و / عشان تتحسب العلامات.</div>';
+      var mk=dmMarkStats(pr);if(!mk)return '<div class="bmMapV">'+lb+'مفيش بيانات للعملية دي لسه.</div>';
+      var x=mk[m==='markX'?'X':'D'],o='<div class="bmMapV ok">'+lb+'<b dir="ltr">'+(m==='markX'?'X':'/')+'</b> '+fmtN(x.n)+' خلية · منفّذ '+fmtN(x.d)+'</div>';
+      if(mk.bad||mk.um)o+='<div class="bmMapV">⚠ '+fmtN(mk.bad+mk.um)+' تراكر مش متطابق مع العينات ومش محسوب.</div>';
+      return o;
+    }
+    b.innerHTML='<div class="bmMapNote">اختار لكل فئة العملية وطريقة الحساب. ولو بند ليه حساب مختلف، افتح «تخصيص البنود» واختار له عملية أو طريقة تانية. مفيش حاجة بتتعرف بالاسم.</div>'+
       S.bom.cats.map(function(c,i){
-        var k=norm(c.title),cur=S.map[k]||'',has=INST[i]!=null,st=INST[i];
-        var row='<div class="bmMapR"><span>'+esc(c.title)+'</span><select data-mapk="'+esc(k)+'"><option value="">— بدون —</option>'+ps.map(function(p){return '<option value="'+esc(p.name)+'"'+(p.name===cur?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'</select>'+(cur?'<i class="'+(has?'ok':'no')+'" title="'+(has?'البيانات جاهزة':'مفيش بيانات تركيب للعملية دي لسه')+'">'+(has?'●':'○')+'</i>':'')+'</div>';
-        if(has&&st.__meta){
-          var m=st.__meta,diff=m.tu-m.pu,tip=S.bom.colors.filter(function(co){return st[co.key]}).map(function(co){var x=st[co.key];return co.name+': '+x.n+' تراكر · '+x.u+' خلية'+(x.u!==x.pu?' (الـ Plan '+x.pu+')':'')}).join('\n');
-          row+='<div class="bmMapV ok" title="'+esc(tip)+'">'+fmtN(m.tu)+' خلية في العملية · منفّذ '+fmtN(m.dn)+'</div>';
+        var k=norm(c.title),cur=S.map[k]||'',has=INST[i]!=null,st=INST[i],cm=S.meth[k]||'';
+        var row='<div class="bmMapR"><span>'+esc(c.title)+'</span>'+procSel('data-mapk="'+esc(k)+'"',cur,'— بدون —')+(cur?'<i class="'+(has?'ok':'no')+'" title="'+(has?'البيانات جاهزة':'مفيش بيانات تركيب للعملية دي لسه')+'">'+(has?'●':'○')+'</i>':'')+'</div>';
+        if(cur)row+='<div class="bmMapR"><span>طريقة الحساب</span>'+methSel('data-methk="'+esc(k)+'"',cm||'cells',false)+'</div>';
+        var seen={},nOv=0;
+        c.items.forEach(function(it){if(S.im[it.k])nOv++;var m=itemMeth(it,c),pr=dmMapProc(it,c);if(!m||!pr)return;var kk=pr+'|'+m;if(seen[kk])return;seen[kk]=1;row+=line(pr,m);if(m==='splice'){dmWarns(c,pr,dmSqStats(pr)).forEach(function(x){row+='<div class="bmMapV">⚠ <span dir="ltr">'+esc(x)+'</span></div>'})}});
+        if(cur&&!cm&&has&&st.__meta){
+          var m0=st.__meta,tip=S.bom.colors.filter(function(co){return st[co.key]}).map(function(co){var x=st[co.key];return co.name+': '+x.n+' تراكر · '+x.u+' خلية'+(x.u!==x.pu?' (الـ Plan '+x.pu+')':'')}).join('\n');
+          row+='<div class="bmMapV ok" title="'+esc(tip)+'">'+fmtN(m0.tu)+' خلية في العملية · منفّذ '+fmtN(m0.dn)+'</div>';
         }
+        UI.imOpen=UI.imOpen||{};
+        row+='<div class="bmMapR"><button type="button" class="bmChip'+(UI.imOpen[k]?' on':'')+'" data-imt="'+esc(k)+'">⚙ تخصيص البنود'+(nOv?' ('+nOv+')':'')+'</button></div>';
+        if(UI.imOpen[k])row+=c.items.map(function(it){var o=S.im[it.k]||{};return '<div class="bmMapR"><span>'+(it.no?esc(it.no)+' ':'')+esc(String(it.desc).slice(0,34))+'</span>'+procSel('data-imp="'+esc(it.k)+'"',o.p||'','زي الفئة')+'</div><div class="bmMapR"><span>↳ الطريقة</span>'+methSel('data-imm="'+esc(it.k)+'"',o.m||'same',true)+'</div>'}).join('');
         return '<div class="bmMapG">'+row+'</div>';
       }).join('');
   }
@@ -24031,7 +24127,7 @@ body.print-activity #dpbBottomBar{display:none!important}
   /* ---------- actions ---------- */
   async function onFile(ev){
     var f=ev.target.files&&ev.target.files[0];ev.target.value='';if(!f)return;ensure();
-    try{var bom=await readBom(f);S={state:'uploaded',fileName:f.name,bom:bom,counts:{},recv:{},map:{},used:{},fillMap:{},cellMap:{},marks:null,dmProcs:null};lastNote=null;UI={q:'',color:'',st:'',cat:-1,closed:{}};save()}
+    try{var bom=await readBom(f);S={state:'uploaded',fileName:f.name,bom:bom,counts:{},recv:{},map:{},meth:{},im:{},used:{},fillMap:{},cellMap:{},marks:null,dmProcs:null};lastNote=null;UI={q:'',color:'',st:'',cat:-1,closed:{}};save()}
     catch(err){setNote('❌ '+esc(err&&err.message||err),'err')}
     render();
   }
@@ -24071,8 +24167,8 @@ body.print-activity #dpbBottomBar{display:none!important}
     if(zc){var zp=zc.getAttribute('data-zc'),zi=zp.indexOf('|'),zci=zp.slice(0,zi),zk3=zp.slice(zi+1);UI.ckZ=UI.ckZ||{};UI.ckZ[zci]=(zc.getAttribute('aria-expanded')==='true')?'':zk3;renderCheck();return}
     var ct=t.closest&&t.closest('[data-ckt]');
     if(ct){var ck0=ct.getAttribute('data-ckt');UI.ckOne=(UI.ckOne===ck0?'':ck0);renderCheck();return}
-    var dp=t.closest&&t.closest('[data-dmp]');
-    if(dp){var nm=dp.getAttribute('data-dmp'),cur=dmProcNames().slice(),ix2=cur.indexOf(nm);if(ix2>=0)cur.splice(ix2,1);else cur.push(nm);S.dmProcs=cur;save();renderDyn();return}
+    var dp=t.closest&&t.closest('[data-imt]');
+    if(dp){var ck1=dp.getAttribute('data-imt');UI.imOpen=UI.imOpen||{};UI.imOpen[ck1]=!UI.imOpen[ck1];renderMap();return}
     var bp=t.closest&&t.closest('[data-bmpub]');
     if(bp){pubNow(true);return}
     var fr=t.closest&&t.closest('[data-fmreset]');
@@ -24199,7 +24295,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     host.setAttribute('data-ready','1');
     host.addEventListener('click',onClick);host.addEventListener('input',onInput);
     host.addEventListener('focusin',function(e){var t=e.target;if(t&&t.matches&&t.matches('.bmCnt input,.bmRc input,.bmUs input')){clearTimeout(RL);setTimeout(function(){try{t.select()}catch(_){}},0)}});
-    host.addEventListener('change',function(e){var t=e.target;if(!t)return;if(t.id==='bmExeFile'){onExe(e);return}if(t.id==='bmFile')onFile(e);else if(t.matches&&t.matches('.bmRc input')&&UI.st){clearTimeout(RL);RL=setTimeout(renderList,450)}else if(t.matches&&t.matches('[data-cm]')){ensure();if(t.value){S.cellMap[t.getAttribute('data-cm')]=t.value;save();renderDyn()}}else if(t.matches&&t.matches('[data-fm]')){ensure();if(t.value){S.fillMap[t.getAttribute('data-fm')]=t.value;save();renderCheck()}}else if(t.matches&&t.matches('[data-mapk]')){ensure();S.map[t.getAttribute('data-mapk')]=t.value;save();renderDyn()}});
+    host.addEventListener('change',function(e){var t=e.target;if(!t)return;if(t.id==='bmExeFile'){onExe(e);return}if(t.id==='bmFile')onFile(e);else if(t.matches&&t.matches('.bmRc input')&&UI.st){clearTimeout(RL);RL=setTimeout(renderList,450)}else if(t.matches&&t.matches('[data-cm]')){ensure();if(t.value){S.cellMap[t.getAttribute('data-cm')]=t.value;save();renderDyn()}}else if(t.matches&&t.matches('[data-fm]')){ensure();if(t.value){S.fillMap[t.getAttribute('data-fm')]=t.value;save();renderCheck()}}else if(t.matches&&t.matches('[data-methk]')){ensure();S.meth[t.getAttribute('data-methk')]=(t.value==='cells'?'':t.value);save();renderDyn()}else if(t.matches&&t.matches('[data-imp]')){ensure();var ik=t.getAttribute('data-imp');S.im[ik]=S.im[ik]||{};S.im[ik].p=t.value;if(!S.im[ik].p&&!S.im[ik].m)delete S.im[ik];save();renderDyn()}else if(t.matches&&t.matches('[data-imm]')){ensure();var ik2=t.getAttribute('data-imm');S.im[ik2]=S.im[ik2]||{};S.im[ik2].m=(t.value==='same'?'':t.value);if(!S.im[ik2].p&&!S.im[ik2].m)delete S.im[ik2];save();renderDyn()}else if(t.matches&&t.matches('[data-mapk]')){ensure();S.map[t.getAttribute('data-mapk')]=t.value;save();renderDyn()}});
     document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('.dpbAdminTabBtn[data-tab="material"]'))setTimeout(render,0)});
     render();
   }
