@@ -23801,7 +23801,7 @@ body.print-activity #dpbBottomBar{display:none!important}
   }
   /* The calculation of each item comes from what the person chose (process + method), never from names.
      Item choice overrides the category choice. methods: '' / cells, splice, markX, markD, prog, trk */
-  var METH=[['','خلايا العملية مباشرة'],['trk','لما التراكر يخلّص العملية'],['splice','نصفين لكل وصلة (سبلايس)'],['purlin','بيرلن: نصفين يمين وشمال'],['markX','علامة X'],['markD','علامة /']];
+  var METH=[['','من خلايا العملية مباشرة'],['trk','لما التراكر يخلّص العملية'],['splice','نصفين لكل وصلة (سبلايس)'],['purlin','بالتناسب مع الخلايا (نصفين)'],['markX','لما خلية علامة X تتنفذ'],['markD','لما خلية علامة \\ أو / تتنفذ']];
   function itemProc(it,c){var o=S&&S.im&&S.im[it.k];if(o&&o.p)return o.p==='-'?'':o.p;return (S&&S.map&&c&&S.map[norm(c.title)])||''}
   function itemMeth(it,c){var o=S&&S.im&&S.im[it.k];if(o&&o.m)return o.m==='cells'?'':o.m;return (S&&S.meth&&c&&S.meth[norm(c.title)])||''}
   function dmType(it,c){var m=itemMeth(it,c);return m==='splice'?'S':(m==='purlin'||m==='prog')?'P':m==='trk'?'M':m==='markX'?'X':m==='markD'?'D':''}
@@ -24001,14 +24001,29 @@ body.print-activity #dpbBottomBar{display:none!important}
       return h+'</div>';
     }
     UI.imOpen=UI.imOpen||{};
-    b.innerHTML='<div class="bmMapNote">كل فئة سطر واحد: اختار العملية والحساب. <b>الفئة اللي ليها خريطة</b> اختار عمليتها و«خلايا العملية مباشرة» والكميات بتتطابق لوحدها بلون الخلية والزون. <b>الفئة اللي ملهاش خريطة</b> اختار «لما التراكر يخلّص العملية» وحدد العملية: كمية كل تراكر (من الـ BOM في كل زون) بتتحسب لما التراكر يخلّص العملية دي. غير المربوط بيفضل «لسه مش مربوط».</div>'+
+    function warns(x){var m=String(x||'').match(/<div class="bmMapV">⚠[\s\S]*?<\/div>/g);return m?m.join(''):''}
+    function itemRow(it,c,k){
+      var pr=itemProc(it,c),m=itemMeth(it,c),cust=!!S.im[it.k];
+      var h='<div class="bmMi'+(cust?' cust':'')+'"><div class="bmMiH">'+(it.no?'<em>'+esc(it.no)+'</em>':'')+'<b>'+esc(it.desc||it.pn||'—')+'</b>'+(cust?'<u>مخصّص</u>':'')+'</div>';
+      h+='<div class="bmMiF"><label>المصدر</label>'+procSel('data-imp="'+esc(it.k)+'" data-ck="'+esc(k)+'"',pr,'-')+'</div>';
+      h+='<div class="bmMiF"><label>يتحسب امتى</label>'+methSel('data-imm="'+esc(it.k)+'" data-ck="'+esc(k)+'"',m)+'</div>';
+      return h+'</div>';
+    }
+    UI.imOpen=UI.imOpen||{};
+    b.innerHTML='<div class="bmMapNote">كل فئة سطر: <b>المصدر</b> = الكمية بتتقري من أنهي عملية، و<b>يتحسب امتى</b> = توقيت نزول الكمية. الكمية دايمًا من الـBOM لكل زون ولون × عدد التراكرات. لو بند في الفئة ليه مصدر أو توقيت مختلف (زي أكتيويتر X ودامبر \\) افتح «بنود الفئة».</div>'+
       S.bom.cats.map(function(c,i){
-        var k=norm(c.title),cur=S.map[k]||'',cm=S.meth[k]||'',has=INST[i]!=null,st=INST[i],nOv=c.items.filter(function(it){return S.im[it.k]}).length;
-        var row='<div class="bmMapDef"><b>'+esc(c.title)+' <small>· '+c.items.length+' بند</small></b><div class="bmMiF"><label>العملية</label>'+procSel('data-mapk="'+esc(k)+'"',cur,'')+'</div><div class="bmMiF"><label>الحساب</label>'+methSel('data-methk="'+esc(k)+'"',cm)+'</div>';
-        if(!cur)row+='<div class="bmMapV">لسه مش مربوط</div>';
-        else if(!cm&&has&&st.__meta)row+='<div class="bmMapV ok">'+fmtN(st.__meta.tu)+' خلية · منفّذ '+fmtN(st.__meta.dn)+'</div>';
-        else if(cm){var pr0=cur;row+=itemLines(c.items[0]||{k:''},c,pr0,cm)}
-        if(nOv)row+='<div class="bmMapV">⚠ '+nOv+' بند عليه تخصيص قديم <b data-imclr="'+esc(k)+'" style="text-decoration:underline;cursor:pointer">مسح التخصيص</b></div>';
+        var k=norm(c.title),cur=S.map[k]||'',cm=S.meth[k]||'',nOv=c.items.filter(function(it){return S.im[it.k]}).length,open=!!UI.imOpen[k];
+        var row='<div class="bmMapDef"><b>'+esc(c.title)+' <small>· '+c.items.length+' بند</small></b><div class="bmMiF"><label>المصدر</label>'+procSel('data-mapk="'+esc(k)+'"',cur,'')+'</div><div class="bmMiF"><label>يتحسب امتى</label>'+methSel('data-methk="'+esc(k)+'"',cm)+'</div>';
+        var linked=!!cur||c.items.some(function(it){return itemProc(it,c)});
+        if(!linked)row+='<div class="bmMapV">لسه مش مربوط</div>';
+        else{
+          var tot=0,ex=0;c.items.forEach(function(it){tot+=itemTotal(it);var v=instOf(it,i);if(v!=null)ex+=Math.min(v,itemTotal(it))});
+          row+='<div class="bmMapV ok">المطلوب '+fmtN(tot)+' قطعة · منفّذ '+fmtN(ex)+'</div>';
+          if(cur&&cm)row+=warns(itemLines(c.items[0]||{k:''},c,cur,cm));
+        }
+        if(nOv)row+='<div class="bmMapV">'+nOv+' بند ليه مصدر/توقيت خاص <b data-imclr="'+esc(k)+'" style="text-decoration:underline;cursor:pointer">رجّعهم زي الفئة</b></div>';
+        row+='<button type="button" class="bmMapH2" data-imt="'+esc(k)+'"><span>بنود الفئة</span><small>'+c.items.length+'</small><i>'+(open?'⌄':'‹')+'</i></button>';
+        if(open)row+=c.items.map(function(it){return itemRow(it,c,k)}).join('');
         return '<div class="bmMapG">'+row+'</div></div>';
       }).join('');
   }
