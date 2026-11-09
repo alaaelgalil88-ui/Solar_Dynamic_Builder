@@ -23071,6 +23071,22 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbBm .bmMapR i{font-style:normal;font-size:12px}
 #dpbBm .bmMapR i.ok{color:#37d6a2}
 #dpbBm .bmMapR i.no{color:#f0b25b}
+#dpbBm .bmMapH2{display:flex;align-items:center;gap:8px;width:100%;margin-top:8px;padding:9px 10px;border-radius:11px;border:1px solid #31507a;background:#0e2036;color:#eef5ff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;text-align:start}
+#dpbBm .bmMapH2 span{flex:1;min-width:0;direction:ltr;text-align:left;overflow-wrap:anywhere}
+#dpbBm .bmMapH2 small{font-size:11px;color:#9fb6d3;font-weight:700}
+#dpbBm .bmMapDef{margin:6px 0 2px;padding:8px;border-radius:10px;border:1px dashed #31507a}
+#dpbBm .bmMapDef>b{display:block;font-size:11px;color:#9fb6d3;margin-bottom:4px}
+#dpbBm .bmMi{margin:10px 0;padding:10px;border:1px solid #2f527f;border-radius:13px;background:#0a1626;box-shadow:0 0 0 3px #07101c}
+#dpbBm .bmMi.cust{border-color:#d9a441}
+#dpbBm .bmMiH{display:flex;gap:6px;align-items:flex-start;font-size:13px;font-weight:800;color:#eef5ff;direction:ltr;text-align:left}
+#dpbBm .bmMiH em{font-style:normal;color:#7cc4ff;flex:none}
+#dpbBm .bmMiH b{flex:1;min-width:0;overflow-wrap:anywhere}
+#dpbBm .bmMiH u{text-decoration:none;font-size:10px;color:#d9a441;border:1px solid #d9a441;border-radius:8px;padding:1px 6px;flex:none}
+#dpbBm .bmMiC{direction:ltr;text-align:left;font-size:11px;color:#9fb6d3;margin-top:2px;overflow-wrap:anywhere}
+#dpbBm .bmMiQ{font-size:12px;color:#cfe3fb;margin:6px 0;direction:ltr;text-align:left}
+#dpbBm .bmMiF{display:flex;align-items:center;gap:8px;margin-top:6px}
+#dpbBm .bmMiF label{flex:none;width:44px;font-size:11px;color:#9fb6d3;font-weight:700}
+#dpbBm .bmMiF select{flex:1;min-width:0;height:34px;border-radius:9px;background:#0b1828;color:#eef5ff;border:1px solid #31507a;font-family:inherit;font-size:12px;padding:0 6px}
 #dpbBm .bmCgN em.in{color:#7fc4ff}
 
 #dpbBm .bmUs{display:flex;align-items:center;flex-wrap:wrap;gap:6px 7px;margin-top:6px}
@@ -23785,10 +23801,10 @@ body.print-activity #dpbBottomBar{display:none!important}
   }
   /* The calculation of each item comes from what the person chose (process + method), never from names.
      Item choice overrides the category choice. methods: '' / cells, splice, markX, markD, prog, trk */
-  var METH=[['','خلايا العملية'],['splice','نصفين لكل وصلة'],['markX','علامة X'],['markD','علامة /'],['prog','نسبة تقدّم العملية'],['trk','واحد لكل تراكر لما يكمل']];
-  function itemProc(it,c){var o=S&&S.im&&S.im[it.k];return (o&&o.p)||(S&&S.map&&c&&S.map[norm(c.title)])||''}
+  var METH=[['','خلايا العملية مباشرة'],['trk','لما التراكر يخلّص العملية'],['splice','نصفين لكل وصلة (سبلايس)'],['purlin','بيرلن: نصفين يمين وشمال'],['markX','علامة X'],['markD','علامة /']];
+  function itemProc(it,c){var o=S&&S.im&&S.im[it.k];if(o&&o.p)return o.p==='-'?'':o.p;return (S&&S.map&&c&&S.map[norm(c.title)])||''}
   function itemMeth(it,c){var o=S&&S.im&&S.im[it.k];if(o&&o.m)return o.m==='cells'?'':o.m;return (S&&S.meth&&c&&S.meth[norm(c.title)])||''}
-  function dmType(it,c){var m=itemMeth(it,c);return m==='splice'?'S':m==='prog'?'P':m==='trk'?'M':m==='markX'?'X':m==='markD'?'D':''}
+  function dmType(it,c){var m=itemMeth(it,c);return m==='splice'?'S':(m==='purlin'||m==='prog')?'P':m==='trk'?'M':m==='markX'?'X':m==='markD'?'D':''}
   function dmZones(){
     var ix=planColorIndex(),out={};if(!S.marks||!ix)return out;
     Object.keys(S.marks.z).forEach(function(l){var k=ix.letters[l];if(k)out[k]={nD:S.marks.z[l].d.length,nX:S.marks.z[l].x.length}});
@@ -23851,7 +23867,8 @@ body.print-activity #dpbBottomBar{display:none!important}
   function dmPurlinStats(name){
     var rows=procRows(name);if(!rows)return null;
     var o={tr:0,done:0,full:0,zf:{}};
-    rows.forEach(function(r){if(!(r.total>0))return;o.tr++;o.done+=r.done/r.total;if(r.done>=r.total)o.full++;o.zf[r.ent.k]=(o.zf[r.ent.k]||0)+r.done/r.total});
+    o.zr={};o.half={};
+    rows.forEach(function(r){if(!(r.total>0))return;o.tr++;o.done+=r.done/r.total;if(r.done>=r.total)o.full++;o.zf[r.ent.k]=(o.zf[r.ent.k]||0)+r.done/r.total;var h=Math.round(r.total/2);o.half[h]=1;(o.zr[r.ent.k]||(o.zr[r.ent.k]={}))[r.total+2]=1});
     return o.tr?o:null;
   }
   function dmTrkStats(name){
@@ -23860,15 +23877,12 @@ body.print-activity #dpbBottomBar{display:none!important}
     rows.forEach(function(r){if(!(r.total>0))return;o.tr++;if(r.done>=r.total){o.full++;o.zfull[r.ent.k]=(o.zfull[r.ent.k]||0)+1}});
     return o.tr?o:null;
   }
-  function dmWarns(c,cur,st){
+  function dmItemWarns(it,c,st){
     var w=[];if(!st||!st.zr)return w;
-    c.items.forEach(function(it){
-      if(dmType(it,c)!=='S'||itemProc(it,c)!==cur)return;
-      S.bom.colors.forEach(function(co){
-        var q=Number(it.q[co.key])||0,zr=st.zr[co.key];if(!(q>0)||!zr)return;
-        var ex=Object.keys(zr).map(Number);
-        if(ex.length&&ex.indexOf(q)<0)w.push((it.no?it.no+' ':'')+co.name+': BOM '+fmtN(q)+' / cells '+ex.map(fmtN).join(' | '));
-      });
+    S.bom.colors.forEach(function(co){
+      var q=Number(it.q[co.key])||0,zr=st.zr[co.key];if(!(q>0)||!zr)return;
+      var ex=Object.keys(zr).map(Number);
+      if(ex.length&&ex.indexOf(q)<0)w.push(co.name+': BOM '+fmtN(q)+' / '+ex.map(fmtN).join(' | '));
     });
     return w;
   }
@@ -23952,41 +23966,52 @@ body.print-activity #dpbBottomBar{display:none!important}
   function renderDyn(){refreshInst();renderMap();renderCheck();renderDm();renderSummary();renderList();pubSoon();pullSoon()}
   function renderMap(){
     var b=q('bmMapB');if(!b||!S||!S.bom)return;
-    var ps=procList(),n=0;S.bom.cats.forEach(function(c){if(S.map[norm(c.title)])n++});
+    var ps=procList(),n=0;S.bom.cats.forEach(function(c){c.items.forEach(function(it){if(dmMapProc(it,c))n++})});
     var nn=q('bmMapN');if(nn)nn.textContent=n?'('+n+')':'';
     if(!UI.mapOpen)return;
     if(!ps.length){b.innerHTML='<div class="bmMapNote">مفيش عمليات تركيب متاحة دلوقتي. افتح الـ Plan والخرائط الأول وبعدين ارجع هنا.</div>';return}
-    function procSel(attr,val,first){return '<select '+attr+'><option value="">'+first+'</option>'+ps.map(function(p){return '<option value="'+esc(p.name)+'"'+(p.name===val?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'</select>'}
-    function methSel(attr,val,same){return '<select '+attr+'>'+(same?'<option value="same">زي الفئة</option>':'')+METH.map(function(m){var v=m[0]||'cells';return '<option value="'+v+'"'+(v===val?' selected':'')+'>'+m[1]+'</option>'}).join('')+'</select>'}
-    function line(pr,m){
-      var lb='<b dir="ltr">'+esc(pr)+'</b> · ';
-      if(m==='splice'){var sq=dmSqStats(pr);if(!sq)return '<div class="bmMapV">'+lb+'مفيش بيانات للعملية دي لسه.</div>';return '<div class="bmMapV ok">'+lb+'نصفين لكل وصلة: '+fmtN(sq.req)+' نصف · منفّذ '+fmtN(sq.done)+'</div>'}
-      if(m==='prog'){var pu=dmPurlinStats(pr);if(!pu)return '<div class="bmMapV">'+lb+'مفيش بيانات للعملية دي لسه.</div>';return '<div class="bmMapV ok">'+lb+fmtN(pu.tr)+' تراكر · اكتمل '+fmtN(pu.full)+' · تقدّم '+Math.round(pu.done*100/pu.tr)+'%</div>'}
-      if(m==='trk'){var tk=dmTrkStats(pr);if(!tk)return '<div class="bmMapV">'+lb+'مفيش بيانات للعملية دي لسه.</div>';return '<div class="bmMapV ok">'+lb+fmtN(tk.tr)+' تراكر · منفّذ '+fmtN(tk.full)+'</div>'}
-      if(!S.marks)return '<div class="bmMapV">'+lb+'ارفع ملف EXECUTION من كارت ⚙️ علامات X و / عشان تتحسب العلامات.</div>';
-      var mk=dmMarkStats(pr);if(!mk)return '<div class="bmMapV">'+lb+'مفيش بيانات للعملية دي لسه.</div>';
-      var x=mk[m==='markX'?'X':'D'],o='<div class="bmMapV ok">'+lb+'<b dir="ltr">'+(m==='markX'?'X':'/')+'</b> '+fmtN(x.n)+' خلية · منفّذ '+fmtN(x.d)+'</div>';
-      if(mk.bad||mk.um)o+='<div class="bmMapV">⚠ '+fmtN(mk.bad+mk.um)+' تراكر مش متطابق مع العينات ومش محسوب.</div>';
-      return o;
+    dmCompute();
+    var cache={};
+    function once(key,fn){return key in cache?cache[key]:(cache[key]=fn())}
+    function procSel(attr,val,none){return '<select '+attr+'><option value="'+(none||'')+'">— بدون —</option>'+ps.map(function(p){return '<option value="'+esc(p.name)+'"'+(p.name===val?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'</select>'}
+    function methSel(attr,val){return '<select '+attr+'>'+METH.map(function(m){var v=m[0]||'cells';return '<option value="'+v+'"'+(v===(val||'cells')?' selected':'')+'>'+m[1]+'</option>'}).join('')+'</select>'}
+    function itemLines(it,c,pr,m){
+      var o='',ok=function(t){return '<div class="bmMapV ok">'+t+'</div>'},no=function(t){return '<div class="bmMapV">'+t+'</div>'};
+      if(m==='splice'){var sq=once('S|'+pr,function(){return dmSqStats(pr)});if(!sq)return no('مفيش بيانات للعملية دي لسه.');o=ok('نصفين لكل وصلة: '+fmtN(sq.req)+' نصف · منفّذ '+fmtN(sq.done));dmItemWarns(it,c,sq).forEach(function(x){o+=no('⚠ <span dir="ltr">'+esc(x)+'</span>')});return o}
+      if(m==='purlin'||m==='prog'){var pu=once('P|'+pr,function(){return dmPurlinStats(pr)});if(!pu)return no('مفيش بيانات للعملية دي لسه.');var hs=Object.keys(pu.half).map(function(h){return h+'+1'}).join(' | ');o=ok(fmtN(pu.tr)+' تراكر · كل نص ('+hs+') · تقدّم '+Math.round(pu.done*100/pu.tr)+'%');dmItemWarns(it,c,pu).forEach(function(x){o+=no('⚠ <span dir="ltr">'+esc(x)+'</span>')});return o}
+      if(m==='trk'){var tk=once('T|'+pr,function(){return dmTrkStats(pr)});if(!tk)return no('مفيش بيانات للعملية دي لسه.');return ok(fmtN(tk.tr)+' تراكر · خلّصوا '+fmtN(tk.full))}
+      if(m==='markX'||m==='markD'){
+        if(!S.marks)return no('ارفع ملف EXECUTION من كارت ⚙️ علامات X و / عشان تتحسب العلامات.');
+        var mk=once('M|'+pr,function(){return dmMarkStats(pr)});if(!mk)return no('مفيش بيانات للعملية دي لسه.');
+        var x=mk[m==='markX'?'X':'D'];o=ok('<b dir="ltr">'+(m==='markX'?'X':'/')+'</b> '+fmtN(x.n)+' خلية · منفّذ '+fmtN(x.d));
+        if(mk.bad||mk.um)o+=no('⚠ '+fmtN(mk.bad+mk.um)+' تراكر مش متطابق مع العينات ومش محسوب.');
+        return o;
+      }
+      return '';
     }
-    b.innerHTML='<div class="bmMapNote">اختار لكل فئة العملية وطريقة الحساب مرة واحدة. لو بند معين ليه حساب مختلف، افتح «استثناءات» وضيفه. مفيش حاجة بتتعرف بالاسم.</div>'+
+    function itemCard(it,c,k){
+      var pr=itemProc(it,c),m=itemMeth(it,c),cust=!!S.im[it.k],qz=S.bom.colors.filter(function(co){return Number(it.q[co.key])>0}).map(function(co){return co.name+' '+fmtN(it.q[co.key])}).join(' · ');
+      var h='<div class="bmMi'+(cust?' cust':'')+'"><div class="bmMiH">'+(it.no?'<em>'+esc(it.no)+'</em>':'')+'<b>'+esc(it.desc||it.pn||'—')+'</b>'+(cust?'<u>مخصّص</u>':'')+'</div>';
+      if(it.pn)h+='<div class="bmMiC">'+esc(it.pn)+'</div>';
+      h+='<div class="bmMiQ">'+(qz||'—')+'</div>';
+      h+='<div class="bmMiF"><label>العملية</label>'+procSel('data-imp="'+esc(it.k)+'" data-ck="'+esc(k)+'"',pr,'-')+'</div>';
+      h+='<div class="bmMiF"><label>الحساب</label>'+methSel('data-imm="'+esc(it.k)+'" data-ck="'+esc(k)+'"',m)+'</div>';
+      if(pr&&m)h+=itemLines(it,c,pr,m);
+      if(DMV[it.k]!=null)h+='<div class="bmMapV ok">منفّذ '+fmtN(DMV[it.k])+' قطعة</div>';
+      return h+'</div>';
+    }
+    UI.imOpen=UI.imOpen||{};
+    b.innerHTML='<div class="bmMapNote">كل بند في كارت لوحده: اختار له العملية وطريقة الحساب. «لما التراكر يخلّص العملية» معناها إن كمية البند للتراكر الواحد (من الـ BOM) تتحسب لما التراكر ده يخلّص العملية اللي اخترتها. مفيش حاجة بتتعرف بالاسم.</div>'+
       S.bom.cats.map(function(c,i){
-        var k=norm(c.title),cur=S.map[k]||'',has=INST[i]!=null,st=INST[i],cm=S.meth[k]||'';
-        var row='<div class="bmMapR"><span>'+esc(c.title)+'</span>'+procSel('data-mapk="'+esc(k)+'"',cur,'— بدون —')+(cur?'<i class="'+(has?'ok':'no')+'" title="'+(has?'البيانات جاهزة':'مفيش بيانات تركيب للعملية دي لسه')+'">'+(has?'●':'○')+'</i>':'')+'</div>';
-        if(cur)row+='<div class="bmMapR"><span>طريقة الحساب</span>'+methSel('data-methk="'+esc(k)+'"',cm||'cells',false)+'</div>';
-        var seen={},nOv=0;
-        c.items.forEach(function(it){if(S.im[it.k])nOv++;var m=itemMeth(it,c),pr=dmMapProc(it,c);if(!m||!pr)return;var kk=pr+'|'+m;if(seen[kk])return;seen[kk]=1;row+=line(pr,m);if(m==='splice'){dmWarns(c,pr,dmSqStats(pr)).forEach(function(x){row+='<div class="bmMapV">⚠ <span dir="ltr">'+esc(x)+'</span></div>'})}});
-        if(cur&&!cm&&has&&st.__meta){
-          var m0=st.__meta,tip=S.bom.colors.filter(function(co){return st[co.key]}).map(function(co){var x=st[co.key];return co.name+': '+x.n+' تراكر · '+x.u+' خلية'+(x.u!==x.pu?' (الـ Plan '+x.pu+')':'')}).join('\n');
-          row+='<div class="bmMapV ok" title="'+esc(tip)+'">'+fmtN(m0.tu)+' خلية في العملية · منفّذ '+fmtN(m0.dn)+'</div>';
+        var k=norm(c.title),cur=S.map[k]||'',cm=S.meth[k]||'',has=INST[i]!=null,st=INST[i],open=!!UI.imOpen[k],nOv=c.items.filter(function(it){return S.im[it.k]}).length;
+        var row='<button type="button" class="bmMapH2" data-imt="'+esc(k)+'"><span>'+esc(c.title)+'</span><small>'+c.items.length+' بند'+(nOv?' · '+nOv+' مخصّص':'')+'</small><i>'+(open?'⌄':'‹')+'</i></button>';
+        if(!open){
+          if(cur&&!cm&&has&&st.__meta)row+='<div class="bmMapV ok">'+esc(cur)+' · '+fmtN(st.__meta.tu)+' خلية · منفّذ '+fmtN(st.__meta.dn)+'</div>';
+          return '<div class="bmMapG">'+row+'</div>';
         }
-        UI.imOpen=UI.imOpen||{};
-        row+='<div class="bmMapR"><button type="button" class="bmChip'+(UI.imOpen[k]?' on':'')+'" data-imt="'+esc(k)+'">⚙ استثناءات'+(nOv?' ('+nOv+')':'')+'</button></div>';
-        if(UI.imOpen[k]){
-          row+=c.items.filter(function(it){return S.im[it.k]}).map(function(it){var o=S.im[it.k]||{};return '<div class="bmMapR"><span>'+(it.no?esc(it.no)+' ':'')+esc(String(it.desc).slice(0,34))+'</span><button type="button" class="bmChip" data-imrm="'+esc(it.k)+'">✕ شيل</button></div><div class="bmMapR"><span>↳ العملية</span>'+procSel('data-imp="'+esc(it.k)+'"',o.p||'','زي الفئة')+'</div><div class="bmMapR"><span>↳ الطريقة</span>'+methSel('data-imm="'+esc(it.k)+'"',o.m||'same',true)+'</div>'}).join('');
-          var fr=c.items.filter(function(it){return !S.im[it.k]});
-          if(fr.length)row+='<div class="bmMapR"><span>إضافة استثناء</span><select data-imadd="'+esc(k)+'"><option value="">— اختار بند —</option>'+fr.map(function(it){return '<option value="'+esc(it.k)+'">'+(it.no?esc(it.no)+' ':'')+esc(String(it.desc).slice(0,40))+'</option>'}).join('')+'</select></div>';
-        }
+        row+='<div class="bmMapDef"><b>الافتراضي للفئة (أي بند من غير تخصيص)</b><div class="bmMiF"><label>العملية</label>'+procSel('data-mapk="'+esc(k)+'"',cur,'')+'</div><div class="bmMiF"><label>الحساب</label>'+methSel('data-methk="'+esc(k)+'"',cm)+'</div></div>';
+        if(cur&&!cm&&has&&st.__meta)row+='<div class="bmMapV ok">'+esc(cur)+' · '+fmtN(st.__meta.tu)+' خلية · منفّذ '+fmtN(st.__meta.dn)+'</div>';
+        row+=c.items.map(function(it){return itemCard(it,c,k)}).join('');
         return '<div class="bmMapG">'+row+'</div>';
       }).join('');
   }
@@ -24171,8 +24196,6 @@ body.print-activity #dpbBottomBar{display:none!important}
     if(zc){var zp=zc.getAttribute('data-zc'),zi=zp.indexOf('|'),zci=zp.slice(0,zi),zk3=zp.slice(zi+1);UI.ckZ=UI.ckZ||{};UI.ckZ[zci]=(zc.getAttribute('aria-expanded')==='true')?'':zk3;renderCheck();return}
     var ct=t.closest&&t.closest('[data-ckt]');
     if(ct){var ck0=ct.getAttribute('data-ckt');UI.ckOne=(UI.ckOne===ck0?'':ck0);renderCheck();return}
-    var dr=t.closest&&t.closest('[data-imrm]');
-    if(dr){ensure();delete S.im[dr.getAttribute('data-imrm')];save();renderDyn();return}
     var dp=t.closest&&t.closest('[data-imt]');
     if(dp){var ck1=dp.getAttribute('data-imt');UI.imOpen=UI.imOpen||{};UI.imOpen[ck1]=!UI.imOpen[ck1];renderMap();return}
     var bp=t.closest&&t.closest('[data-bmpub]');
@@ -24301,7 +24324,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     host.setAttribute('data-ready','1');
     host.addEventListener('click',onClick);host.addEventListener('input',onInput);
     host.addEventListener('focusin',function(e){var t=e.target;if(t&&t.matches&&t.matches('.bmCnt input,.bmRc input,.bmUs input')){clearTimeout(RL);setTimeout(function(){try{t.select()}catch(_){}},0)}});
-    host.addEventListener('change',function(e){var t=e.target;if(!t)return;if(t.id==='bmExeFile'){onExe(e);return}if(t.id==='bmFile')onFile(e);else if(t.matches&&t.matches('.bmRc input')&&UI.st){clearTimeout(RL);RL=setTimeout(renderList,450)}else if(t.matches&&t.matches('[data-cm]')){ensure();if(t.value){S.cellMap[t.getAttribute('data-cm')]=t.value;save();renderDyn()}}else if(t.matches&&t.matches('[data-fm]')){ensure();if(t.value){S.fillMap[t.getAttribute('data-fm')]=t.value;save();renderCheck()}}else if(t.matches&&t.matches('[data-methk]')){ensure();S.meth[t.getAttribute('data-methk')]=(t.value==='cells'?'':t.value);save();renderDyn()}else if(t.matches&&t.matches('[data-imp]')){ensure();var ik=t.getAttribute('data-imp');S.im[ik]=S.im[ik]||{};S.im[ik].p=t.value;if(!S.im[ik].p&&!S.im[ik].m)delete S.im[ik];save();renderDyn()}else if(t.matches&&t.matches('[data-imm]')){ensure();var ik2=t.getAttribute('data-imm');S.im[ik2]=S.im[ik2]||{};S.im[ik2].m=(t.value==='same'?'':t.value);if(!S.im[ik2].p&&!S.im[ik2].m)delete S.im[ik2];save();renderDyn()}else if(t.matches&&t.matches('[data-imadd]')){ensure();var ak=t.value,ck=t.getAttribute('data-imadd');if(ak){S.im[ak]={m:(S.meth[ck]||'cells')};UI.imOpen=UI.imOpen||{};UI.imOpen[ck]=true;save();renderDyn()}}else if(t.matches&&t.matches('[data-mapk]')){ensure();S.map[t.getAttribute('data-mapk')]=t.value;save();renderDyn()}});
+    host.addEventListener('change',function(e){var t=e.target;if(!t)return;if(t.id==='bmExeFile'){onExe(e);return}if(t.id==='bmFile')onFile(e);else if(t.matches&&t.matches('.bmRc input')&&UI.st){clearTimeout(RL);RL=setTimeout(renderList,450)}else if(t.matches&&t.matches('[data-cm]')){ensure();if(t.value){S.cellMap[t.getAttribute('data-cm')]=t.value;save();renderDyn()}}else if(t.matches&&t.matches('[data-fm]')){ensure();if(t.value){S.fillMap[t.getAttribute('data-fm')]=t.value;save();renderCheck()}}else if(t.matches&&t.matches('[data-methk]')){ensure();S.meth[t.getAttribute('data-methk')]=(t.value==='cells'?'':t.value);save();renderDyn()}else if(t.matches&&t.matches('[data-imp]')){ensure();var ik=t.getAttribute('data-imp'),ck=t.getAttribute('data-ck'),v1=t.value,cp=S.map[ck]||'';S.im[ik]=S.im[ik]||{};S.im[ik].p=((v1==='-'?'':v1)===cp)?'':v1;if(!S.im[ik].p&&!S.im[ik].m)delete S.im[ik];save();renderDyn()}else if(t.matches&&t.matches('[data-imm]')){ensure();var ik2=t.getAttribute('data-imm'),ck2=t.getAttribute('data-ck'),v2=t.value,cm2=S.meth[ck2]||'';S.im[ik2]=S.im[ik2]||{};S.im[ik2].m=((v2==='cells'?'':v2)===cm2)?'':v2;if(!S.im[ik2].p&&!S.im[ik2].m)delete S.im[ik2];save();renderDyn()}else if(t.matches&&t.matches('[data-mapk]')){ensure();S.map[t.getAttribute('data-mapk')]=t.value;save();renderDyn()}});
     document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('.dpbAdminTabBtn[data-tab="material"]'))setTimeout(render,0)});
     render();
   }
