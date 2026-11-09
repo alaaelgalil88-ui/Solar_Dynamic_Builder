@@ -23073,6 +23073,7 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbBm .bmMapR i.no{color:#f0b25b}
 #dpbBm .bmMapH2{display:flex;align-items:center;gap:8px;width:100%;margin-top:8px;padding:9px 10px;border-radius:11px;border:1px solid #31507a;background:#0e2036;color:#eef5ff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;text-align:start}
 #dpbBm .bmMapH2 span{flex:1;min-width:0;direction:ltr;text-align:left;overflow-wrap:anywhere}
+#dpbBm .bmZt{margin-top:8px;display:flex;flex-direction:column;gap:6px}#dpbBm .bmZr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:10px;background:#0e2036;border:1px solid #284566;font-size:12px;color:#d7e6fa}#dpbBm .bmZr span{flex:1;min-width:0}#dpbBm .bmZr b{color:#7ff0c0}#dpbBm .bmZs{background:#10294a;border-color:#3b6aa5}
 #dpbBm .bmMapH2 small{font-size:11px;color:#9fb6d3;font-weight:700}
 #dpbBm .bmMapDef{margin:6px 0 2px;padding:8px;border-radius:10px;border:1px dashed #31507a}
 #dpbBm .bmMapDef>b{display:block;font-size:11px;color:#9fb6d3;margin-bottom:4px}
@@ -23817,15 +23818,15 @@ body.print-activity #dpbBottomBar{display:none!important}
       var by=window.__dpbLiveGridByProcess||{},lk=Object.keys(by).filter(function(k){return k.toLowerCase()===String(name).trim().toLowerCase()})[0],lg=lk&&by[lk];
       var tr=window.__dpbProcTrackers&&window.__dpbProcTrackers(name);if(!lg||!lg.valuesByCoord||!tr||!tr.length)return null;
       var op=procList().filter(function(p){return String(p.name).trim().toLowerCase()===String(name).trim().toLowerCase()})[0],k=op?Number(op.code):0,grouped=!!(op&&op.grouped);
-      var out={D:{n:0,d:0},X:{n:0,d:0},um:0,bad:0};
+      var out={D:{n:0,d:0,z:{}},X:{n:0,d:0,z:{}},um:0,bad:0};
       tr.forEach(function(t){
         var units=t.units||[];if(!units.length)return;
         var rn=String(t.row||'').replace(/\D/g,''),tn=Number(t.number)||Number(String(t.label||'').replace(/\D/g,''))||0;
         var ent=ix.byKey.get(rn+'|'+tn)||ix.byNum.get(tn);if(!ent){out.um++;return}
         var z=S.marks.z[ent.l];if(!z||z.n!==units.length){out.bad++;return}
         function dn(i){var u=units[i],v=Number(lg.valuesByCoord.get(Number(u.r1)+'|'+Number(u.c1)))||0;return grouped&&k>0?v>=k:v>0}
-        z.d.forEach(function(i){out.D.n++;if(dn(i))out.D.d++});
-        z.x.forEach(function(i){out.X.n++;if(dn(i))out.X.d++});
+        z.d.forEach(function(i){out.D.n++;if(dn(i)){out.D.d++;out.D.z[ent.k]=(out.D.z[ent.k]||0)+1}});
+        z.x.forEach(function(i){out.X.n++;if(dn(i)){out.X.d++;out.X.z[ent.k]=(out.X.z[ent.k]||0)+1}});
       });
       return out;
     }catch(_){return null}
@@ -24002,28 +24003,39 @@ body.print-activity #dpbBottomBar{display:none!important}
     }
     UI.imOpen=UI.imOpen||{};
     function warns(x){var m=String(x||'').match(/<div class="bmMapV">⚠[\s\S]*?<\/div>/g);return m?m.join(''):''}
-    function itemRow(it,c,k){
-      var pr=itemProc(it,c),m=itemMeth(it,c),cust=!!S.im[it.k];
-      var h='<div class="bmMi'+(cust?' cust':'')+'"><div class="bmMiH">'+(it.no?'<em>'+esc(it.no)+'</em>':'')+'<b>'+esc(it.desc||it.pn||'—')+'</b>'+(cust?'<u>مخصّص</u>':'')+'</div>';
+    function zoneExec(it,c,ci,pr,m){
+      if(!pr)return null;
+      var r={},q1=function(co){return Number(it.q[co.key])||0};
+      if(m==='trk'){var d=once('T|'+pr,function(){return dmTrkStats(pr)});if(!d)return null;S.bom.colors.forEach(function(co){r[co.key]=(d.zfull[co.key]||0)*q1(co)})}
+      else if(m==='splice'){var a=once('S|'+pr,function(){return dmSqStats(pr)});if(!a)return null;S.bom.colors.forEach(function(co){r[co.key]=(a.zj[co.key]||0)*q1(co)})}
+      else if(m==='purlin'||m==='prog'){var p2=once('P|'+pr,function(){return dmPurlinStats(pr)});if(!p2)return null;S.bom.colors.forEach(function(co){r[co.key]=(p2.zf[co.key]||0)*q1(co)})}
+      else if(m==='markX'||m==='markD'){if(!S.marks)return null;var mk=once('M|'+pr,function(){return dmMarkStats(pr)});if(!mk)return null;var zz=mk[m==='markX'?'X':'D'].z;S.bom.colors.forEach(function(co){r[co.key]=zz[co.key]||0})}
+      else{var cc=INSTC[ci];if(cc&&cc.linked&&cc.linked[it.k])return null;var st=INST[ci];if(!st||itemProc(it,c)!==cur0(c))st=once('C|'+pr,function(){return procStats(pr)});if(!st)return null;S.bom.colors.forEach(function(co){r[co.key]=st[co.key]?q1(co)*Math.min(st[co.key].f,cnt(co.key)):0})}
+      return r;
+    }
+    function cur0(c){return S.map[norm(c.title)]||''}
+    function itemOpen(it,c,k,ci){
+      var pr=itemProc(it,c),m=itemMeth(it,c),cust=!!S.im[it.k],open=UI.imItem===it.k;
+      var h='<div class="bmMi'+(cust?' cust':'')+(open?' open':'')+'"><button type="button" class="bmMapH2" data-imi="'+esc(it.k)+'"><span>'+(it.no?esc(it.no)+' · ':'')+esc(it.desc||it.pn||'—')+(it.pn?' <small>'+esc(it.pn)+'</small>':'')+'</span>'+(cust?'<small>مخصّص</small>':'')+'<i>'+(open?'⌄':'‹')+'</i></button>';
+      if(!open)return h+'</div>';
       h+='<div class="bmMiF"><label>المصدر</label>'+procSel('data-imp="'+esc(it.k)+'" data-ck="'+esc(k)+'"',pr,'-')+'</div>';
       h+='<div class="bmMiF"><label>يتحسب امتى</label>'+methSel('data-imm="'+esc(it.k)+'" data-ck="'+esc(k)+'"',m)+'</div>';
+      var ze=(pr&&dmCompute&&true)?zoneExec(it,c,ci,pr,m):null,tr=0,tq=0,te=0;
+      var rows=S.bom.colors.filter(function(co){return Number(it.q[co.key])>0}).map(function(co){
+        var per=Number(it.q[co.key]),n=cnt(co.key),req=per*n,ex=ze&&ze[co.key]!=null?Math.min(ze[co.key],req):null;
+        tr+=n;tq+=req;if(ex!=null)te+=ex;
+        return '<div class="bmZr">'+dot(co.name,co.key)+'<span>'+fmtN(per)+' × '+fmtN(n)+' = <b>'+fmtN(req)+'</b></span><span>'+(pr?(ex==null?'—':'منفّذ <b>'+fmtN(ex)+'</b> · باقي <b>'+fmtN(req-ex)+'</b>'):'لسه مش مربوط')+'</span></div>';
+      }).join('');
+      h+='<div class="bmZt">'+(rows||'<div class="bmMapV">مفيش كمية للبند ده في الـ BOM.</div>')+(rows?'<div class="bmZr bmZs"><span>الإجمالي <small>(كمية التراكر × عدد التراكرات)</small></span><span><b>'+fmtN(tq)+'</b>'+(pr&&ze?' · منفّذ <b>'+fmtN(te)+'</b> · باقي <b>'+fmtN(tq-te)+'</b>':'')+'</span></div>':'')+'</div>';
+      if(pr&&m)h+=warns(itemLines(it,c,pr,m));
       return h+'</div>';
     }
-    UI.imOpen=UI.imOpen||{};
-    b.innerHTML='<div class="bmMapNote">كل فئة سطر: <b>المصدر</b> = الكمية بتتقري من أنهي عملية، و<b>يتحسب امتى</b> = توقيت نزول الكمية. الكمية دايمًا من الـBOM لكل زون ولون × عدد التراكرات. لو بند في الفئة ليه مصدر أو توقيت مختلف (زي أكتيويتر X ودامبر \\) افتح «بنود الفئة».</div>'+
+    b.innerHTML='<div class="bmMapNote">لكل فئة: <b>المصدر</b> = الكمية بتتقري من أنهي عملية، و<b>يتحسب امتى</b> = توقيت نزول الكمية. افتح أي بند (واحد بس بيفضل مفتوح) تلاقي كميته من الـBOM لكل زون ولون × عدد التراكرات، والمنفّذ والباقي.</div>'+
       S.bom.cats.map(function(c,i){
-        var k=norm(c.title),cur=S.map[k]||'',cm=S.meth[k]||'',nOv=c.items.filter(function(it){return S.im[it.k]}).length,open=!!UI.imOpen[k];
+        var k=norm(c.title),cur=S.map[k]||'',cm=S.meth[k]||'',nOv=c.items.filter(function(it){return S.im[it.k]}).length;
         var row='<div class="bmMapDef"><b>'+esc(c.title)+' <small>· '+c.items.length+' بند</small></b><div class="bmMiF"><label>المصدر</label>'+procSel('data-mapk="'+esc(k)+'"',cur,'')+'</div><div class="bmMiF"><label>يتحسب امتى</label>'+methSel('data-methk="'+esc(k)+'"',cm)+'</div>';
-        var linked=!!cur||c.items.some(function(it){return itemProc(it,c)});
-        if(!linked)row+='<div class="bmMapV">لسه مش مربوط</div>';
-        else{
-          var tot=0,ex=0;c.items.forEach(function(it){tot+=itemTotal(it);var v=instOf(it,i);if(v!=null)ex+=Math.min(v,itemTotal(it))});
-          row+='<div class="bmMapV ok">المطلوب '+fmtN(tot)+' قطعة · منفّذ '+fmtN(ex)+'</div>';
-          if(cur&&cm)row+=warns(itemLines(c.items[0]||{k:''},c,cur,cm));
-        }
         if(nOv)row+='<div class="bmMapV">'+nOv+' بند ليه مصدر/توقيت خاص <b data-imclr="'+esc(k)+'" style="text-decoration:underline;cursor:pointer">رجّعهم زي الفئة</b></div>';
-        row+='<button type="button" class="bmMapH2" data-imt="'+esc(k)+'"><span>بنود الفئة</span><small>'+c.items.length+'</small><i>'+(open?'⌄':'‹')+'</i></button>';
-        if(open)row+=c.items.map(function(it){return itemRow(it,c,k)}).join('');
+        row+=c.items.map(function(it){return itemOpen(it,c,k,i)}).join('');
         return '<div class="bmMapG">'+row+'</div></div>';
       }).join('');
   }
@@ -24208,6 +24220,8 @@ body.print-activity #dpbBottomBar{display:none!important}
     if(zc){var zp=zc.getAttribute('data-zc'),zi=zp.indexOf('|'),zci=zp.slice(0,zi),zk3=zp.slice(zi+1);UI.ckZ=UI.ckZ||{};UI.ckZ[zci]=(zc.getAttribute('aria-expanded')==='true')?'':zk3;renderCheck();return}
     var ct=t.closest&&t.closest('[data-ckt]');
     if(ct){var ck0=ct.getAttribute('data-ckt');UI.ckOne=(UI.ckOne===ck0?'':ck0);renderCheck();return}
+    var ii=t.closest&&t.closest('[data-imi]');
+    if(ii){var ik0=ii.getAttribute('data-imi');UI.imItem=(UI.imItem===ik0?'':ik0);renderMap();return}
     var ic=t.closest&&t.closest('[data-imclr]');
     if(ic){var ck9=ic.getAttribute('data-imclr'),cc9=S.bom.cats.filter(function(x){return norm(x.title)===ck9})[0];if(cc9){cc9.items.forEach(function(it){delete S.im[it.k]});save();renderDyn()}return}
     var dp=t.closest&&t.closest('[data-imt]');
