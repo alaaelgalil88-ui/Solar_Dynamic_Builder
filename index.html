@@ -24001,18 +24001,15 @@ body.print-activity #dpbBottomBar{display:none!important}
       return h+'</div>';
     }
     UI.imOpen=UI.imOpen||{};
-    b.innerHTML='<div class="bmMapNote">كل بند في كارت لوحده: اختار له العملية وطريقة الحساب. «لما التراكر يخلّص العملية» معناها إن كمية البند للتراكر الواحد (من الـ BOM) تتحسب لما التراكر ده يخلّص العملية اللي اخترتها. مفيش حاجة بتتعرف بالاسم.</div>'+
+    b.innerHTML='<div class="bmMapNote">كل فئة سطر واحد: اختار العملية والحساب. <b>الفئة اللي ليها خريطة</b> اختار عمليتها و«خلايا العملية مباشرة» والكميات بتتطابق لوحدها بلون الخلية والزون. <b>الفئة اللي ملهاش خريطة</b> اختار «لما التراكر يخلّص العملية» وحدد العملية: كمية كل تراكر (من الـ BOM في كل زون) بتتحسب لما التراكر يخلّص العملية دي. غير المربوط بيفضل «لسه مش مربوط».</div>'+
       S.bom.cats.map(function(c,i){
-        var k=norm(c.title),cur=S.map[k]||'',cm=S.meth[k]||'',has=INST[i]!=null,st=INST[i],open=!!UI.imOpen[k],nOv=c.items.filter(function(it){return S.im[it.k]}).length;
-        var row='<button type="button" class="bmMapH2" data-imt="'+esc(k)+'"><span>'+esc(c.title)+'</span><small>'+c.items.length+' بند'+(nOv?' · '+nOv+' مخصّص':'')+'</small><i>'+(open?'⌄':'‹')+'</i></button>';
-        if(!open){
-          if(cur&&!cm&&has&&st.__meta)row+='<div class="bmMapV ok">'+esc(cur)+' · '+fmtN(st.__meta.tu)+' خلية · منفّذ '+fmtN(st.__meta.dn)+'</div>';
-          return '<div class="bmMapG">'+row+'</div>';
-        }
-        row+='<div class="bmMapDef"><b>الافتراضي للفئة (أي بند من غير تخصيص)</b><div class="bmMiF"><label>العملية</label>'+procSel('data-mapk="'+esc(k)+'"',cur,'')+'</div><div class="bmMiF"><label>الحساب</label>'+methSel('data-methk="'+esc(k)+'"',cm)+'</div></div>';
-        if(cur&&!cm&&has&&st.__meta)row+='<div class="bmMapV ok">'+esc(cur)+' · '+fmtN(st.__meta.tu)+' خلية · منفّذ '+fmtN(st.__meta.dn)+'</div>';
-        row+=c.items.map(function(it){return itemCard(it,c,k)}).join('');
-        return '<div class="bmMapG">'+row+'</div>';
+        var k=norm(c.title),cur=S.map[k]||'',cm=S.meth[k]||'',has=INST[i]!=null,st=INST[i],nOv=c.items.filter(function(it){return S.im[it.k]}).length;
+        var row='<div class="bmMapDef"><b>'+esc(c.title)+' <small>· '+c.items.length+' بند</small></b><div class="bmMiF"><label>العملية</label>'+procSel('data-mapk="'+esc(k)+'"',cur,'')+'</div><div class="bmMiF"><label>الحساب</label>'+methSel('data-methk="'+esc(k)+'"',cm)+'</div>';
+        if(!cur)row+='<div class="bmMapV">لسه مش مربوط</div>';
+        else if(!cm&&has&&st.__meta)row+='<div class="bmMapV ok">'+fmtN(st.__meta.tu)+' خلية · منفّذ '+fmtN(st.__meta.dn)+'</div>';
+        else if(cm){var pr0=cur;row+=itemLines(c.items[0]||{k:''},c,pr0,cm)}
+        if(nOv)row+='<div class="bmMapV">⚠ '+nOv+' بند عليه تخصيص قديم <b data-imclr="'+esc(k)+'" style="text-decoration:underline;cursor:pointer">مسح التخصيص</b></div>';
+        return '<div class="bmMapG">'+row+'</div></div>';
       }).join('');
   }
   function catStat(c){var n=0,g=0;c.items.forEach(function(it){var t=itemTotal(it);n+=t;g+=Math.min(recv(it),t)});return {n:n,g:g,p:n?g*100/n:0}}
@@ -24196,6 +24193,8 @@ body.print-activity #dpbBottomBar{display:none!important}
     if(zc){var zp=zc.getAttribute('data-zc'),zi=zp.indexOf('|'),zci=zp.slice(0,zi),zk3=zp.slice(zi+1);UI.ckZ=UI.ckZ||{};UI.ckZ[zci]=(zc.getAttribute('aria-expanded')==='true')?'':zk3;renderCheck();return}
     var ct=t.closest&&t.closest('[data-ckt]');
     if(ct){var ck0=ct.getAttribute('data-ckt');UI.ckOne=(UI.ckOne===ck0?'':ck0);renderCheck();return}
+    var ic=t.closest&&t.closest('[data-imclr]');
+    if(ic){var ck9=ic.getAttribute('data-imclr'),cc9=S.bom.cats.filter(function(x){return norm(x.title)===ck9})[0];if(cc9){cc9.items.forEach(function(it){delete S.im[it.k]});save();renderDyn()}return}
     var dp=t.closest&&t.closest('[data-imt]');
     if(dp){var ck1=dp.getAttribute('data-imt');UI.imOpen=UI.imOpen||{};UI.imOpen[ck1]=!UI.imOpen[ck1];renderMap();return}
     var bp=t.closest&&t.closest('[data-bmpub]');
