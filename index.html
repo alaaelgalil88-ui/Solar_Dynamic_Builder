@@ -943,6 +943,9 @@ window.XLSX = (() => {
   function child(el,name){for(const n of el?.children||[]){if(lname(n)===name)return n;}return null;}
   function children(el,name){return [...(el?.children||[])].filter(n=>lname(n)===name);}
   function text(el){return el?.textContent??'';}
+  const byLocal=(root,name)=>root.getElementsByTagNameNS('*',name);   // == [...root.getElementsByTagName('*')].filter(n=>lname(n)===name), without building an array of every element
+  const firstLocal=(root,name)=>byLocal(root,name)[0];
+  function cellPos(ref){const m=/^([A-Za-z]+)(\d+)$/.exec(ref); return m?{c:colToNum(m[1]),r:Number(m[2])-1}:decode_range(ref).s;}   // == decode_range(ref).s for a plain A1 reference
 
   async function unzip(data){
     const b=u8(data), dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
@@ -971,15 +974,47 @@ window.XLSX = (() => {
     return {entries,get};
   }
 
+  // Fast worksheet reader: the sheet XML written by Excel is regular, so scan it as text instead of building a DOM (the DOM parse was ~70% of the time).
+  // It returns null for ANYTHING unusual (inline strings, CDATA, prefixed tags, single-quoted attributes, truncated file ...) and the caller then uses the original DOM reader, so the result never differs.
+  function xmlDecode(t){return t.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos);/g,(m,e)=>e==='amp'?'&':e==='lt'?'<':e==='gt'?'>':e==='quot'?'"':e==='apos'?"'":String.fromCodePoint(e[1]==='x'?parseInt(e.slice(2),16):parseInt(e.slice(1),10)));}
+  function fastSheet(xml,name,shared,cellXfs,styleFills){
+    try{
+      if(xml.indexOf('inlineStr')>=0||xml.indexOf('<![CDATA[')>=0||/<[A-Za-z0-9_.-]+:(?:c|v|mergeCell|dimension|sheetData)[\s>\/]/.test(xml)||xml.indexOf("='")>=0&&/<(?:c|mergeCell|dimension)\b[^>]*='/.test(xml)) return null;
+      const head=xml.slice(0,300).trimStart(); if(!(head.startsWith('<?xml')||head.startsWith('<worksheet'))) return null;
+      if(!/<\/worksheet>\s*$/.test(xml.slice(-60))) return null;
+      const ws={name,'!ref':'A1:A1','!merges':[]}; let maxR=0,maxC=0;
+      const RX={r:/(?:^|\s)r="([^"]*)"/,t:/(?:^|\s)t="([^"]*)"/,s:/(?:^|\s)s="([^"]*)"/,ref:/(?:^|\s)ref="([^"]*)"/};
+      const attr=(str,n)=>{const m=RX[n].exec(str); return m?m[1]:null;};
+      let m; const mre=/<mergeCell\b([^>]*)>/g;
+      while((m=mre.exec(xml))){const rr=attr(m[1],'ref'); if(rr){const x=decode_range(rr); ws['!merges'].push(x); maxR=Math.max(maxR,x.e.r); maxC=Math.max(maxC,x.e.c);}}
+      const cre=/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g, vre=/<v(?:\s[^>]*)?(?:\/>|>([\s\S]*?)<\/v>)/;
+      while((m=cre.exec(xml))){
+        const a=m[1], ref=attr(a,'r'); if(!ref)continue;
+        const x=cellPos(ref); maxR=Math.max(maxR,x.r);maxC=Math.max(maxC,x.c);
+        const typ=attr(a,'t'); let v;
+        const vm=m[2]!==undefined?vre.exec(m[2]):null;
+        if(!vm) v='';
+        else {let raw=vm[1]===undefined?'':vm[1]; if(raw.indexOf('&')>=0) raw=xmlDecode(raw); if(typ==='s') v=shared[Number(raw)]??''; else if(typ==='b') v=raw==='1'; else v=raw===''?'':Number(raw);}
+        const styleIndex=Number(attr(a,'s')||0);
+        const xf=cellXfs[styleIndex]||{fillId:0};
+        const fill=styleFills[xf.fillId]||{patternType:'none',fgColor:null,bgColor:null};
+        ws[ref]={v,t:typ||'n',s:{fill:{patternType:fill.patternType,fgColor:fill.fgColor?{rgb:fill.fgColor}:null,bgColor:fill.bgColor?{rgb:fill.bgColor}:null}}};
+      }
+      const dm=/<dimension\b([^>]*)>/.exec(xml), dref=dm?attr(dm[1],'ref'):null;
+      if(dref) ws['!ref']=dref; else ws['!ref']=encode_cell({r:maxR,c:maxC})+':A1';
+      return ws;
+    }catch(_){return null;}
+  }
+
   async function read(data){
     const z=await unzip(data), names=[...z.entries.keys()];
     const out={SheetNames:[],Sheets:{},Workbook:{Names:[]}};
     const wbXml=await z.get('xl/workbook.xml'); if(!wbXml) throw new Error('Workbook XML is missing.');
     const wb=parseXml(te.decode(wbXml));
     const relXml=await z.get('xl/_rels/workbook.xml.rels'); const rels={};
-    if(relXml){const rdoc=parseXml(te.decode(relXml)); for(const r of rdoc.getElementsByTagName('*')) if(lname(r)==='Relationship') rels[r.getAttribute('Id')]=r.getAttribute('Target');}
+    if(relXml){const rdoc=parseXml(te.decode(relXml)); for(const r of byLocal(rdoc,'Relationship')) rels[r.getAttribute('Id')]=r.getAttribute('Target');}
     const ssXml=await z.get('xl/sharedStrings.xml'); const shared=[];
-    if(ssXml){const doc=parseXml(te.decode(ssXml)); for(const si of [...doc.getElementsByTagName('*')].filter(n=>lname(n)==='si')) shared.push([...si.getElementsByTagName('*')].filter(n=>lname(n)==='t').map(text).join(''));}
+    if(ssXml){const doc=parseXml(te.decode(ssXml)); for(const si of byLocal(doc,'si')){let acc='';for(const t of byLocal(si,'t')) acc+=text(t); shared.push(acc);}}
 
     // Read the real Excel fill palette. The previous reader kept only values,
     // so Plan mode could never reproduce the source workbook colors.
@@ -987,7 +1022,7 @@ window.XLSX = (() => {
     const themeColors=[];
     if(themeXml){
       const tdoc=parseXml(te.decode(themeXml));
-      const scheme=[...tdoc.getElementsByTagName('*')].find(n=>lname(n)==='clrScheme');
+      const scheme=firstLocal(tdoc,'clrScheme');
       if(scheme){
         for(const n of [...scheme.children]){
           const sr=[...n.children||[]].find(x=>lname(x)==='srgbClr');
@@ -1042,7 +1077,7 @@ window.XLSX = (() => {
     const styleFills=[]; const cellXfs=[];
     if(stylesXml){
       const sdoc=parseXml(te.decode(stylesXml));
-      const fillsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='fills');
+      const fillsEl=firstLocal(sdoc,'fills');
       if(fillsEl){
         for(const f of [...fillsEl.children]){
           const pf=[...f.children||[]].find(x=>lname(x)==='patternFill');
@@ -1052,22 +1087,25 @@ window.XLSX = (() => {
           styleFills.push({patternType:pattern,fgColor:readColor(fg),bgColor:readColor(bg)});
         }
       }
-      const xfsEl=[...sdoc.getElementsByTagName('*')].find(n=>lname(n)==='cellXfs');
+      const xfsEl=firstLocal(sdoc,'cellXfs');
       if(xfsEl){
         for(const xf of [...xfsEl.children]) cellXfs.push({fillId:Number(xf.getAttribute('fillId')||0)});
       }
     }
-    const defs=[...wb.getElementsByTagName('*')].filter(n=>lname(n)==='definedName');
+    const defs=byLocal(wb,'definedName');
     for(const d of defs){const name=d.getAttribute('name'); if(!name)continue; let ref=text(d); const local=d.getAttribute('localSheetId'); out.Workbook.Names.push({Name:name,Ref:ref,...(local!==null?{Sheet:Number(local)}:{})});}
-    const sheetsEl=[...wb.getElementsByTagName('*')].filter(n=>lname(n)==='sheet');
+    const sheetsEl=byLocal(wb,'sheet');
     for(const sh of sheetsEl){
       const name=sh.getAttribute('name'), rid=sh.getAttribute('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')||sh.getAttribute('r:id')||sh.getAttribute('id');
       let target=rels[rid]||('worksheets/sheet'+(out.SheetNames.length+1)+'.xml'); target=target.replace(/^\//,''); if(!target.startsWith('xl/')) target='xl/'+target.replace(/^xl\//,'');
-      const wx=await z.get(target); if(!wx) continue; const doc=parseXml(te.decode(wx)); const ws={name,'!ref':'A1:A1','!merges':[]}; let maxR=0,maxC=0;
-      for(const m of [...doc.getElementsByTagName('*')].filter(n=>lname(n)==='mergeCell')){const rr=m.getAttribute('ref'); if(rr) {const x=decode_range(rr); ws['!merges'].push(x); maxR=Math.max(maxR,x.e.r); maxC=Math.max(maxC,x.e.c);}}
-      for(const c of [...doc.getElementsByTagName('*')].filter(n=>lname(n)==='c')){
-        const ref=c.getAttribute('r'); if(!ref)continue; const x=decode_range(ref).s; maxR=Math.max(maxR,x.r);maxC=Math.max(maxC,x.c); const typ=c.getAttribute('t'); const vEl=child(c,'v'); const isEl=child(c,'is'); let v;
-        if(typ==='inlineStr' && isEl) v=[...isEl.getElementsByTagName('*')].filter(n=>lname(n)==='t').map(text).join('');
+      const wx=await z.get(target); if(!wx) continue;
+      const fastWs=fastSheet(te.decode(wx),name,shared,cellXfs,styleFills);
+      if(fastWs){out.SheetNames.push(name); out.Sheets[name]=fastWs; continue;}
+      const doc=parseXml(te.decode(wx)); const ws={name,'!ref':'A1:A1','!merges':[]}; let maxR=0,maxC=0;
+      for(const m of byLocal(doc,'mergeCell')){const rr=m.getAttribute('ref'); if(rr) {const x=decode_range(rr); ws['!merges'].push(x); maxR=Math.max(maxR,x.e.r); maxC=Math.max(maxC,x.e.c);}}
+      for(const c of byLocal(doc,'c')){
+        const ref=c.getAttribute('r'); if(!ref)continue; const x=cellPos(ref); maxR=Math.max(maxR,x.r);maxC=Math.max(maxC,x.c); const typ=c.getAttribute('t'); let vEl=null,isEl=null; for(let n=c.firstElementChild;n&&!(vEl&&isEl);n=n.nextElementSibling){const ln=lname(n); if(!vEl&&ln==='v')vEl=n; else if(!isEl&&ln==='is')isEl=n;} let v;
+        if(typ==='inlineStr' && isEl){v='';for(const t of byLocal(isEl,'t')) v+=text(t);}
         else if(!vEl) v='';
         else {const raw=text(vEl); if(typ==='s') v=shared[Number(raw)]??''; else if(typ==='b') v=raw==='1'; else v=raw===''?'':Number(raw);}
         const styleIndex=Number(c.getAttribute('s')||0);
@@ -1075,7 +1113,7 @@ window.XLSX = (() => {
         const fill=styleFills[xf.fillId]||{patternType:'none',fgColor:null,bgColor:null};
         ws[ref]={v,t:typ||'n',s:{fill:{patternType:fill.patternType,fgColor:fill.fgColor?{rgb:fill.fgColor}:null,bgColor:fill.bgColor?{rgb:fill.bgColor}:null}}};
       }
-      const dim=[...doc.getElementsByTagName('*')].find(n=>lname(n)==='dimension'); if(dim?.getAttribute('ref')) ws['!ref']=dim.getAttribute('ref'); else ws['!ref']=encode_cell({r:maxR,c:maxC})+':A1';
+      const dim=firstLocal(doc,'dimension'); if(dim?.getAttribute('ref')) ws['!ref']=dim.getAttribute('ref'); else ws['!ref']=encode_cell({r:maxR,c:maxC})+':A1';
       out.SheetNames.push(name); out.Sheets[name]=ws;
     }
     return out;
@@ -7463,6 +7501,18 @@ async function clearTestCache(){
   alert('تم مسح بيانات الاختبار لكل المشاريع على هذا الجهاز. من المرة القادمة سيطلب البرنامج الملفات مرة أخرى.');
 }
 async function restoreTestSession(){
+  if(!TEST_MODE_STICKY) return;
+  // Restoring re-applies every saved file in turn, and each one used to rebuild the whole Production screen (8 times for 5 files, ~70% of the opening freeze).
+  // Only the final result is ever seen, so these two screen builders are held back while the restore runs and each runs ONCE afterwards, with the last arguments it was given.
+  const held=['renderProduction','populateMapFilters'], orig={}, pend={};
+  held.forEach(n=>{ if(typeof window[n]==='function'){ orig[n]=window[n]; window[n]=function(){ pend[n]={t:this,a:arguments}; }; } });
+  try{ return await restoreTestSessionInner(); }
+  finally{
+    held.forEach(n=>{ if(orig[n]) window[n]=orig[n]; });
+    held.forEach(n=>{ if(pend[n]){ try{ orig[n].apply(pend[n].t,pend[n].a); }catch(e){ console.warn('screen build after restore failed ('+n+'):',e); } } });
+  }
+}
+async function restoreTestSessionInner(){
   if(!TEST_MODE_STICKY) return;
   try{
     const plan=await restoreTestFile('plan');
