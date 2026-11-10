@@ -23556,7 +23556,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     var cat=S.bom.cats[ci],zk=S.bom.colors.map(function(c){return c.key});
     var items=cat.items.filter(function(it){return zk.some(function(k){return it.q[k]>0})});
     var hasCol=items.some(function(it){var c=String(it.col==null?'':it.col).trim();return c&&!/^no\s*colou?r$/i.test(c)});
-    if(!hasCol)return {proc:proc,nocolor:true,skip:'بنود من غير لون'};
+    if(!items.length)return {proc:proc,nocolor:true,skip:'مفيش بنود'};
     if(/^purlin/.test(norm(cat.title))){
       var sp=mapScan(proc);if(sp.err)return {proc:proc,err:sp.err};
       var cells={};zk.forEach(function(k){var z=sp.zones[k];if(z)cells[k]=z.sample.length});
@@ -23767,7 +23767,7 @@ body.print-activity #dpbBottomBar{display:none!important}
       hd=hd.replace('<div class="bmCkH">','<div class="bmCkH" data-ckt="'+i+'" role="button" aria-expanded="'+(cl?'false':'true')+'">').slice(0,-6)+'<u>'+(cl?'‹':'⌄')+'</u></div>';
       return hd+'<div class="bmCkBody"'+(cl?' hidden':'')+'>'+rest+'</div></div>';
     }).filter(Boolean);
-    b.innerHTML=blocks.length?'<div class="bmMapNote">بيقارن عدد الخلايا لكل لون في خريطة العملية بكمية البند في الـ BOM لكل زون، ويربط كل لون ببنده بمقارنة الأعداد. البنود اللي من غير لون في الـ BOM مش بتتسأل عنها.</div>'+blocks.join(''):'<div class="bmMapNote">'+(ks.length?'مفيش فئات ليها ألوان تتقارن.':'اربط الفئات بالعمليات الأول من الكارت اللي فوق.')+'</div>';
+    b.innerHTML=blocks.length?'<div class="bmMapNote">بيقارن عدد الخلايا لكل لون في خريطة العملية بكمية البند في الـ BOM لكل زون، ويربط كل لون ببنده بمقارنة الأعداد. البنود اللي من غير لون (زي البوستات) بتتقارن بالخلايا البيضاء.</div>'+blocks.join(''):'<div class="bmMapNote">'+(ks.length?'مفيش فئات ليها ألوان تتقارن.':'اربط الفئات بالعمليات الأول من الكارت اللي فوق.')+'</div>';
   }
 
   /* ---------- Damper / Actuator: the marks drawn on each zone sample (cell diagonal borders in the EXECUTION file) ---------- */
@@ -24254,7 +24254,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     }).join('');
     var rv=S.recv[it.k];
     return '<div class="bmIt" data-ci="'+ci+'"><div class="bmItTop">'+(it.no?'<span class="bmNo">'+esc(it.no)+'</span>':'')+'<div class="bmDesc">'+esc(it.desc||it.pn||'—')+'</div><div class="bmTot"><b>'+fmtN(tot)+'</b><small>مطلوب</small></div></div>'+
-      '<div class="bmMeta">'+(it.pn?'<span class="bmPn">'+esc(it.pn)+'</span>':'')+(it.col?'<span class="bmPill">'+esc(it.col)+'</span>':'')+(it.note?'<span class="bmNoteT">'+esc(it.note)+'</span>':'')+'</div>'+
+      '<div class="bmMeta">'+(it.pn?'<span class="bmPn">'+esc(it.pn)+'</span>':'')+(it.col&&!/^no\s*colou?r$/i.test(String(it.col).trim())?'<span class="bmPill">'+esc(it.col)+'</span>':'')+'</div>'+
       '<div class="bmQs" style="grid-template-columns:repeat('+S.bom.colors.length+',minmax(0,1fr))">'+cells+'</div>'+
       '<div class="bmRc '+st+'"><label>وصل</label><input inputmode="numeric" maxlength="9" data-rk="'+esc(it.k)+'" value="'+(rv==null?(autoRecv(it)||''):rv)+'" placeholder="0"><div class="bmBar"><i style="width:'+pct(it)+'%"></i></div><span class="bmMs">'+msText(it)+'</span></div>'+usedHtml(it,ci)+stkHtml(it)+'</div>';
   }
@@ -24562,7 +24562,7 @@ function group(cat){
 function itemHtml(it){
   var req=reqOf(it),got=rcvOf(it),zs=B.colors.filter(function(co){return Number(it.q&&it.q[co.key])>0});
   var h='<div class="stIt" data-k="'+esc(it.k)+'"><div class="stT">'+(it.no?'<em>'+esc(it.no)+'</em>':'')+'<b>'+esc(it.desc||it.pn||'—')+'</b></div>';
-  h+='<div class="stMeta">'+(it.pn?'<i>'+esc(it.pn)+'</i>':'')+(it.col?'<i>'+esc(it.col)+'</i>':'')+zs.map(function(co){return dot(co.key)+'<span>'+fmtN(it.q[co.key])+'×'+fmtN(cnt(co.key))+'</span>'}).join('')+'<span>· المطلوب <b>'+fmtN(req)+'</b></span></div>';
+  h+='<div class="stMeta">'+(it.pn?'<i>'+esc(it.pn)+'</i>':'')+(it.col&&!/^no\s*colou?r$/i.test(String(it.col).trim())?'<i>'+esc(it.col)+'</i>':'')+zs.map(function(co){return dot(co.key)+'<span>'+fmtN(it.q[co.key])+'×'+fmtN(cnt(co.key))+'</span>'}).join('')+'<span>· المطلوب <b>'+fmtN(req)+'</b></span></div>';
   h+='<div class="stRow"><div class="stBox"><label>المستلم (المجموع)</label><strong>'+fmtN(got)+'</strong></div>'+
      '<div class="stBox"><label>المتاح في المخزن</label><input type="text" inputmode="numeric" data-av="'+esc(it.k)+'" value="'+esc((ST.av[it.k]&&ST.av[it.k].n!=null)?ST.av[it.k].n:'')+'" placeholder="0"></div></div>';
   if(UI.add===it.k)h+='<div class="stAdd"><input id="stAddIn" type="text" inputmode="numeric" placeholder="كمية التوريدة"><button class="stBtn g" data-sv="'+esc(it.k)+'">حفظ</button><button class="stBtn" data-sx="1">إلغاء</button></div>';
