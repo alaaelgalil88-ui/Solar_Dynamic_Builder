@@ -6229,8 +6229,8 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
    matching, execution records and production data are not read from here.
    ============================================================ */
 const ZC_BASE=['#ffffff','#000000','#7f7f7f','#bfbfbf','#ff0000','#c00000','#ff9900','#ffc000','#ffff00','#92d050','#00b050','#00b0f0','#0070c0','#002060','#7030a0','#ff66cc','#f4b183','#a9d18e','#9dc3e6','#d9d9d9'];
-let ZC_UI={work:{},sel:{},all:{},two:{},msg:{}};
-function zcCss(c){const p=String(c||'').split('|');return p[1]?'linear-gradient(135deg,'+p[0]+' 50%,'+p[1]+' 50%)':p[0];}
+let ZC_UI={work:{},sel:{},all:{},two:{},pend:{},msg:{}};
+function zcCss(c){if(!c||c==='none')return 'repeating-linear-gradient(45deg,#ffffff 0 5px,#c9d3dd 5px 9px)';const p=String(c).split('|');return p[1]?'linear-gradient(135deg,'+p[0]+' 50%,'+p[1]+' 50%)':p[0];}
 function zcKey(){return 'DPB_ZONECOLORS_V1_'+String(window.__dpbActiveProjectId||'default');}
 function zcLoad(){try{return JSON.parse(localStorage.getItem(zcKey())||'{}')||{};}catch(_){return {};}}
 function zcSave(o){try{localStorage.setItem(zcKey(),JSON.stringify(o));}catch(_){}}
@@ -6251,7 +6251,7 @@ function zcApplyModel(m){
   if(!mine)return m;
   for(const t of m.trackers.values()){
     const z=mine[zcType(t)];if(!z||!t.units.length||zcSig(t.units)!==z.sig)continue;
-    for(const u of t.units){const c=z.c[u.post];if(c){if(u.fill0===undefined)u.fill0=u.fill;const pp=String(c).split('|');u.fill=pp[0];if(pp[1])u.fill2=pp[1];else delete u.fill2;}}
+    for(const u of t.units){const c=z.c[u.post];if(c){if(u.fill0===undefined)u.fill0=(u.fill==null?null:u.fill);const pp=String(c).split('|');u.fill=(pp[0]==='none'?'':pp[0]);if(pp[1])u.fill2=pp[1];else delete u.fill2;}}
   }
   return m;
 }
@@ -6283,7 +6283,7 @@ function zcSampleHtml(mk,z,work,sel,maxW,maxH){
   const r0=Math.min.apply(null,us.map(u=>u.r1)),c0=Math.min.apply(null,us.map(u=>u.c1)),r1=Math.max.apply(null,us.map(u=>u.r2)),c1=Math.max.apply(null,us.map(u=>u.c2));
   const H=r1-r0+1,W=c1-c0+1,s=Math.max(8,Math.min(34,Math.floor(Math.min((maxW||300)/W,(maxH||300)/H))));
   const cells=us.map(u=>{
-    const col=work[u.post]||zcOrig(u)||'#ffffff';
+    const col=work[u.post]||zcOrig(u)||'none';
     const w=(u.c2-u.c1+1)*s,h=(u.r2-u.r1+1)*s;
     return '<div class="zcCell'+(sel===u.post?' on':'')+'" data-zc="cell" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" data-p="'+u.post+'" style="left:'+((u.c1-c0)*s)+'px;top:'+((u.r1-r0)*s)+'px;width:'+w+'px;height:'+h+'px;background:'+esc(zcCss(col))+'"></div>';
   }).join('');
@@ -6292,10 +6292,10 @@ function zcSampleHtml(mk,z,work,sel,maxW,maxH){
 function zcDistinctColors(m,work){
   const set=new Set();
   m.units.forEach(u=>{const c=zcOrig(u);if(c)set.add(String(c).toLowerCase());});
-  Object.keys(work||{}).forEach(k=>{if(work[k]&&String(work[k]).indexOf('|')<0)set.add(String(work[k]).toLowerCase());});
+  Object.keys(work||{}).forEach(k=>{if(work[k]&&String(work[k]).indexOf('|')<0&&work[k]!=='none')set.add(String(work[k]).toLowerCase());});
   return [...set];
 }
-function zcCleanOf(z,work){const clean={};z.sample.units.forEach(u=>{const c=work[u.post];if(c&&String(c).toLowerCase()!==String(zcOrig(u)||'').toLowerCase())clean[u.post]=c;});return clean;}
+function zcCleanOf(z,work){const clean={};z.sample.units.forEach(u=>{const c=work[u.post];if(c&&String(c).toLowerCase()!==String(zcOrig(u)||'none').toLowerCase())clean[u.post]=c;});return clean;}
 function zcIsDirty(m,mk){
   const saved=zcLoad()[mk]||{};
   for(const z of zcZones(m)){
@@ -6315,9 +6315,9 @@ function zcPlaceBalloon(){
   const wkey=cur.mk+'|'+cur.l,all=!!ZC_UI.all[wkey];
   const pal=zcDistinctColors(m,null);const full=pal.concat(ZC_BASE.filter(c=>pal.indexOf(c)<0));
   const o=document.createElement('div');o.id='zcBalloon';o.className='zcBalloon';
-  o.innerHTML='<div class="zcBalHead"><b dir="ltr">'+esc(cur.l)+'</b><label class="zcAll"><input type="checkbox" data-zc="all" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'"'+(all?' checked':'')+'> كل الخلايا</label><label class="zcAll"><input type="checkbox" data-zc="two" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'"'+(ZC_UI.two[wkey]?' checked':'')+'> لونين</label></div>'+(ZC_UI.two[wkey]?'<div class="hint" style="font-size:11px;margin:2px 0">اللون الأول بيفضل، واختار اللون التاني من تحت</div>':'')+
+  o.innerHTML='<div class="zcBalHead"><b dir="ltr">'+esc(cur.l)+'</b><label class="zcAll"><input type="checkbox" data-zc="all" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'"'+(all?' checked':'')+'> كل الخلايا</label><label class="zcAll"><input type="checkbox" data-zc="two" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'"'+(ZC_UI.two[wkey]?' checked':'')+'> لونين</label></div>'+(ZC_UI.two[wkey]?'<div class="hint" style="font-size:11px;margin:2px 0">'+(ZC_UI.pend[wkey]?'اللون الأول اتحدد — اختار اللون التاني':'اختار اللون الأول، وبعده اللون التاني')+'</div>':'')+
     '<div class="zcPal">'+full.map(c=>'<button type="button" class="zcSw" data-zc="sw" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'" data-c="'+esc(c)+'" title="'+esc(c)+'" style="background:'+esc(c)+'"></button>').join('')+
-    '<label class="zcCustomW" title="لون آخر"><input type="color" class="zcCustom" data-zc="custom" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'" value="#ff0000">＋</label></div><div class="zcArrow"></div>';
+    (ZC_UI.two[wkey]?'':'<button type="button" class="zcSw" data-zc="sw" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'" data-c="none" title="بدون لون" style="background:'+zcCss('none')+'"></button>')+'<label class="zcCustomW" title="لون آخر"><input type="color" class="zcCustom" data-zc="custom" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'" value="#ff0000">＋</label></div><div class="zcArrow"></div>';
   sec.appendChild(o);
   const r=cell.getBoundingClientRect(),bw=o.offsetWidth,bh=o.offsetHeight,vw=window.innerWidth,vh0=window.innerHeight,ft=document.querySelector('#zoneColorsBody .zcFoot'),vh=ft?Math.min(vh0,ft.getBoundingClientRect().top):vh0;
   let left=r.left+r.width/2-bw/2;left=Math.max(6,Math.min(vw-bw-6,left));
@@ -6423,10 +6423,11 @@ function zcSetColor(mk,letter,color){
   const m=zcModelByKey(mk);if(!m)return;
   const z=zcZones(m).find(x=>x.letter===letter);if(!z)return;
   const wkey=mk+'|'+letter,work=ZC_UI.work[wkey]=ZC_UI.work[wkey]||{};
-  const two=!!ZC_UI.two[wkey];
-  const put=(p,u)=>{if(!two){work[p]=color;return;}const base=String(work[p]||zcOrig(u)||'#ffffff').split('|')[0];work[p]=(String(base).toLowerCase()===String(color).toLowerCase())?base:base+'|'+color;};
-  if(ZC_UI.all[wkey])z.sample.units.forEach(u=>{put(u.post,u);});
-  else if(ZC_UI.sel[wkey]){const uu=z.sample.units.find(x=>x.post===ZC_UI.sel[wkey]);put(ZC_UI.sel[wkey],uu);}
+  const two=!!ZC_UI.two[wkey]&&color!=='none';
+  const targets=ZC_UI.all[wkey]?z.sample.units.map(u=>u.post):(ZC_UI.sel[wkey]?[ZC_UI.sel[wkey]]:[]);
+  if(two&&!ZC_UI.pend[wkey]){targets.forEach(p=>{work[p]=color;});ZC_UI.pend[wkey]=color;renderZoneColorsPage();return;}
+  if(two){const c1=ZC_UI.pend[wkey];targets.forEach(p=>{work[p]=(String(c1).toLowerCase()===String(color).toLowerCase())?c1:c1+'|'+color;});delete ZC_UI.pend[wkey];}
+  else targets.forEach(p=>{work[p]=color;});
   ZC_UI.sel[wkey]=0;ZC_UI.all[wkey]=false;ZC_UI.cur=null;
   renderZoneColorsPage();
 }
@@ -6434,7 +6435,7 @@ document.addEventListener('click',function(e){
   const b=e.target.closest&&e.target.closest('[data-zc]');if(!b||!document.getElementById('zonecolors')||!document.getElementById('zonecolors').contains(b))return;
   const act=b.getAttribute('data-zc'),mk=b.getAttribute('data-mk'),l=b.getAttribute('data-l');
   if(act==='op'){ZC_UI.op=(ZC_UI.op===mk?'':mk);ZC_UI.cur=null;ZC_UI.sel={};renderZoneColorsPage();}
-  else if(act==='cell'){const w=mk+'|'+l,p=Number(b.getAttribute('data-p')),was=ZC_UI.sel[w]===p;ZC_UI.sel={};ZC_UI.sel[w]=was?0:p;ZC_UI.msg[mk]='';ZC_UI.cur=ZC_UI.sel[w]?{mk,l}:null;renderZoneColorsPage();}
+  else if(act==='cell'){const w=mk+'|'+l;delete ZC_UI.pend[w];const p=Number(b.getAttribute('data-p')),was=ZC_UI.sel[w]===p;ZC_UI.sel={};ZC_UI.sel[w]=was?0:p;ZC_UI.msg[mk]='';ZC_UI.cur=ZC_UI.sel[w]?{mk,l}:null;renderZoneColorsPage();}
   else if(act==='sw'){ZC_UI.msg[mk]='';zcSetColor(mk,l,b.getAttribute('data-c'));}
   else if(act==='apply'){if(!b.disabled)zcApply(mk);}
   else if(act==='reset')zcReset(mk,l);
@@ -6449,7 +6450,7 @@ document.addEventListener('change',function(e){
   const b=e.target;if(!b||!b.getAttribute||!document.getElementById('zonecolors')||!document.getElementById('zonecolors').contains(b))return;
   const act=b.getAttribute('data-zc');if(!act)return;const mk=b.getAttribute('data-mk'),l=b.getAttribute('data-l');
   if(act==='all'){ZC_UI.all[mk+'|'+l]=!!b.checked;renderZoneColorsPage();}
-  else if(act==='two'){ZC_UI.two[mk+'|'+l]=!!b.checked;renderZoneColorsPage();}
+  else if(act==='two'){ZC_UI.two[mk+'|'+l]=!!b.checked;delete ZC_UI.pend[mk+'|'+l];renderZoneColorsPage();}
   else if(act==='custom'){ZC_UI.msg[mk]='';zcSetColor(mk,l,b.value);}
 });
 
@@ -24095,10 +24096,10 @@ body.print-activity #dpbBottomBar{display:none!important}
       if(pr&&m)h+=warns(itemLines(it,c,pr,m));
       return h+'</div>';
     }
-    b.innerHTML='<div class="bmMapNote">افتح أي بند (واحد بس بيفضل مفتوح) واختار المصدر وبيقرا إيه ويتحسب امتى.</div>'+
+    b.innerHTML='<div class="bmMapNote">افتح فئة ثم بند (واحد بس بيفضل مفتوح في كل مستوى) واختار المصدر وبيقرا إيه ويتحسب امتى.</div>'+
       S.bom.cats.map(function(c,i){
-        var k=norm(c.title);
-        return '<div class="bmMapG"><div class="bmMapDef"><b>'+esc(c.title)+' <small>· '+c.items.length+' بند</small></b>'+c.items.map(function(it){return itemOpen(it,c,k,i)}).join('')+'</div></div>';
+        var k=norm(c.title),oc=String(UI.imCat)===String(i);
+        return '<div class="bmMapG"><button type="button" class="bmMapH2" data-imc="'+i+'"><span>'+esc(c.title)+' <small>· '+c.items.length+' بند</small></span><i>'+(oc?'⌄':'‹')+'</i></button>'+(oc?'<div class="bmMapDef">'+c.items.map(function(it){return itemOpen(it,c,k,i)}).join('')+'</div>':'')+'</div>';
       }).join('');
   }
   function catStat(c){var n=0,g=0;c.items.forEach(function(it){var t=itemTotal(it);n+=t;g+=Math.min(recv(it),t)});return {n:n,g:g,p:n?g*100/n:0}}
@@ -24282,6 +24283,8 @@ body.print-activity #dpbBottomBar{display:none!important}
     if(zc){var zp=zc.getAttribute('data-zc'),zi=zp.indexOf('|'),zci=zp.slice(0,zi),zk3=zp.slice(zi+1);UI.ckZ=UI.ckZ||{};UI.ckZ[zci]=(zc.getAttribute('aria-expanded')==='true')?'':zk3;renderCheck();return}
     var ct=t.closest&&t.closest('[data-ckt]');
     if(ct){var ck0=ct.getAttribute('data-ckt');UI.ckOne=(UI.ckOne===ck0?'':ck0);renderCheck();return}
+    var ic0=t.closest&&t.closest('[data-imc]');
+    if(ic0){var cv=ic0.getAttribute('data-imc');UI.imCat=(String(UI.imCat)===cv?'':cv);UI.imItem='';renderMap();return}
     var ii=t.closest&&t.closest('[data-imi]');
     if(ii){var ik0=ii.getAttribute('data-imi');UI.imItem=(UI.imItem===ik0?'':ik0);renderMap();return}
     var ic=t.closest&&t.closest('[data-imclr]');
