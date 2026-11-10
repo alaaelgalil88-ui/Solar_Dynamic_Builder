@@ -6419,6 +6419,22 @@ function zcReset(mk,letter){
   ZC_UI.msg[mk]='<b dir="ltr">'+esc(letter)+'</b>: رجع لألوان الإكسل.';
   zcAfterChange();renderZoneColorsPage();
 }
+window.__dpbZoneSamples=function(procName){
+  try{
+    const nm=String(procName||'').trim().toLowerCase();
+    for(const o of zcOps()){
+      if(!o.names.some(n=>String(n).trim().toLowerCase()===nm))continue;
+      const m=buildModel(o.src.wb,o.src.sheet);if(!m||!m.ok)continue;
+      const out={};
+      for(const z of zcZones(m)){
+        out[String(z.letter).toLowerCase()]={n:z.n,total:z.total,same:z.same,other:z.other,
+          units:z.sample.units.map(u=>({r1:u.r1,c1:u.c1,r2:u.r2,c2:u.c2,fill:u.fill||'',fill2:u.fill2||''}))};
+      }
+      return out;
+    }
+  }catch(_){}
+  return null;
+};
 function zcSetColor(mk,letter,color){
   const m=zcModelByKey(mk);if(!m)return;
   const z=zcZones(m).find(x=>x.letter===letter);if(!z)return;
@@ -23430,13 +23446,15 @@ body.print-activity #dpbBottomBar{display:none!important}
     m.trackers.forEach(function(t){
       var rn=String(t.rowLabel||'').replace(/\D/g,''),tn=Number(t.no)||0,ent=idx.byKey.get(rn+'|'+tn)||idx.byNum.get(tn);
       if(!ent){um++;return}
-      var z=zones[ent.k]||(zones[ent.k]={n:0,tot:{},trk:[]}),cc={};
+      var z=zones[ent.k]||(zones[ent.k]={n:0,tot:{},trk:[],letter:''}),cc={};
+      if(!z.letter&&t.units&&t.units[0]){try{z.letter=String(window.__dpbTrackerTypeOf(t.units[0])||'').toLowerCase()}catch(_){}}
       (t.units||[]).forEach(function(u){var f=fk(u);cc[f]=(cc[f]||0)+1;z.tot[f]=(z.tot[f]||0)+1});
       var us=(t.units||[]).slice().sort(function(a,b){return (a.r1-b.r1)||(a.c1-b.c1)}).map(function(u){return {r1:u.r1,c1:u.c1,f:fk(u)}});
       var uu=t.units||[],r0=Math.min.apply(null,uu.map(function(u){return u.r1})),c0=Math.min.apply(null,uu.map(function(u){return u.c1})),sh=uu.map(function(u){return [u.r1-r0,u.c1-c0,u.r2-u.r1,u.c2-u.c1].join(',')}).join(';');
       z.n++;z.trk.push({t:t,cc:cc,us:us,sh:sh,seq:us.map(function(u){return u.f}).join('|'),sig:JSON.stringify(Object.keys(cc).sort().map(function(f){return [f,cc[f]]}))});
     });
     var fills={};
+    var bsAll=null;try{bsAll=window.__dpbZoneSamples&&window.__dpbZoneSamples(name)}catch(_){bsAll=null}
     Object.keys(zones).forEach(function(k){
       var z=zones[k],c={};z.trk.forEach(function(x){c[x.sh]=(c[x.sh]||0)+1});
       /* نفس قاعدة عينة Zone Colors في الـ Builder: الشكل (مواضع الخلايا) الأكتر تكرارًا في الزون، وأول تراكر بالشكل ده هو العينة */
@@ -23445,6 +23463,16 @@ body.print-activity #dpbBottomBar{display:none!important}
       z.typ={};Object.keys(smp.cc).forEach(function(f){z.typ[f]=smp.cc[f]});
       z.anom=z.trk.filter(function(x){return x.sh!==bestSh||x.sig!==smp.sig});
       z.sample=smp.seq?smp.seq.split('|'):[];
+      /* المصدر الوحيد للعينة = Zone Colors في الـ Builder (نفس الشكل ونفس الألوان بما فيها اللونين) */
+      var B=bsAll&&bsAll[z.letter];
+      if(B&&B.units&&B.units.length){
+        var bf=function(u){return u.fill?(u.fill2?u.fill+'|'+u.fill2:u.fill):'none'};
+        z.typ={};B.units.forEach(function(u){var f=bf(u);z.typ[f]=(z.typ[f]||0)+1});
+        z.sample=B.units.slice().sort(function(a,b){return (a.r1-b.r1)||(a.c1-b.c1)}).map(bf);
+        z.bn=B.n;
+        var sigB=JSON.stringify(Object.keys(z.typ).sort().map(function(f){return [f,z.typ[f]]}));
+        z.anom=z.trk.filter(function(x){return x.us.length!==B.n||x.sig!==sigB});
+      }
       Object.keys(z.tot).forEach(function(f){fills[f]=1});
     });
     return {zones:zones,fills:Object.keys(fills),um:um};
