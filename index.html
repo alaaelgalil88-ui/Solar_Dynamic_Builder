@@ -5213,7 +5213,7 @@ function colorOf(spec,model,u){
     if(model.siteCodes.size)return{css:'#9aa0a6',src:'unmapped',code:code.toUpperCase(),name:row?row.name:''};
     return{css:u.fill||'#ffffff',src:'unmapped',code:code.toUpperCase()};
   }
-  return u.fill?{css:u.fill,src:'fill'}:{css:'#ffffff',src:'blank'};
+  return u.fill?{css:(u.fill2?'linear-gradient(135deg,'+u.fill+' 50%,'+u.fill2+' 50%)':u.fill),src:'fill'}:{css:'#ffffff',src:'blank'};
 }
 
 /* ============================================================
@@ -6229,7 +6229,8 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
    matching, execution records and production data are not read from here.
    ============================================================ */
 const ZC_BASE=['#ffffff','#000000','#7f7f7f','#bfbfbf','#ff0000','#c00000','#ff9900','#ffc000','#ffff00','#92d050','#00b050','#00b0f0','#0070c0','#002060','#7030a0','#ff66cc','#f4b183','#a9d18e','#9dc3e6','#d9d9d9'];
-let ZC_UI={work:{},sel:{},all:{},msg:{}};
+let ZC_UI={work:{},sel:{},all:{},two:{},msg:{}};
+function zcCss(c){const p=String(c||'').split('|');return p[1]?'linear-gradient(135deg,'+p[0]+' 50%,'+p[1]+' 50%)':p[0];}
 function zcKey(){return 'DPB_ZONECOLORS_V1_'+String(window.__dpbActiveProjectId||'default');}
 function zcLoad(){try{return JSON.parse(localStorage.getItem(zcKey())||'{}')||{};}catch(_){return {};}}
 function zcSave(o){try{localStorage.setItem(zcKey(),JSON.stringify(o));}catch(_){}}
@@ -6245,12 +6246,12 @@ function zcType(t){const u=t&&t.units&&t.units[0];let z='';try{z=u?trackerTypeOf
 // put the saved colour layer on a model (and take it off first, so "back to Excel" works on a cached model)
 function zcApplyModel(m){
   if(!m||!m.ok||!m.trackers)return m;
-  for(const u of m.units){if(u.fill0!==undefined)u.fill=u.fill0;}
+  for(const u of m.units){if(u.fill0!==undefined)u.fill=u.fill0;delete u.fill2;}
   const mine=zcLoad()[zcMapKey(m)];
   if(!mine)return m;
   for(const t of m.trackers.values()){
     const z=mine[zcType(t)];if(!z||!t.units.length||zcSig(t.units)!==z.sig)continue;
-    for(const u of t.units){const c=z.c[u.post];if(c){if(u.fill0===undefined)u.fill0=u.fill;u.fill=c;}}
+    for(const u of t.units){const c=z.c[u.post];if(c){if(u.fill0===undefined)u.fill0=u.fill;const pp=String(c).split('|');u.fill=pp[0];if(pp[1])u.fill2=pp[1];else delete u.fill2;}}
   }
   return m;
 }
@@ -6284,14 +6285,14 @@ function zcSampleHtml(mk,z,work,sel,maxW,maxH){
   const cells=us.map(u=>{
     const col=work[u.post]||zcOrig(u)||'#ffffff';
     const w=(u.c2-u.c1+1)*s,h=(u.r2-u.r1+1)*s;
-    return '<div class="zcCell'+(sel===u.post?' on':'')+'" data-zc="cell" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" data-p="'+u.post+'" style="left:'+((u.c1-c0)*s)+'px;top:'+((u.r1-r0)*s)+'px;width:'+w+'px;height:'+h+'px;background:'+esc(col)+'"></div>';
+    return '<div class="zcCell'+(sel===u.post?' on':'')+'" data-zc="cell" data-mk="'+esc(mk)+'" data-l="'+esc(z.letter)+'" data-p="'+u.post+'" style="left:'+((u.c1-c0)*s)+'px;top:'+((u.r1-r0)*s)+'px;width:'+w+'px;height:'+h+'px;background:'+esc(zcCss(col))+'"></div>';
   }).join('');
   return '<div class="zcSampleWrap"><div class="zcSample" style="width:'+(W*s)+'px;height:'+(H*s)+'px">'+cells+'</div></div>';
 }
 function zcDistinctColors(m,work){
   const set=new Set();
   m.units.forEach(u=>{const c=zcOrig(u);if(c)set.add(String(c).toLowerCase());});
-  Object.keys(work||{}).forEach(k=>{if(work[k])set.add(String(work[k]).toLowerCase());});
+  Object.keys(work||{}).forEach(k=>{if(work[k]&&String(work[k]).indexOf('|')<0)set.add(String(work[k]).toLowerCase());});
   return [...set];
 }
 function zcCleanOf(z,work){const clean={};z.sample.units.forEach(u=>{const c=work[u.post];if(c&&String(c).toLowerCase()!==String(zcOrig(u)||'').toLowerCase())clean[u.post]=c;});return clean;}
@@ -6314,7 +6315,7 @@ function zcPlaceBalloon(){
   const wkey=cur.mk+'|'+cur.l,all=!!ZC_UI.all[wkey];
   const pal=zcDistinctColors(m,null);const full=pal.concat(ZC_BASE.filter(c=>pal.indexOf(c)<0));
   const o=document.createElement('div');o.id='zcBalloon';o.className='zcBalloon';
-  o.innerHTML='<div class="zcBalHead"><b dir="ltr">'+esc(cur.l)+'</b><label class="zcAll"><input type="checkbox" data-zc="all" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'"'+(all?' checked':'')+'> كل الخلايا</label></div>'+
+  o.innerHTML='<div class="zcBalHead"><b dir="ltr">'+esc(cur.l)+'</b><label class="zcAll"><input type="checkbox" data-zc="all" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'"'+(all?' checked':'')+'> كل الخلايا</label><label class="zcAll"><input type="checkbox" data-zc="two" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'"'+(ZC_UI.two[wkey]?' checked':'')+'> لونين</label></div>'+(ZC_UI.two[wkey]?'<div class="hint" style="font-size:11px;margin:2px 0">اللون الأول بيفضل، واختار اللون التاني من تحت</div>':'')+
     '<div class="zcPal">'+full.map(c=>'<button type="button" class="zcSw" data-zc="sw" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'" data-c="'+esc(c)+'" title="'+esc(c)+'" style="background:'+esc(c)+'"></button>').join('')+
     '<label class="zcCustomW" title="لون آخر"><input type="color" class="zcCustom" data-zc="custom" data-mk="'+esc(cur.mk)+'" data-l="'+esc(cur.l)+'" value="#ff0000">＋</label></div><div class="zcArrow"></div>';
   sec.appendChild(o);
@@ -6422,8 +6423,10 @@ function zcSetColor(mk,letter,color){
   const m=zcModelByKey(mk);if(!m)return;
   const z=zcZones(m).find(x=>x.letter===letter);if(!z)return;
   const wkey=mk+'|'+letter,work=ZC_UI.work[wkey]=ZC_UI.work[wkey]||{};
-  if(ZC_UI.all[wkey])z.sample.units.forEach(u=>{work[u.post]=color;});
-  else if(ZC_UI.sel[wkey])work[ZC_UI.sel[wkey]]=color;
+  const two=!!ZC_UI.two[wkey];
+  const put=(p,u)=>{if(!two){work[p]=color;return;}const base=String(work[p]||zcOrig(u)||'#ffffff').split('|')[0];work[p]=(String(base).toLowerCase()===String(color).toLowerCase())?base:base+'|'+color;};
+  if(ZC_UI.all[wkey])z.sample.units.forEach(u=>{put(u.post,u);});
+  else if(ZC_UI.sel[wkey]){const uu=z.sample.units.find(x=>x.post===ZC_UI.sel[wkey]);put(ZC_UI.sel[wkey],uu);}
   ZC_UI.sel[wkey]=0;ZC_UI.all[wkey]=false;ZC_UI.cur=null;
   renderZoneColorsPage();
 }
@@ -6446,6 +6449,7 @@ document.addEventListener('change',function(e){
   const b=e.target;if(!b||!b.getAttribute||!document.getElementById('zonecolors')||!document.getElementById('zonecolors').contains(b))return;
   const act=b.getAttribute('data-zc');if(!act)return;const mk=b.getAttribute('data-mk'),l=b.getAttribute('data-l');
   if(act==='all'){ZC_UI.all[mk+'|'+l]=!!b.checked;renderZoneColorsPage();}
+  else if(act==='two'){ZC_UI.two[mk+'|'+l]=!!b.checked;renderZoneColorsPage();}
   else if(act==='custom'){ZC_UI.msg[mk]='';zcSetColor(mk,l,b.value);}
 });
 
@@ -23073,7 +23077,7 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbBm .bmMapR i.no{color:#f0b25b}
 #dpbBm .bmMapH2{display:flex;align-items:center;gap:8px;width:100%;margin-top:8px;padding:9px 10px;border-radius:11px;border:1px solid #31507a;background:#0e2036;color:#eef5ff;font-family:inherit;font-size:13px;font-weight:800;cursor:pointer;text-align:start}
 #dpbBm .bmMapH2 span{flex:1;min-width:0;direction:ltr;text-align:left;overflow-wrap:anywhere}
-#dpbBm .bmZt{margin-top:8px;display:flex;flex-direction:column;gap:6px}#dpbBm .bmZr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:10px;background:#0e2036;border:1px solid #284566;font-size:12px;color:#d7e6fa}#dpbBm .bmZr span{flex:1;min-width:0}#dpbBm .bmZr b{color:#7ff0c0}#dpbBm .bmZs{background:#10294a;border-color:#3b6aa5}
+#dpbBm .bmZt{margin-top:8px;display:flex;flex-direction:column;gap:6px}#dpbBm .bmZr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:10px;background:#0e2036;border:1px solid #284566;font-size:12px;color:#d7e6fa}#dpbBm .bmZr span{flex:1;min-width:0}#dpbBm .bmZr b{color:#7ff0c0}#dpbBm .bmErr{color:#ffb4a8}#dpbBm .bmZs{background:#10294a;border-color:#3b6aa5}
 #dpbBm .bmMapH2 small{font-size:11px;color:#9fb6d3;font-weight:700}
 #dpbBm .bmMapDef{margin:6px 0 2px;padding:8px;border-radius:10px;border:1px dashed #31507a}
 #dpbBm .bmMapDef>b{display:block;font-size:11px;color:#9fb6d3;margin-bottom:4px}
@@ -23414,9 +23418,9 @@ body.print-activity #dpbBottomBar{display:none!important}
 
   /* ---------- count check: map cells per colour vs BOM (read-only from the app's map model) ---------- */
   var CK={},INSTC={};
-  function fk(u){return u.fill||'none'}
+  function fk(u){return u.fill?(u.fill2?u.fill+'|'+u.fill2:u.fill):'none'}
   var CMC=['#3ea6ff','#f6a93b','#4cd9a0','#ef6b9a','#b48cff','#e8dc4a'];
-  function swatch(f){return f==='none'?'<i class="bmSw none" title="بدون لون"></i>':'<i class="bmSw" style="background:'+esc(f)+'" title="'+esc(f)+'"></i>'}
+  function swatch(f){if(String(f).indexOf('|')>0){var pp=String(f).split('|');return '<i class="bmSw" style="background:linear-gradient(135deg,'+esc(pp[0])+' 50%,'+esc(pp[1])+' 50%)" title="لونين"></i>'}return f==='none'?'<i class="bmSw none" title="بدون لون"></i>':'<i class="bmSw" style="background:'+esc(f)+'" title="'+esc(f)+'"></i>'}
   function procModel(name){try{return (window.__dpbModelForProcess&&window.__dpbModelForProcess(name))||null}catch(_){return null}}
   function mapScan(name){
     var m=procModel(name);if(!m||!m.trackers)return {err:'مفيش خريطة للعملية دي على الجهاز ده.'};
@@ -23887,10 +23891,75 @@ body.print-activity #dpbBottomBar{display:none!important}
     });
     return w;
   }
+  function noColorItem(it){var c=String(it.col||'').toUpperCase().trim();return !c||c==='NO COLOR'||c==='NONE'||c==='NO-COLOR'}
+  function compat2(f,it){
+    var cs=itemCodes(it);
+    if(String(f).indexOf('|')>0){var p=String(f).split('|').map(fillCode).sort().join('|');return cs.length===2&&cs.slice().sort().join('|')===p}
+    if(noColorItem(it))return f==='none';
+    if(f==='none')return false;
+    var fc=fillCode(f);return cs.length===1&&(cs[0]===fc||(fc==='BR'&&cs[0]==='RD'));
+  }
+  /* حساب منفّذ البند لكل زون، مع التحقق من عينة الزون (Zone Colors) قبل أي رقم */
+  function itemExec(it,c,ci){
+    var pr=itemProc(it,c),m=itemMeth(it,c),w=(S.im&&S.im[it.k]&&S.im[it.k].w)||'';
+    var r={rows:{},errs:[],linked:!!(pr||w),total:0,req:0,done:0};
+    var cols=S.bom.colors.filter(function(co){return Number(it.q[co.key])>0});
+    function q1(co){return Number(it.q[co.key])||0}
+    cols.forEach(function(co){var rq=q1(co)*cnt(co.key);r.rows[co.key]={per:q1(co),n:cnt(co.key),req:rq,ex:null,err:''};r.req+=rq});
+    if(!r.linked)return r;
+    var zs=dmZones(),i2,sc=null;
+    /* 1) تحقق العينة مقابل الـ BOM */
+    if(pr&&(m==='markX'||m==='markD')){
+      if(!S.marks){r.errs.push('ارفع ملف EXECUTION من كارت ⚙️ علامات X و / عشان تتقارن عينات الزونات.')}
+      else cols.forEach(function(co){var z=zs[co.key],per=z?(m==='markX'?z.nX:z.nD):0;if(per!==q1(co))r.rows[co.key].err='BOM '+fmtN(q1(co))+' لكل تراكر ≠ العينة '+fmtN(per)+' علامة'})
+    }else if(pr&&(m==='splice'||m==='purlin'||m==='prog')){
+      var st0=m==='splice'?dmSqStats(pr):dmPurlinStats(pr);
+      if(st0)dmItemWarns(it,c,st0).forEach(function(x){r.errs.push('BOM ≠ العينة · '+x)});
+    }else if(pr&&!m){
+      sc=mapScan(pr);
+      if(sc.err){r.errs.push(sc.err)}
+      else{
+        var linkedC=INSTC[ci]&&INSTC[ci].linked&&INSTC[ci].linked[it.k];
+        if(!linkedC)cols.forEach(function(co){
+          var z=sc.zones[co.key];if(!z){r.rows[co.key].err='مفيش عينة للزون ده في الخريطة';return}
+          var fs=Object.keys(z.typ),mine=0;fs.forEach(function(f){if(compat2(f,it))mine+=z.typ[f]});
+          var ov=c.items.some(function(o){return o!==it&&Number(o.q[co.key])>0&&fs.some(function(f){return compat2(f,o)&&compat2(f,it)})});
+          if(ov)r.rows[co.key].err='لون الخلية ده بيطابق أكتر من بند في الـ BOM — حدد خلايا البند من كارت 🔎 مطابقة الحصر';
+          else if(mine!==q1(co))r.rows[co.key].err='BOM '+fmtN(q1(co))+' لكل تراكر ≠ العينة '+fmtN(mine)+' خلية';
+        });
+      }
+    }
+    /* 2) المنفّذ */
+    var src=w?dmTrkStats(w):null;
+    if(w&&!src)r.errs.push('مفيش بيانات للعملية «'+w+'» لسه.');
+    var d=null;
+    if(!w&&pr){
+      if(m==='trk'||m==='splice'||m==='purlin'||m==='prog'||m==='markX'||m==='markD'||!m){
+        if(m==='trk')d=dmTrkStats(pr);else if(m==='splice')d=dmSqStats(pr);else if(m==='purlin'||m==='prog')d=dmPurlinStats(pr);else if(m==='markX'||m==='markD'){if(S.marks)d=dmMarkStats(pr)}else d=procStats(pr);
+        if(!d)r.errs.push('مفيش بيانات للعملية «'+pr+'» لسه.');
+      }
+    }
+    var lk=INSTC[ci]&&INSTC[ci].linked&&INSTC[ci].linked[it.k];
+    cols.forEach(function(co){
+      var row=r.rows[co.key];if(row.err)return;
+      var v=null,k=co.key,q=q1(co);
+      if(w){if(src)v=(src.zfull[k]||0)*q}
+      else if(m==='trk'){if(d)v=(d.zfull[k]||0)*q}
+      else if(m==='splice'){if(d)v=(d.zj[k]||0)*q}
+      else if(m==='purlin'||m==='prog'){if(d)v=(d.zf[k]||0)*q}
+      else if(m==='markX'||m==='markD'){if(d)v=(d[m==='markX'?'X':'D'].z||{})[k]||0}
+      else if(!lk&&d){v=d[k]?q*Math.min(d[k].f,cnt(k)):0}
+      if(v!=null)row.ex=Math.min(Math.round(v),row.req);
+    });
+    if(!w&&!m&&lk){r.total=INSTC[ci].cnt[it.k]||0;r.done=r.total;r.viaCells=true}
+    return r;
+  }
   function dmCompute(){
     DMV={};if(!S||!S.bom)return;
     var MS={},PS={},SQ={},TK={},any=false;
     S.bom.cats.forEach(function(c){c.items.forEach(function(it){
+      var wv=(S.im&&S.im[it.k]&&S.im[it.k].w)||'';
+      if(wv||dmType(it,c)){var ex0=itemExec(it,c,S.bom.cats.indexOf(c));if(ex0.errs.length)return;var tt=0,okk=true;Object.keys(ex0.rows).forEach(function(kk){var rw=ex0.rows[kk];if(rw.err||rw.ex==null){okk=false;return}tt+=rw.ex});if(!okk)return;DMV[it.k]=Math.round(tt);any=true;return}
       var t=dmType(it,c);if(!t)return;var mp=dmMapProc(it,c);if(!mp)return;
       var tot=0;function qk(co){return Number(it.q[co.key])||0}
       if(t==='S'){var a=SQ[mp]||(SQ[mp]=dmSqStats(mp));if(!a)return;S.bom.colors.forEach(function(co){tot+=(a.zj[co.key]||0)*qk(co)})}
@@ -24003,40 +24072,33 @@ body.print-activity #dpbBottomBar{display:none!important}
     }
     UI.imOpen=UI.imOpen||{};
     function warns(x){var m=String(x||'').match(/<div class="bmMapV">⚠[\s\S]*?<\/div>/g);return m?m.join(''):''}
-    function zoneExec(it,c,ci,pr,m){
-      if(!pr)return null;
-      var r={},q1=function(co){return Number(it.q[co.key])||0};
-      if(m==='trk'){var d=once('T|'+pr,function(){return dmTrkStats(pr)});if(!d)return null;S.bom.colors.forEach(function(co){r[co.key]=(d.zfull[co.key]||0)*q1(co)})}
-      else if(m==='splice'){var a=once('S|'+pr,function(){return dmSqStats(pr)});if(!a)return null;S.bom.colors.forEach(function(co){r[co.key]=(a.zj[co.key]||0)*q1(co)})}
-      else if(m==='purlin'||m==='prog'){var p2=once('P|'+pr,function(){return dmPurlinStats(pr)});if(!p2)return null;S.bom.colors.forEach(function(co){r[co.key]=(p2.zf[co.key]||0)*q1(co)})}
-      else if(m==='markX'||m==='markD'){if(!S.marks)return null;var mk=once('M|'+pr,function(){return dmMarkStats(pr)});if(!mk)return null;var zz=mk[m==='markX'?'X':'D'].z;S.bom.colors.forEach(function(co){r[co.key]=zz[co.key]||0})}
-      else{var cc=INSTC[ci];if(cc&&cc.linked&&cc.linked[it.k])return null;var st=INST[ci];if(!st||itemProc(it,c)!==cur0(c))st=once('C|'+pr,function(){return procStats(pr)});if(!st)return null;S.bom.colors.forEach(function(co){r[co.key]=st[co.key]?q1(co)*Math.min(st[co.key].f,cnt(co.key)):0})}
-      return r;
-    }
-    function cur0(c){return S.map[norm(c.title)]||''}
+    function whenSel(attr,val){return '<select '+attr+'><option value="">مع تنفيذ المصدر نفسه (الخلية / العلامة)</option>'+ps.map(function(p){return '<option value="'+esc(p.name)+'"'+(p.name===val?' selected':'')+'>لما التراكر يخلّص: '+esc(p.name)+'</option>'}).join('')+'</select>'}
     function itemOpen(it,c,k,ci){
-      var pr=itemProc(it,c),m=itemMeth(it,c),cust=!!S.im[it.k],open=UI.imItem===it.k;
-      var h='<div class="bmMi'+(cust?' cust':'')+(open?' open':'')+'"><button type="button" class="bmMapH2" data-imi="'+esc(it.k)+'"><span>'+(it.no?esc(it.no)+' · ':'')+esc(it.desc||it.pn||'—')+(it.pn?' <small>'+esc(it.pn)+'</small>':'')+'</span>'+(cust?'<small>مخصّص</small>':'')+'<i>'+(open?'⌄':'‹')+'</i></button>';
+      var pr=itemProc(it,c),m=itemMeth(it,c),w=(S.im[it.k]&&S.im[it.k].w)||'',open=UI.imItem===it.k;
+      var h='<div class="bmMi'+(open?' open':'')+'"><button type="button" class="bmMapH2" data-imi="'+esc(it.k)+'"><span>'+(it.no?esc(it.no)+' · ':'')+esc(it.desc||it.pn||'—')+(it.pn?' <small>'+esc(it.pn)+'</small>':'')+'</span><i>'+(open?'⌄':'‹')+'</i></button>';
       if(!open)return h+'</div>';
+      var ex=itemExec(it,c,ci);
       h+='<div class="bmMiF"><label>المصدر</label>'+procSel('data-imp="'+esc(it.k)+'" data-ck="'+esc(k)+'"',pr,'-')+'</div>';
-      h+='<div class="bmMiF"><label>يتحسب امتى</label>'+methSel('data-imm="'+esc(it.k)+'" data-ck="'+esc(k)+'"',m)+'</div>';
-      var ze=(pr&&dmCompute&&true)?zoneExec(it,c,ci,pr,m):null,tr=0,tq=0,te=0;
-      var rows=S.bom.colors.filter(function(co){return Number(it.q[co.key])>0}).map(function(co){
-        var per=Number(it.q[co.key]),n=cnt(co.key),req=per*n,ex=ze&&ze[co.key]!=null?Math.min(ze[co.key],req):null;
-        tr+=n;tq+=req;if(ex!=null)te+=ex;
-        return '<div class="bmZr">'+dot(co.name,co.key)+'<span>'+fmtN(per)+' × '+fmtN(n)+' = <b>'+fmtN(req)+'</b></span><span>'+(pr?(ex==null?'—':'منفّذ <b>'+fmtN(ex)+'</b> · باقي <b>'+fmtN(req-ex)+'</b>'):'لسه مش مربوط')+'</span></div>';
+      h+='<div class="bmMiF"><label>بيقرا إيه</label>'+methSel('data-imm="'+esc(it.k)+'" data-ck="'+esc(k)+'"',m)+'</div>';
+      h+='<div class="bmMiF"><label>يتحسب امتى</label>'+whenSel('data-imw="'+esc(it.k)+'"',w)+'</div>';
+      var tq=0,te=0,allOk=true,rows=S.bom.colors.filter(function(co){return ex.rows[co.key]}).map(function(co){
+        var rw=ex.rows[co.key];tq+=rw.req;
+        var right;
+        if(!ex.linked)right='لسه مش مربوط';
+        else if(rw.err){right='<span class="bmErr">⚠ '+esc(rw.err)+'</span>';allOk=false}
+        else if(rw.ex==null){right='—';allOk=false}
+        else{te+=rw.ex;right='منفّذ <b>'+fmtN(rw.ex)+'</b> · باقي <b>'+fmtN(rw.req-rw.ex)+'</b>'}
+        return '<div class="bmZr">'+dot(co.name,co.key)+'<span>'+fmtN(rw.per)+' × '+fmtN(rw.n)+' = <b>'+fmtN(rw.req)+'</b></span><span>'+right+'</span></div>';
       }).join('');
-      h+='<div class="bmZt">'+(rows||'<div class="bmMapV">مفيش كمية للبند ده في الـ BOM.</div>')+(rows?'<div class="bmZr bmZs"><span>الإجمالي <small>(كمية التراكر × عدد التراكرات)</small></span><span><b>'+fmtN(tq)+'</b>'+(pr&&ze?' · منفّذ <b>'+fmtN(te)+'</b> · باقي <b>'+fmtN(tq-te)+'</b>':'')+'</span></div>':'')+'</div>';
+      h+='<div class="bmZt">'+(rows||'<div class="bmMapV">مفيش كمية للبند ده في الـ BOM.</div>')+(rows?'<div class="bmZr bmZs"><span>الإجمالي</span><span><b>'+fmtN(tq)+'</b>'+(ex.linked&&allOk?' · منفّذ <b>'+fmtN(te)+'</b> · باقي <b>'+fmtN(tq-te)+'</b>':'')+'</span></div>':'')+'</div>';
+      ex.errs.forEach(function(x){h+='<div class="bmMapV">⚠ '+esc(x)+'</div>'});
       if(pr&&m)h+=warns(itemLines(it,c,pr,m));
       return h+'</div>';
     }
-    b.innerHTML='<div class="bmMapNote">لكل فئة: <b>المصدر</b> = الكمية بتتقري من أنهي عملية، و<b>يتحسب امتى</b> = توقيت نزول الكمية. افتح أي بند (واحد بس بيفضل مفتوح) تلاقي كميته من الـBOM لكل زون ولون × عدد التراكرات، والمنفّذ والباقي.</div>'+
+    b.innerHTML='<div class="bmMapNote">افتح أي بند (واحد بس بيفضل مفتوح) واختار المصدر وبيقرا إيه ويتحسب امتى.</div>'+
       S.bom.cats.map(function(c,i){
-        var k=norm(c.title),cur=S.map[k]||'',cm=S.meth[k]||'',nOv=c.items.filter(function(it){return S.im[it.k]}).length;
-        var row='<div class="bmMapDef"><b>'+esc(c.title)+' <small>· '+c.items.length+' بند</small></b><div class="bmMiF"><label>المصدر</label>'+procSel('data-mapk="'+esc(k)+'"',cur,'')+'</div><div class="bmMiF"><label>يتحسب امتى</label>'+methSel('data-methk="'+esc(k)+'"',cm)+'</div>';
-        if(nOv)row+='<div class="bmMapV">'+nOv+' بند ليه مصدر/توقيت خاص <b data-imclr="'+esc(k)+'" style="text-decoration:underline;cursor:pointer">رجّعهم زي الفئة</b></div>';
-        row+=c.items.map(function(it){return itemOpen(it,c,k,i)}).join('');
-        return '<div class="bmMapG">'+row+'</div></div>';
+        var k=norm(c.title);
+        return '<div class="bmMapG"><div class="bmMapDef"><b>'+esc(c.title)+' <small>· '+c.items.length+' بند</small></b>'+c.items.map(function(it){return itemOpen(it,c,k,i)}).join('')+'</div></div>';
       }).join('');
   }
   function catStat(c){var n=0,g=0;c.items.forEach(function(it){var t=itemTotal(it);n+=t;g+=Math.min(recv(it),t)});return {n:n,g:g,p:n?g*100/n:0}}
@@ -24352,7 +24414,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     host.setAttribute('data-ready','1');
     host.addEventListener('click',onClick);host.addEventListener('input',onInput);
     host.addEventListener('focusin',function(e){var t=e.target;if(t&&t.matches&&t.matches('.bmCnt input,.bmRc input,.bmUs input')){clearTimeout(RL);setTimeout(function(){try{t.select()}catch(_){}},0)}});
-    host.addEventListener('change',function(e){var t=e.target;if(!t)return;if(t.id==='bmExeFile'){onExe(e);return}if(t.id==='bmFile')onFile(e);else if(t.matches&&t.matches('.bmRc input')&&UI.st){clearTimeout(RL);RL=setTimeout(renderList,450)}else if(t.matches&&t.matches('[data-cm]')){ensure();if(t.value){S.cellMap[t.getAttribute('data-cm')]=t.value;save();renderDyn()}}else if(t.matches&&t.matches('[data-fm]')){ensure();if(t.value){S.fillMap[t.getAttribute('data-fm')]=t.value;save();renderCheck()}}else if(t.matches&&t.matches('[data-methk]')){ensure();S.meth[t.getAttribute('data-methk')]=(t.value==='cells'?'':t.value);save();renderDyn()}else if(t.matches&&t.matches('[data-imp]')){ensure();var ik=t.getAttribute('data-imp'),ck=t.getAttribute('data-ck'),v1=t.value,cp=S.map[ck]||'';S.im[ik]=S.im[ik]||{};S.im[ik].p=((v1==='-'?'':v1)===cp)?'':v1;if(!S.im[ik].p&&!S.im[ik].m)delete S.im[ik];save();renderDyn()}else if(t.matches&&t.matches('[data-imm]')){ensure();var ik2=t.getAttribute('data-imm'),ck2=t.getAttribute('data-ck'),v2=t.value,cm2=S.meth[ck2]||'';S.im[ik2]=S.im[ik2]||{};S.im[ik2].m=((v2==='cells'?'':v2)===cm2)?'':v2;if(!S.im[ik2].p&&!S.im[ik2].m)delete S.im[ik2];save();renderDyn()}else if(t.matches&&t.matches('[data-mapk]')){ensure();S.map[t.getAttribute('data-mapk')]=t.value;save();renderDyn()}});
+    host.addEventListener('change',function(e){var t=e.target;if(!t)return;if(t.id==='bmExeFile'){onExe(e);return}if(t.id==='bmFile')onFile(e);else if(t.matches&&t.matches('.bmRc input')&&UI.st){clearTimeout(RL);RL=setTimeout(renderList,450)}else if(t.matches&&t.matches('[data-cm]')){ensure();if(t.value){S.cellMap[t.getAttribute('data-cm')]=t.value;save();renderDyn()}}else if(t.matches&&t.matches('[data-fm]')){ensure();if(t.value){S.fillMap[t.getAttribute('data-fm')]=t.value;save();renderCheck()}}else if(t.matches&&t.matches('[data-methk]')){ensure();S.meth[t.getAttribute('data-methk')]=(t.value==='cells'?'':t.value);save();renderDyn()}else if(t.matches&&t.matches('[data-imp]')){ensure();var ik=t.getAttribute('data-imp'),ck=t.getAttribute('data-ck'),v1=t.value,cp=S.map[ck]||'';S.im[ik]=S.im[ik]||{};S.im[ik].p=((v1==='-'?'':v1)===cp)?'':v1;if(!S.im[ik].p&&!S.im[ik].m&&!S.im[ik].w)delete S.im[ik];save();renderDyn()}else if(t.matches&&t.matches('[data-imw]')){ensure();var ik3=t.getAttribute('data-imw');S.im[ik3]=S.im[ik3]||{};S.im[ik3].w=t.value;if(!S.im[ik3].p&&!S.im[ik3].m&&!S.im[ik3].w)delete S.im[ik3];save();renderDyn()}else if(t.matches&&t.matches('[data-imm]')){ensure();var ik2=t.getAttribute('data-imm'),ck2=t.getAttribute('data-ck'),v2=t.value,cm2=S.meth[ck2]||'';S.im[ik2]=S.im[ik2]||{};S.im[ik2].m=((v2==='cells'?'':v2)===cm2)?'':v2;if(!S.im[ik2].p&&!S.im[ik2].m&&!S.im[ik2].w)delete S.im[ik2];save();renderDyn()}else if(t.matches&&t.matches('[data-mapk]')){ensure();S.map[t.getAttribute('data-mapk')]=t.value;save();renderDyn()}});
     document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('.dpbAdminTabBtn[data-tab="material"]'))setTimeout(render,0)});
     render();
   }
