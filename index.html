@@ -4354,7 +4354,19 @@ function sheetLayoutWb(wb,sheet){
     const out=collectGroups(d,sheet).size?d:wb;per.set(sheet,out);return out;
   }catch(_){return wb;}
 }
+/* v236: localSources() redid the whole source lookup on every map-model request (about 4,000 times per opening). Same result, rebuilt only when the Plan or the applied-process list changed; each caller gets its own copy of the two maps. */
+let _lsMemo=null;
 function localSources(){
+  const P=(typeof project!=='undefined')?project:null;
+  if(!P||!P.wb) return localSourcesRaw();
+  try{ getAppliedProcessEntries(); }catch(_){}
+  const m=_lsMemo,first=(P.wb.SheetNames||[])[0];
+  if(m&&m.wb===P.wb&&m.file===(P.planFile||null)&&m.first===first&&m.ver===_gapeVer) return {src:new Map(m.r.src),entryKey:new Map(m.r.entryKey)};
+  const r=localSourcesRaw();
+  _lsMemo={wb:P.wb,file:P.planFile||null,first,ver:_gapeVer,r:{src:new Map(r.src),entryKey:new Map(r.entryKey)}};
+  return r;
+}
+function localSourcesRaw(){
   const P=(typeof project!=='undefined')?project:null;const src=new Map(),entryKey=new Map();
   if(!P||!P.wb)return{src,entryKey};
   src.set('plan',{wb:P.wb,sheet:P.wb.SheetNames[0],file:P.planFile||null});
@@ -5605,7 +5617,8 @@ function renderNow(){
   renderMarkBar();
   try{if(typeof window.dpbOnMapRendered==='function')window.dpbOnMapRendered();}catch(_){}
 }
-function refresh(){if(!state.queued){state.queued=true;queueMicrotask(renderNow);}schedulePublish();}
+/* v237: while the opening restore runs, every step asked for a map refresh and (since the app now answers taps between steps) each one rebuilt the whole 13,000-cell map table: 3 times instead of the 1 it was in v234. They are now collected and the map is rebuilt once, right after the restore. */
+function refresh(){if(window.__dpbRestoreHold){state.heldRefresh=true;}else if(!state.queued){state.queued=true;queueMicrotask(renderNow);}schedulePublish();}
 
 /* ---------- lightweight diff-only update for the live 8s poll (v62) ----------
    A full refresh() rebuilds the whole map <table> as one big innerHTML string
@@ -6949,6 +6962,7 @@ function go(p){
     rules:['Build Rules','The fixed rules this engine always follows.']};
   pageTitle.textContent=titles[p][0].replace(/&amp;/g,'&');
   pageSub.innerHTML=titles[p][1];
+  if(p==='activity') dpbEnsureActivity();
   if(p==='map' && project.buildResult) DPBMap.refresh();
   if(p==='ovcolors') renderOvColorsPage();
   if(p==='zonecolors') renderZoneColorsPage();
@@ -7526,8 +7540,11 @@ function dpbB64ToBuf(b64){
     return bytes.buffer;
   }catch(_){return null}
 }
+/* v236: a file that restoreTestFile() just read out of the phone's storage is already stored; writing the same bytes back (plus a base64 copy into localStorage) on every opening only cost time. A file the person picks is a different object, so it is still saved. */
+const __dpbRestoredFiles=new WeakSet();
 async function cacheTestFile(key,file,extra={}){
   if(!TEST_MODE_STICKY || !file) return;
+  if(__dpbRestoredFiles.has(file)) return;
   try{
     const buffer=await file.arrayBuffer();
     const rec={name:file.name,type:file.type||'',lastModified:file.lastModified||Date.now(),buffer,extra};
@@ -7549,7 +7566,7 @@ async function dropStaleCachedProcessFile(key){
 async function restoreTestFile(key){
   let rec=await testCacheGet(TEST_CACHE_STORE,scopedTestKey(key));
   if(rec?.buffer){
-    try{return new File([rec.buffer],rec.name||key,{type:rec.type||'application/octet-stream',lastModified:rec.lastModified||Date.now()});}catch(_){}
+    try{const f=new File([rec.buffer],rec.name||key,{type:rec.type||'application/octet-stream',lastModified:rec.lastModified||Date.now()}); __dpbRestoredFiles.add(f); return f;}catch(_){}
   }
   rec=dpbLSGet('file',key);
   if(rec?.base64){
@@ -7572,27 +7589,48 @@ async function clearTestCache(){
   await testCacheDeleteAll();
   alert('تم مسح بيانات الاختبار لكل المشاريع على هذا الجهاز. من المرة القادمة سيطلب البرنامج الملفات مرة أخرى.');
 }
+/* v235: gives the screen/touch a turn between the heavy restore steps (same work, same order, same result: the app just answers taps in between instead of freezing for seconds) */
+function dpbYield(){ return new Promise(r=>{ try{ if(window.scheduler&&typeof scheduler.yield==='function'){ scheduler.yield().then(r,()=>setTimeout(r,0)); return; } }catch(_){} setTimeout(r,0); }); }
 async function restoreTestSession(){
   if(!TEST_MODE_STICKY) return;
   // Restoring re-applies every saved file in turn, and each one used to rebuild the whole Production screen (8 times for 5 files, ~70% of the opening freeze).
   // Only the final result is ever seen, so these two screen builders are held back while the restore runs and each runs ONCE afterwards, with the last arguments it was given.
   const held=['renderProduction','populateMapFilters'], orig={}, pend={};
   held.forEach(n=>{ if(typeof window[n]==='function'){ orig[n]=window[n]; window[n]=function(){ pend[n]={t:this,a:arguments}; }; } });
+  /* v237: every restored process file re-ran the Activity link (overlay + 791-tracker stage rows, ~0.4s on a PC) although only the result after the LAST file is used. They are collected and done once, before the map is rebuilt. */
+  const o2={link:window.linkDynamicExecutionToPlan,ov:window.rebuildDynamicExecutionOverlay}; let linkHeld=false,ovHeld=false;
+  if(typeof o2.link==='function'&&typeof o2.ov==='function'){
+    window.rebuildDynamicExecutionOverlay=function(merge){ if(merge){ if(ovHeld){ ovHeld=false; o2.ov(false); } return o2.ov.apply(this,arguments); } ovHeld=true; };
+    window.linkDynamicExecutionToPlan=function(){ linkHeld=true; };
+  }
+  window.__dpbRestoreHold=(window.__dpbRestoreHold||0)+1;
   try{ return await restoreTestSessionInner(); }
   finally{
     held.forEach(n=>{ if(orig[n]) window[n]=orig[n]; });
-    held.forEach(n=>{ if(pend[n]){ try{ orig[n].apply(pend[n].t,pend[n].a); }catch(e){ console.warn('screen build after restore failed ('+n+'):',e); } } });
+    if(typeof o2.link==='function'&&typeof o2.ov==='function'){
+      window.rebuildDynamicExecutionOverlay=o2.ov; window.linkDynamicExecutionToPlan=o2.link;
+      try{ if(linkHeld){ delete pend.renderProduction; o2.link(); } else if(ovHeld){ o2.ov(false); } }catch(e){ console.warn('final link after restore failed:',e); }
+    }
+    window.__dpbRestoreHold=Math.max(0,(window.__dpbRestoreHold||1)-1);
+    if(!window.__dpbRestoreHold){ try{ const S=window.DPBMap&&DPBMap.state; if(S&&S.heldRefresh){ S.heldRefresh=false; DPBMap.refresh(); } }catch(_){} }
+    for(const n of held){ if(pend[n]){ await dpbYield(); try{ orig[n].apply(pend[n].t,pend[n].a); }catch(e){ console.warn('screen build after restore failed ('+n+'):',e); } } }
+    /* v235: a screen that refreshed itself while the restore was paused (the Supervisor map lists) saw half the project; refresh it once more now that everything is back */
+    try{ if(typeof window.supervisorRefreshMapButtons==='function') window.supervisorRefreshMapButtons(); }catch(_){}
   }
 }
 async function restoreTestSessionInner(){
   if(!TEST_MODE_STICKY) return;
+  const __rid=window.__dpbActiveProjectId;
+  /* v235: yield, then report whether the same project is still the active one (if the person switched projects meanwhile, this older restore stops instead of writing into the new project) */
+  const yld=async()=>{ await dpbYield(); return window.__dpbActiveProjectId===__rid; };
   try{
     const plan=await restoreTestFile('plan');
     const setup=await restoreTestMeta('processSetup');
     if(plan){
       await onPlanFile({target:{files:[plan]}});
+      if(!(await yld())) return;
       const planMeta=await restoreTestMeta('planState');
-      if(planMeta?.applied && project.planPreview) applyPlanSource();
+      if(planMeta?.applied && project.planPreview){ applyPlanSource(); if(!(await yld())) return; }
     }
     if(setup && project.planApplied){
       const totalEl=document.getElementById('processTotal'), groupedEl=document.getElementById('processGrouped');
@@ -7601,11 +7639,12 @@ async function restoreTestSessionInner(){
       syncProcessCounts();
       if(Number(setup.total)>0) applySettings();
       updateProcessSetupUI();
+      if(!(await yld())) return;
       const grouped=await restoreTestFile('process-grouped');
-      if(grouped) await onDynamicProcessFile({target:{files:[grouped]}},'grouped',undefined,{silent:true});
+      if(grouped){ await onDynamicProcessFile({target:{files:[grouped]}},'grouped',undefined,{silent:true}); if(!(await yld())) return; }
       for(let i=1;i<=Number(setup.separate||0);i++){
         const f=await restoreTestFile('process-separate-'+i);
-        if(f) await onDynamicProcessFile({target:{files:[f]}},'separate',i,{silent:true});
+        if(f){ await onDynamicProcessFile({target:{files:[f]}},'separate',i,{silent:true}); if(!(await yld())) return; }
       }
       // Restored workbooks are already-approved test data. Do NOT make the
       // user press Apply again after every browser/file reload. Apply every
@@ -7613,6 +7652,7 @@ async function restoreTestSessionInner(){
       // normal automatic-Build gate run once all sources are back.
       if(project.processConfig?.files?.grouped){
         applyDynamicProcessSource('grouped');
+        if(!(await yld())) return;
       }
       for(let i=1;i<=Number(setup.separate||0);i++){
         const rec=project.processConfig?.files?.separate?.[i];
@@ -7629,6 +7669,7 @@ async function restoreTestSessionInner(){
         }else{
           applyDynamicProcessSource('separate',i);
         }
+        if(!(await yld())) return;
       }
       // One final synchronization after ALL restored sources are present.
       // This is deliberately automatic; there is no manual Build button.
@@ -8375,7 +8416,31 @@ function sheetOperationName(rawName,rawCode){
   if(Number.isFinite(n) && SHEET_OPERATION_LEGEND[n]) return SHEET_OPERATION_LEGEND[n];
   return String(rawName||'').trim();
 }
+/* v236: this list was rebuilt from scratch on every call (about 49,000 times in one opening: once per tracker, per map lookup...). It is now rebuilt only when something it is made from changes
+   (a file, its Applied flag, its processes, its sheets). Every caller still gets its own fresh copy, exactly like before. */
+let _gapeMemo=null,_gapeVer=0;
 function getAppliedProcessEntries(){
+  let refs=null,str='';
+  try{
+    const pc=project.processConfig||{},f=pc.files||{},sep=f.separate||{};
+    const sk=Object.keys(sep).sort((a,b)=>Number(a)-Number(b));
+    const recs=[f.grouped,...sk.map(k=>sep[k]),f.manualTorque];
+    refs=[]; const parts=[project.wb?1:0,sk.join(',')];
+    for(const r of recs){
+      const d=r&&r.definition||null,w=r&&r.wb||null;
+      refs.push(r||null,d,d&&d.processes||null,w,w&&w.SheetNames||null,r&&r.file||null);
+      parts.push(r?(r.applied?1:0)+'~'+((d&&d.processes)||[]).map(x=>(x&&x.name)+'\u0001'+(x&&x.code)).join('\u0002')+'~'+((w&&w.SheetNames)||[]).join('\u0002'):'-');
+    }
+    str=parts.join('|');
+  }catch(_){ refs=null; }
+  const m=_gapeMemo;
+  if(refs&&m&&m.str===str&&m.refs.length===refs.length&&m.refs.every((x,i)=>x===refs[i])) return m.out.map(e=>({...e}));
+  const out=getAppliedProcessEntriesRaw();
+  _gapeVer++;
+  _gapeMemo=(refs&&out.length&&project.wb)?{str,refs,out:out.map(e=>({...e}))}:null;
+  return out;
+}
+function getAppliedProcessEntriesRaw(){
   const pc=project.processConfig||{}; const out=[];
   const add=(rec,sourceId)=>{
     if(!rec?.applied||!rec.definition?.processes?.length) return;
@@ -10636,8 +10701,20 @@ function renderProductionFromMaps(rd){
   updateActivityPrintButton();
 }
 
+/* v237: the Activity screen (a 35,000-element table plus its report calculation) was rebuilt on every opening and every refresh while nobody was looking at it, which on a phone is the biggest single freeze.
+   Now it is built when the Activity screen is opened (go('activity')), or immediately if it is already showing. The data it is built from is the same, and the latest rows always win. */
 function renderProduction(rows){
   renderBuildReportSnapshot();
+  if(currentPage!=='activity'){ window.__dpbActRows={rows}; try{updateActivityPrintButton();}catch(_){} return; }
+  window.__dpbActRows=null;
+  return renderProductionBody(rows);
+}
+function dpbEnsureActivity(){
+  const d=window.__dpbActRows; if(!d) return;
+  window.__dpbActRows=null;
+  renderProductionBody(d.rows);
+}
+function renderProductionBody(rows){
   const activity=document.getElementById('activity'); if(activity) activity.dataset.ready='1';
   try{
     const rd=window.DPBMap&&typeof DPBMap.reportData==='function'?DPBMap.reportData():null;
