@@ -5563,7 +5563,9 @@ function renderNow(){
     else if(op){const col=opColor(op.code);ovOf=u=>isDone(op,u)?col:null;spec.legendOv={css:col,label:op.name+' — executed'};}
   }
   if(prog){ovOf=null;spec.legendOv={css:opColor(spec.op.code),label:spec.op.name+' — progress'};}
-  let h='<table class="me-map" style="--me-w:'+state.size+'px;--me-h:'+state.size+'px"><tbody>';
+  /* v238: while an operation is shown, the Excel base colours of cells that are NOT executed are softened (value: --me-base-op in #dpbMapBaseDim) so the executed colours stand out; Not-started and progress views keep their own look */
+  const baseDim=!!(spec.mode==='dynamic'&&spec.op&&spec.op.kind!=='notstarted'&&!prog);
+  let h='<table class="me-map'+(baseDim?' me-basedim':'')+'" style="--me-w:'+state.size+'px;--me-h:'+state.size+'px"><tbody>';
   for(let r=top;r<=bot;r++){
     h+='<tr>';
     for(let c=0;c<=right;c++){
@@ -24828,4 +24830,7 @@ window.__dpbStoreTest={push:push,state:function(){return ST}};
 #excelMapShell .me-map td.me-u.me-done.me-prog:not(.me-sel){box-shadow:inset 0 0 0 1.5px #fff,inset 0 0 0 3px rgba(0,0,0,.38)!important}
 #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]:not(.me-sel){box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.9)!important}
 }
+</style>
+<style id="dpbMapBaseDim">/* change .45 to make the base colours dimmer (smaller) or clearer (bigger); .28 = same as Not started, 1 = no dimming */
+@media screen{#excelMapShell .me-map.me-basedim td.me-u:not(.me-done):not(.me-prog):not(.me-sel):not(.me-mark){opacity:var(--me-base-op,.45)}}
 </style>
