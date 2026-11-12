@@ -14223,7 +14223,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     // recomputes it, so Site Map showed stale/empty production status until
     // some other screen happened to rebuild it. Recompute it here so the
     // Site Map is correct the moment the Builder opens.
-    try{if(project.buildResult && typeof linkDynamicExecutionToPlan==='function')linkDynamicExecutionToPlan();}catch(e){console.warn('post-activate execution relink failed',e)}
+    try{if(project.buildResult && typeof linkDynamicExecutionToPlan==='function' && !(project.executionResult&&project.executionResult.rows))linkDynamicExecutionToPlan(); /* v234: the restore above already linked it (the reset wipes executionResult first), so a second identical pass only repeated it */}catch(e){console.warn('post-activate execution relink failed',e)}
     window.__dpbRuntimeLoadedFor=id;
     window.dispatchEvent(new CustomEvent('dpb-project-switched',{detail:{projectId:id,project:rec}}));
   }
