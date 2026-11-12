@@ -24822,4 +24822,10 @@ window.addEventListener('online',function(){if(U&&ST.dirty)push()});
 window.__dpbStoreTest={push:push,state:function(){return ST}};
 })();
 </script>
-
+<style id="dpbMapLite">/* v238: the map has thousands of cells; blurred glows on each one made scrolling it stutter (about 45% of the drawing work). Same look with thin rings instead of blur. */
+@media screen{
+#excelMapShell .me-map td.me-u.me-done:not(.me-prog):not(.me-sel){box-shadow:inset 0 0 0 1px rgba(0,0,0,.26),inset 0 0 0 2px rgba(255,255,255,.16)!important}
+#excelMapShell .me-map td.me-u.me-done.me-prog:not(.me-sel){box-shadow:inset 0 0 0 1.5px #fff,inset 0 0 0 3px rgba(0,0,0,.38)!important}
+#excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]:not(.me-sel){box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.9)!important}
+}
+</style>
