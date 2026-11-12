@@ -14688,13 +14688,17 @@ body.dpbProjectInsideMode #dpbProjectManagerPrototype .dpbProjectRecent{display:
       if(!inside){bar.classList.remove('show');return;}
       const r=nav.getBoundingClientRect();
       bar.classList.toggle('show',r.bottom < 6);
+      const srcBtns=nav.querySelectorAll('button');
       bar.querySelectorAll('button').forEach((b,i)=>{
-        const src=nav.querySelectorAll('button')[i];
+        const src=srcBtns[i];
         if(!src)return;
-        b.disabled=src.disabled;b.className=src.className;
+        if(b.disabled!==src.disabled)b.disabled=src.disabled;
+        if(b.className!==src.className)b.className=src.className;
       });
     };
-    window.addEventListener('scroll',update,{passive:true});
+    /* v238: page scroll used to run this (layout reads + button writes) on every scroll event; now once per frame */
+    let __scrRaf=0;
+    window.addEventListener('scroll',()=>{if(__scrRaf)return;__scrRaf=requestAnimationFrame(()=>{__scrRaf=0;update();});},{passive:true});
     window.addEventListener('resize',()=>{sync();setSafeTitleOffset();update()});
     if(window.ResizeObserver&&titleBar){new ResizeObserver(setSafeTitleOffset).observe(titleBar);}
 
@@ -14719,7 +14723,7 @@ body.dpbProjectInsideMode #dpbProjectManagerPrototype .dpbProjectRecent{display:
     if(!inside){bar.classList.remove('show');return;}
     const titleBottom=topEl ? topEl.getBoundingClientRect().bottom : 90;
     const safeTop=Math.max(8, Math.min(titleBottom+8, 150));
-    document.documentElement.style.setProperty('--dpb-sticky-top', safeTop+'px');
+    if(window.__dpbStickyTopLast!==safeTop){window.__dpbStickyTopLast=safeTop;document.documentElement.style.setProperty('--dpb-sticky-top', safeTop+'px');}
     const threshold=Math.max(120, originalNavTop+20);
     bar.classList.toggle('show', window.scrollY>threshold);
     buttons.forEach(b=>{
@@ -14732,7 +14736,8 @@ body.dpbProjectInsideMode #dpbProjectManagerPrototype .dpbProjectRecent{display:
   }
   function measure(){ originalNavTop=window.scrollY + (document.querySelector('nav')?.getBoundingClientRect().top||0); updateBar(); }
   buttons.forEach(b=>b.addEventListener('click',()=>{const p=b.dataset.mobileP;if(typeof window.go==='function')window.go(p); else {const n=document.querySelector('nav button[data-p="'+p+'"]');n?.click();}}));
-  window.addEventListener('scroll',updateBar,{passive:true});
+  let __barRaf=0;
+  window.addEventListener('scroll',()=>{if(__barRaf)return;__barRaf=requestAnimationFrame(()=>{__barRaf=0;updateBar();});},{passive:true});
   window.addEventListener('resize',measure,{passive:true});
   window.addEventListener('dpb-project-switched',()=>setTimeout(measure,50));
   const observer=new MutationObserver(updateBar); observer.observe(document.body,{attributes:true,attributeFilter:['class']});
