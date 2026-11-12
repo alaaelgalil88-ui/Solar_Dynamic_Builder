@@ -3557,7 +3557,7 @@ if ("serviceWorker" in navigator && !window.__DPB_NATIVE) {
    Ready = page loaded + revealed + brand images decoded + a quiet main thread (no long frames for QUIET ms, measured after the post-load init timers had time to run).
    The bar follows real stages (start -> load -> revealed -> images -> stable) with smooth GPU transitions and only reaches 100% when the app is stable; then a short hold and a fade.
    Safety net: FAIL ms so it can never hang. */
-(function(){var r=document.documentElement,MIN=900,AFTER_LOAD=1800,QUIET=700,FRAME_MAX=70,FAIL=30000,t0=Date.now(),fin=false,fill=null,loadAt=0,qs=0,lastT=0,raf=0,imgsOk=false,imgsStarted=false,stage=0;
+(function(){var r=document.documentElement,MIN=900,AFTER_LOAD=1800,QUIET=700,FRAME_MAX=70,FAIL=30000,HARD=7000,POST_RESTORE=500,t0=Date.now(),fin=false,fill=null,loadAt=0,qs=0,lastT=0,raf=0,imgsOk=false,imgsStarted=false,stage=0;
 function F(){return fill||(fill=document.getElementById('dpbBootFill'));}
 function goTo(p,dur,ease){var f=F();if(!f)return;try{var tf=getComputedStyle(f).transform;f.style.animation='none';f.style.transition='none';f.style.transform=(tf&&tf!=='none')?tf:'translate3d(-100%,0,0)';void f.offsetWidth;f.style.transition='transform '+dur+'ms '+(ease||'cubic-bezier(.2,.7,.3,1)');f.style.transform='translate3d('+((p-1)*100)+'%,0,0)';}catch(e){}}
 function bump(n,p,d){if(stage>=n||fin)return;stage=n;goTo(p,d);}
@@ -3571,6 +3571,9 @@ function tick(t){raf=0;if(fin)return;var now=Date.now();
  if(lastT){if(t-lastT>FRAME_MAX||document.hidden)qs=0;else if(!qs)qs=t;}lastT=t;
  if(loadAt&&revealed()){bump(2,.84,3500);decodeImgs();if(imgsOk)bump(3,.92,3000);}
  if(loadAt&&revealed()&&imgsOk&&now-loadAt>=AFTER_LOAD&&now-t0>=MIN&&qs&&t-qs>=QUIET){finish();return;}
+ /* v238: close as soon as the project is restored (short hold), and never later than HARD ms whatever happens */
+ var rd=window.__dpbRestoreDoneAt;if(rd&&revealed()&&imgsOk&&now-rd>=POST_RESTORE&&now-t0>=MIN){finish();return;}
+ if(now-t0>=HARD&&revealed()){finish();return;}
  if(now-t0>=FAIL){finish();return;}
  raf=requestAnimationFrame(tick);}
 function finish(){if(fin)return;fin=true;try{cancelAnimationFrame(raf);}catch(e){}
@@ -7616,6 +7619,8 @@ async function restoreTestSession(){
     for(const n of held){ if(pend[n]){ await dpbYield(); try{ orig[n].apply(pend[n].t,pend[n].a); }catch(e){ console.warn('screen build after restore failed ('+n+'):',e); } } }
     /* v235: a screen that refreshed itself while the restore was paused (the Supervisor map lists) saw half the project; refresh it once more now that everything is back */
     try{ if(typeof window.supervisorRefreshMapButtons==='function') window.supervisorRefreshMapButtons(); }catch(_){}
+    /* v238: tells the loading splash that the project is back, so it can close now instead of waiting for every small timer to go quiet */
+    window.__dpbRestoreDoneAt=Date.now();
   }
 }
 async function restoreTestSessionInner(){
