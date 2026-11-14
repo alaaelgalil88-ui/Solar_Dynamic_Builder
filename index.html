@@ -5412,6 +5412,7 @@ function progDiff(spec,model,op,shell){
   return changed;
 }
 function renderProgBar(row,spec){
+  row.__mbHtml=null;   /* v238: the normal bar's 'same markup' memory is no longer true once this bar writes */
   const model=state.last.model,units=[...mark.sel.values()],n=units.length;
   const oq=document.getElementById('dpbProgQty');
   const sig=units.map(u=>u.id).join(',');
@@ -5539,10 +5540,29 @@ function unitPassesMapFilter(u){
     return rowOk&&numOk;
   }catch(_){return true;}
 }
+/* v240: softened base colours are mixed into the dark map background in JS, once per colour. (CSS opacity on ~11,000 cells made drawing and scrolling the map heavier.) Change 0.45: smaller = dimmer, bigger = clearer, 1 = no dimming. */
+const BASE_DIM_ALPHA=0.45,__dimCache=new Map();
+function dimBase(css){
+  let r=__dimCache.get(css);if(r)return r;
+  let m=/^#([0-9a-f]{6})$/i.exec(css),R,G,B;
+  if(m){const n=parseInt(m[1],16);R=n>>16&255;G=n>>8&255;B=n&255;}
+  else if((m=/^#([0-9a-f]{3})$/i.exec(css))){R=parseInt(m[1][0]+m[1][0],16);G=parseInt(m[1][1]+m[1][1],16);B=parseInt(m[1][2]+m[1][2],16);}
+  else if((m=/^rgb\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/i.exec(css))){R=+m[1];G=+m[2];B=+m[3];}
+  else{__dimCache.set(css,css);return css;}
+  const a=BASE_DIM_ALPHA,mix=(c,b)=>Math.round(b+(c-b)*a);
+  r='rgb('+mix(R,11)+','+mix(G,22)+','+mix(B,34)+')';__dimCache.set(css,r);return r;
+}
 function renderNow(){
   state.queued=false;
   const shell=document.getElementById('excelMapShell'),lg=document.getElementById('mapLegend');
   if(!shell||!lg)return;
+  /* v238: the map is a table of ~11,000 cells. While its screen is not on show there is nothing to look at, so it is not built; it is built the moment the screen becomes visible. */
+  if(shell.offsetParent===null&&!window.__dpbMapRenderAlways){
+    state.hiddenDirty=true;
+    if(!state.visWatch&&window.ResizeObserver){state.visWatch=new ResizeObserver(()=>{if(state.hiddenDirty&&shell.offsetParent!==null){state.hiddenDirty=false;refresh();}});state.visWatch.observe(shell);}
+    return;
+  }
+  state.hiddenDirty=false;
   ensureCss();
   const cat=currentCatalog();
   if(!cat){say('لا توجد خرائط بعد — ارفع Plan واعمل Apply من الـ Builder.');state.last=null;return;}
@@ -5584,7 +5604,7 @@ function renderNow(){
         // Executed cells: the overlay paints the WHOLE cell in the operation's
         // exact colour — the same value used for that operation's legend swatch,
         // so a cell can never read as a different shade than its legend.
-        h+='<td class="me-u'+((ov||(pp&&pp.full))?' me-done':'')+(pp?' me-prog':'')+(state.selected===u.id?' me-sel':'')+(mark.sel.has(u.id)?' me-mark':'')+((!ov&&!(pp&&pp.d>0)&&col.css==='#ffffff')?' me-blank':'')+'"'+span+' data-u="'+u.id+'" data-live-bg="'+esc(pp?pp.key:(ov||col.css))+'" style="background:'+(pp?pp.bg:(ov||col.css))+(ov?';--ov:'+ov:'')+(passF?(dimmed?';opacity:.28':''):';opacity:.14;filter:grayscale(1) saturate(.3)')+'"'+(brightOf?' data-ns="1"':'')+' data-dim="'+(dimmed?'1':'')+'" title="'+esc((u.rowLabel?u.rowLabel+' · ':'')+(u.label||'')+(pp?' · '+pp.title:(u.total?' · '+u.post+'/'+u.total:'')))+'">'+(pp?pp.html:'')+'</td>';
+        h+='<td class="me-u'+((ov||(pp&&pp.full))?' me-done':'')+(pp?' me-prog':'')+(state.selected===u.id?' me-sel':'')+(mark.sel.has(u.id)?' me-mark':'')+((!ov&&!(pp&&pp.d>0)&&col.css==='#ffffff')?' me-blank':'')+'"'+span+' data-u="'+u.id+'" data-live-bg="'+esc(pp?pp.key:(ov||col.css))+'" style="background:'+(pp?pp.bg:(ov||(baseDim?dimBase(col.css):col.css)))+(ov?';--ov:'+ov:'')+(passF?(dimmed?';opacity:.28':''):';opacity:.14;filter:grayscale(1) saturate(.3)')+'"'+(brightOf?' data-ns="1"':'')+' data-dim="'+(dimmed?'1':'')+'" title="'+esc((u.rowLabel?u.rowLabel+' · ':'')+(u.label||'')+(pp?' · '+pp.title:(u.total?' · '+u.post+'/'+u.total:'')))+'">'+(pp?pp.html:'')+'</td>';
       }else if(it&&it.l){
         const l=it.l,rs=l.r2-l.r+1,cs=l.c2-l.c+1;
         const span=(rs>1?' rowspan="'+rs+'"':'')+(cs>1?' colspan="'+cs+'"':'');
@@ -5616,7 +5636,10 @@ function renderNow(){
     else if(unmapped.size)lgh+='<span class="pill" style="background:#7a1f1f;color:#fff">⚠ أكواد/ألوان مش معروفة في site_color_code: '+esc([...unmapped].join(', '))+'</span>';
   }
   lgh+='<span class="me-chip-list">'+listh+'</span>';
+  /* v238: the sequence-check chip (added by another module) is kept and put back at once, so it does not vanish and come back on every refresh */
+  const __keepCf=[...lg.querySelectorAll(':scope > .cfKey')];
   lg.innerHTML=lgh;
+  __keepCf.forEach(n=>lg.appendChild(n));
   if(state.selected&&model.unitById.has(state.selected))details(state.selected);else state.selected=null;
   if(state.markSig!==spec.id){state.markSig=spec.id;clearMarkSelection();loadLocks();}
   renderMarkBar();
@@ -5687,7 +5710,7 @@ function applyLiveDiff(){
     if(wasDone===!!ov&&td.dataset.liveBg===targetBg) continue; // covers both execution-status AND live-color-only changes
     changed=true;
     td.classList.toggle('me-done',!!ov);
-    td.style.background=targetBg;
+    td.style.background=(!ov&&document.querySelector('#excelMapShell table.me-map.me-basedim'))?dimBase(targetBg):targetBg;
     td.dataset.liveBg=targetBg;
     if(ov) td.style.setProperty('--ov',ov); else td.style.removeProperty('--ov');
   }
@@ -5854,7 +5877,7 @@ function renderMarkBar(){
       '<span style="color:#9db2c7;font-size:11px;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis">'+(co?'🏢 '+esc(co.name):'')+'</span>';
   }
   const canApply=n>0&&(!isRam||!!mark.operatorId);
-  row.innerHTML=
+  const __mbHtml=
     '<div class="mbTop" dir="ltr"><span class="mbCount'+(n?' on':'')+'" dir="rtl"><span>محدد</span><b id="dpbMarkCount">'+n+'</b></span>'+
     (opHtml?'<div class="mbOp">'+opHtml+'</div>':'')+'</div>'+
     '<div class="mbBtns" dir="ltr">'+
@@ -5863,6 +5886,8 @@ function renderMarkBar(){
     '<button type="button" id="dpbMarkDelete" class="mbB danger" title="حذف" aria-label="حذف"'+(n?'':' disabled')+'>🗑️</button>'+
     '<button type="button" id="dpbMarkApply" class="mbB primary" title="تطبيق وحفظ" aria-label="تطبيق"'+(canApply?'':' disabled')+'>✓ تطبيق</button>'+
     '</div>';
+  /* v238: same buttons and numbers as before = leave them alone (rebuilding identical buttons made the bar blink on every live refresh) */
+  if(row.__mbHtml!==__mbHtml||!row.firstChild){row.innerHTML=__mbHtml;row.__mbHtml=__mbHtml;}
 }
 function iconBtnCss(kind){
   const base='width:40px;height:40px;min-width:40px;border-radius:10px;font-size:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;';
@@ -6971,6 +6996,7 @@ function go(p){
   if(p==='map' && project.buildResult) DPBMap.refresh();
   if(p==='ovcolors') renderOvColorsPage();
   if(p==='zonecolors') renderZoneColorsPage();
+  if(p==='upload'&&window.__dpbDupPending){window.__dpbDupPending=false;try{const h=dpbDupTrackerNoteHtml();if(h&&validationNotice&&!document.getElementById('dpbDupTrk'))validationNotice.insertAdjacentHTML('beforeend',h);}catch(_){}}
   updateFloatNav();
   focusCurrentProcess(p);
 }
@@ -7622,7 +7648,8 @@ async function restoreTestSession(){
     /* v235: a screen that refreshed itself while the restore was paused (the Supervisor map lists) saw half the project; refresh it once more now that everything is back */
     try{ if(typeof window.supervisorRefreshMapButtons==='function') window.supervisorRefreshMapButtons(); }catch(_){}
     /* v238: tells the loading splash that the project is back, so it can close now instead of waiting for every small timer to go quiet */
-    window.__dpbRestoreDoneAt=Date.now();
+    /* only a restore that really brought a project back counts (an early empty pass must not close the splash) */
+    try{ if(project&&project.planApplied&&project.buildResult) window.__dpbRestoreDoneAt=Date.now(); }catch(_){}
   }
 }
 async function restoreTestSessionInner(){
@@ -8003,7 +8030,7 @@ function renderValidation(){
   });
   validationBody.innerHTML=h;
   const ok=project.validation.siteOk&&project.validation.typeResults.every(t=>t.ok);
-  validationNotice.innerHTML=(ok?'<div class="notice ok">Verified against the workbook Named Ranges. Build is unlocked. Use the Build step below.</div>':'<div class="notice bad">The entered Range / Code / Cell Count does not match the workbook. Fix it before Build.</div>')+dpbDupTrackerNoteHtml();
+  validationNotice.innerHTML=(ok?'<div class="notice ok">Verified against the workbook Named Ranges. Build is unlocked. Use the Build step below.</div>':'<div class="notice bad">The entered Range / Code / Cell Count does not match the workbook. Fix it before Build.</div>')+(currentPage==='upload'?dpbDupTrackerNoteHtml():(window.__dpbDupPending=true,''));   /* v238: the duplicate-tracker check builds the whole map model; do it only when this screen is on show */
   syncStepAccess();
   syncPlanButtons();
 }
@@ -10828,7 +10855,13 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
         types:project.types||[],
         executionResult:project.executionResult||null
       };
-      if(snapshot.buildResult){const js=JSON.stringify(snapshot);if(js.length<1200000)localStorage.setItem(KEY,js);else{try{localStorage.removeItem(KEY)}catch(_){}}}
+      if(snapshot.buildResult){
+        /* v238: this project's Build result is over the 1.2 MB limit, so the snapshot was always thrown away - but the 2 MB JSON text was still built on every change. Remember that this exact result is too big and skip the work. */
+        if(snapshot.buildResult===window.__dpbSnapTooBigBR){try{localStorage.removeItem(KEY)}catch(_){}return;}
+        const js=JSON.stringify(snapshot);
+        if(js.length<1200000)localStorage.setItem(KEY,js);
+        else{window.__dpbSnapTooBigBR=snapshot.buildResult;try{localStorage.removeItem(KEY)}catch(_){}}
+      }
     }catch(e){}
   }
   // The previous 1-second full JSON serialization was the main source of the
@@ -22876,9 +22909,12 @@ body.print-activity #dpbBottomBar{display:none!important}
   function eligible(){var m=M(),st=m&&m.state,l=st&&st.last;if(!l||!l.spec||!l.model||!l.model.ok)return null;if(l.spec.mode!=='dynamic'||!l.spec.op||l.spec.op.kind==='notstarted'||!l.spec.op.grouped)return null;return l;}
   function clear(){var s=shell();if(s)s.querySelectorAll('td[data-cf]').forEach(function(t){t.removeAttribute('data-cf');});var lg=document.getElementById('mapLegend');if(lg)lg.querySelectorAll('.cfKey').forEach(function(e){e.remove();});var b=document.getElementById('mapDetail');if(b)b.querySelectorAll('.cfDet').forEach(function(e){e.remove();});sig='';node=null;cache.byCell=null;}
   function legend(names){
-    var lg=document.getElementById('mapLegend');if(!lg)return;lg.querySelectorAll('.cfKey').forEach(function(e){e.remove();});
-    var d=document.createElement('div');d.className='cfKey';
+    var lg=document.getElementById('mapLegend');if(!lg)return;var d=document.createElement('div');d.className='cfKey';
     d.innerHTML='<button type="button" class="cfTgl'+(on?' on':'')+'" aria-pressed="'+(on?'true':'false')+'" title="يفحص الخلايا اللي اتنفذت من غير تنفيذ العملية السابقة لها">⚠ فحص التسلسل</button>'+(on?'<div class="cfList">'+names.map(function(n,i){return '<span class="cfN"><i>'+(i+1)+'</i>'+esc(n)+'</span>';}).join('')+'</div>':'');
+    /* v238: same chip as already shown = leave it (no remove and re-add on every refresh) */
+    var old=lg.querySelector(':scope > .cfKey');
+    if(old&&old.innerHTML===d.innerHTML){lg.querySelectorAll(':scope > .cfKey').forEach(function(e){if(e!==old)e.remove();});return;}
+    lg.querySelectorAll('.cfKey').forEach(function(e){e.remove();});
     lg.appendChild(d);
   }
   function who(x){return x.kind==='auto'?'تلقائي (قديم)':(x.kind==='excel'?'ملف الإكسل':(x.kind==='none'?'بدون سجل':esc(x.who||'—')));}
@@ -24824,13 +24860,12 @@ window.addEventListener('online',function(){if(U&&ST.dirty)push()});
 window.__dpbStoreTest={push:push,state:function(){return ST}};
 })();
 </script>
-<style id="dpbMapLite">/* v238: the map has thousands of cells; blurred glows on each one made scrolling it stutter (about 45% of the drawing work). Same look with thin rings instead of blur. */
+<style id="dpbMapLite">/* v241: every map cell had a box-shadow ring. On a phone that is about 3x more drawing work than a plain border (measured on the real map: -65%), and it is what made the operation maps (Ramming...) stutter while moving. Thin borders look the same. */
 @media screen{
-#excelMapShell .me-map td.me-u.me-done:not(.me-prog):not(.me-sel){box-shadow:inset 0 0 0 1px rgba(0,0,0,.26),inset 0 0 0 2px rgba(255,255,255,.16)!important}
-#excelMapShell .me-map td.me-u.me-done.me-prog:not(.me-sel){box-shadow:inset 0 0 0 1.5px #fff,inset 0 0 0 3px rgba(0,0,0,.38)!important}
-#excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]:not(.me-sel){box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.9)!important}
+#excelMapShell .me-map td.me-u:not(.me-sel){box-shadow:none!important;border:1px solid rgba(255,255,255,.28)}
+#excelMapShell .me-map td.me-u.me-blank:not(.me-sel){border:1px solid rgba(20,32,48,.5);outline:1px solid rgba(255,255,255,.9);outline-offset:-2px}
+#excelMapShell .me-map td.me-u.me-done:not(.me-sel){border:1px solid rgba(255,255,255,.78);filter:none}
+#excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]:not(.me-sel){border:1.5px solid rgba(255,255,255,.95)}
 }
 </style>
-<style id="dpbMapBaseDim">/* change .45 to make the base colours dimmer (smaller) or clearer (bigger); .28 = same as Not started, 1 = no dimming */
-@media screen{#excelMapShell .me-map.me-basedim td.me-u:not(.me-done):not(.me-prog):not(.me-sel):not(.me-mark){opacity:var(--me-base-op,.45)}}
-</style>
+
