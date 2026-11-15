@@ -6,10 +6,10 @@
 (function () {
   'use strict';
   /* startup timing: how long each stage of opening the app took (ms since the page started). The last 6 launches stay on the device and show in the orange-badge details box. */
-  var STUP = { id: Date.now(), fcp: 0, dcl: 0, load: 0, fb0: 0, sdk: 0, db: 0, rs: 0, how: '', al: '', auth: 0, fb: 0, splash: 0, lt: { n: 0, ms: 0, top: [] }, lo: [], tm: [], rt: { n: 0, ms: 0, at: 0 }, xr: { n: 0, ms: 0, top: [] } };
+  var STUP = { id: Date.now(), fcp: 0, dcl: 0, load: 0, fb0: 0, sdk: 0, db: 0, rs: 0, how: '', al: '', auth: 0, fb: 0, splash: 0, lt: { n: 0, ms: 0, top: [] }, lo: [], tm: [] };
   function stNow() { return Math.round(performance.now()); }
   var earlyRes, earlyP = new Promise(function (r) { earlyRes = r; });   // resolves with a read-from-this-phone-only helper as soon as Firestore exists (does not wait for sign-in / network)
-  function stSave() { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'), r = { t: STUP.id, fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb0: STUP.fb0, sdk: STUP.sdk, db: STUP.db, rs: STUP.rs, how: STUP.how, al: STUP.al, splash: STUP.splash, lt: STUP.lt, lo: STUP.lo, tm: STUP.tm, rt: STUP.rt, xr: STUP.xr, auth: STUP.auth, fb: STUP.fb, apk: !!window.Capacitor }, k = -1; a.forEach(function (x, n) { if (x.t === STUP.id) k = n; }); if (k >= 0) a[k] = r; else a.push(r); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
+  function stSave() { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'), r = { t: STUP.id, fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb0: STUP.fb0, sdk: STUP.sdk, db: STUP.db, rs: STUP.rs, how: STUP.how, al: STUP.al, splash: STUP.splash, lt: STUP.lt, lo: STUP.lo, tm: STUP.tm, auth: STUP.auth, fb: STUP.fb, apk: !!window.Capacitor }, k = -1; a.forEach(function (x, n) { if (x.t === STUP.id) k = n; }); if (k >= 0) a[k] = r; else a.push(r); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
   function stMark(n) { if (!STUP[n]) { STUP[n] = stNow(); if (STUP.load) stSave(); } }   // after the page finished loading every later step updates this launch's saved row at once
   try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.name === 'first-contentful-paint') STUP.fcp = Math.round(e.startTime); }); }).observe({ type: 'paint', buffered: true }); } catch (e) {}
   document.addEventListener('DOMContentLoaded', function () { STUP.dcl = stNow(); });
@@ -46,38 +46,6 @@
     if (!r.lt) return '';
     return 'التقطيع: ' + L.n + ' مرة بإجمالي ' + f(L.ms) + ' ث' + (L.top.length ? ' (أطولهم: ' + L.top.map(function (t) { return f(t[1]) + ' ث عند ' + f(t[0]); }).join('، ') + ')' : '') + ' | الشاشة اتشالت عند ' + (r.splash ? f(r.splash) : '—');
   }
-  // v232 timing only (changes nothing): how long the project restore took at opening (it re-reads the saved Excel files) and every Excel read inside it
-  function stRs(r) {
-    var f = function (ms) { return (ms / 1000).toFixed(1); }, x = r.xr || { n: 0, ms: 0, top: [] }, q = r.rt || { n: 0, ms: 0, at: 0 };
-    if (!q.n && !x.n) return '';
-    return 'استرجاع المشروع: ' + q.n + ' مرة بإجمالي ' + f(q.ms) + ' ث (آخرها انتهى عند ' + f(q.at) + ') | قراءة إكسل: ' + x.n + ' ملف بإجمالي ' + f(x.ms) + ' ث' + (x.top && x.top.length ? ' (' + x.top.map(function (t) { return f(t[1]) + ' ث / ' + t[2] + ' KB عند ' + f(t[0]); }).join('، ') + ')' : '');
-  }
-  (function () {
-    var n = 0, iv = setInterval(function () {
-      try {
-        if (typeof window.restoreTestSession === 'function' && !window.restoreTestSession.__st) {
-          var o = window.restoreTestSession, w = function () {
-            var s = stNow(), done = function () { var e = stNow(); STUP.rt.n++; STUP.rt.ms += e - s; STUP.rt.at = e; if (STUP.load) stSave(); };
-            var r; try { r = o.apply(this, arguments); } catch (e) { done(); throw e; }
-            return (r && r.then) ? r.then(function (v) { done(); return v; }, function (e) { done(); throw e; }) : (done(), r);
-          };
-          w.__st = 1; window.restoreTestSession = w;
-        }
-        if (window.XLSX && typeof window.XLSX.read === 'function' && !window.XLSX.read.__st) {
-          var or = window.XLSX.read, wr = function (d) {
-            var s = stNow(); try { return or.apply(this, arguments); } finally {
-              var e = stNow(), ms = e - s, kb = Math.round(((d && (d.byteLength || d.length)) || 0) / 1024);
-              STUP.xr.n++; STUP.xr.ms += ms; STUP.xr.top.push([s, ms, kb]); STUP.xr.top.sort(function (a, b) { return b[1] - a[1]; }); STUP.xr.top = STUP.xr.top.slice(0, 5);
-              if (STUP.load) stSave();
-            }
-          };
-          wr.__st = 1; window.XLSX.read = wr;
-        }
-        if (window.restoreTestSession && window.restoreTestSession.__st && window.XLSX && window.XLSX.read && window.XLSX.read.__st) clearInterval(iv);
-      } catch (e) {}
-      if (++n > 600) clearInterval(iv);
-    }, 50);
-  })();
   function stWho(r) {
     var f = function (ms) { return (ms / 1000).toFixed(1); }, o = [];
     (r.tm || []).forEach(function (t) { o.push('   ⏱ تايمر بطيء: ' + f(t[1]) + ' ث عند ' + f(t[0]) + ' — ' + t[2] + ' — ' + t[3]); });
@@ -85,8 +53,8 @@
     return o;
   }
   function stText() {   // lines for the "app opening time" box in the cloud/backup screen
-    var L = ['الفتحة الحالية: ' + stLine(STUP), stLt(STUP), stRs(STUP)].concat(stWho(STUP));
-    try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.slice().reverse().forEach(function (r) { if (r.t === STUP.id) return; L.push('• ' + stLine(r) + (r.apk ? ' (APK)' : ' (متصفح)')); var q = stLt(r); if (q) L.push('   ' + q); var q2 = stRs(r); if (q2) L.push('   ' + q2); stWho(r).forEach(function (x) { L.push(x); }); }); } catch (e) {}
+    var L = ['الفتحة الحالية: ' + stLine(STUP), stLt(STUP)].concat(stWho(STUP));
+    try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.slice().reverse().forEach(function (r) { if (r.t === STUP.id) return; L.push('• ' + stLine(r) + (r.apk ? ' (APK)' : ' (متصفح)')); var q = stLt(r); if (q) L.push('   ' + q); stWho(r).forEach(function (x) { L.push(x); }); }); } catch (e) {}
     try { var ll = JSON.parse(localStorage.getItem('dpb_login_log') || '[]'); if (ll.length) { L.push('آخر دخول بالـ PIN:'); ll.slice().reverse().forEach(function (r) { L.push('• ' + (r.ms / 1000).toFixed(1) + ' ث — ' + (r.via === 'local' ? 'من الجهاز' : 'من السيرفر')); }); } } catch (e) {}
     L.push('الأرقام بالثواني من لحظة بداية الفتح. (الدخول = تسجيل دخول Firebase)');
     return L.join('<br>');
@@ -1512,8 +1480,22 @@
   // owns(name): the layer is on and this process is one of its map processes. liveValues(name): Map "r|c" -> value (what the old getGrid reply held
   // after overlayGrid: done count for a progress cell, otherwise the process code), or null while the layer is not connected yet.
   function owns(name) { try { return on() && mine(name); } catch (e) { return false; } }
+  /* v252: this read goes through every record of the project (tens of thousands) and was repeated every 8 s even when nothing had changed. The result is now kept until the store reports a change (version), or the stage codes / cascade switch change. */
+  var lvMemo = {};
   function liveValues(name) {
     var st1 = curStore(); if (!owns(name) || !st1) return null;
+    var key = '';
+    try {
+      var c0 = (typeof window.DPB_stageCodes === 'function') ? window.DPB_stageCodes() : null, g0 = (typeof window.DPB_groupedProcessNames === 'function') ? window.DPB_groupedProcessNames() : [];
+      key = version + '|' + storePid + '|' + (cascadeOn() ? 1 : 0) + '|' + JSON.stringify(c0) + '|' + g0.join(',');
+    } catch (e) { key = ''; }
+    var hit = lvMemo[name];
+    if (key && hit && hit.k === key) return hit.m;
+    var res = liveValuesRaw(name, st1);
+    if (key && res) lvMemo[name] = { k: key, m: res };
+    return res;
+  }
+  function liveValuesRaw(name, st1) {
     var sl = CORE.slug(name), m = new Map(), all = st1.all();
     all.forEach(function (d) {
       if (CORE.slug(d.process) !== sl) return;
@@ -2357,10 +2339,13 @@
       '<div class="fs2Sec">الحالة</div>' +
       boxH('حالة الطبقة', 'dpbFs2State') +
       boxH('رسائل', 'dpbFs2Msg') +
-      boxH('⏱️ زمن فتح التطبيق', 'dpbFs2Startup', stText());
+      '<details id="dpbFs2StartupWrap" style="margin-top:10px"><summary class="hint" style="cursor:pointer">⏱️ تقرير زمن الفتح (للمطوّر — مقفول)</summary>' + boxH('⏱️ زمن فتح التطبيق', 'dpbFs2Startup', '') + '</details>';
     var old = document.getElementById('dpbFsCard');
     if (old && old.parentNode === host) host.insertBefore(c, old.nextSibling); else host.appendChild(c);
-    setInterval(function () { var e = document.getElementById('dpbFs2Startup'); if (e) e.innerHTML = stText(); }, 2000);   // the card is built at app start: keep the opening-time box current
+    /* v246: the long opening-time report is folded away and is only built (and refreshed) while it is open. Before, a long text was rebuilt every 2 s even when nobody was looking at it. */
+    (function () { var w = document.getElementById('dpbFs2StartupWrap'); function fill() { var e = document.getElementById('dpbFs2Startup'); if (e) e.innerHTML = stText(); }
+      if (w) w.addEventListener('toggle', function () { if (w.open) fill(); });
+      setInterval(function () { var w2 = document.getElementById('dpbFs2StartupWrap'); if (w2 && w2.open) fill(); }, 2000); })();
     function paint() { paintState(); if (on() && !store) getStore().catch(function () {}); }
     // ---- connection report (live) ----
     function hms(t) { var d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }

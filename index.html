@@ -6996,6 +6996,7 @@ function go(p){
   if(p==='map' && project.buildResult) DPBMap.refresh();
   if(p==='ovcolors') renderOvColorsPage();
   if(p==='zonecolors') renderZoneColorsPage();
+  if(p==='map'&&window.__dpbMountFlat){try{window.__dpbMountFlat();}catch(_){}}
   if(p==='upload'&&window.__dpbDupPending){window.__dpbDupPending=false;try{const h=dpbDupTrackerNoteHtml();if(h&&validationNotice&&!document.getElementById('dpbDupTrk'))validationNotice.insertAdjacentHTML('beforeend',h);}catch(_){}}
   updateFloatNav();
   focusCurrentProcess(p);
@@ -11215,7 +11216,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
       </div>
     </section>
     <div class="master-notice">🔒 &nbsp; Secure Access &nbsp;•&nbsp; Your Data is Protected</div>
-    <div class="master-footer"><span class="dpbFxText">SOLAR DYNAMIC BUILDER &nbsp;•&nbsp; Designed by Alaa Ahmed</span></div>
+    <div class="master-footer"><span class="dpbFxText">SOLAR DYNAMIC BUILDER &nbsp;•&nbsp; Designed by Alaa Ahmed</span><span id="dpbVerLine" style="display:block;margin-top:5px;font-size:11px;opacity:.55;cursor:pointer;direction:ltr"></span></div>
     <div id="dpbGateMsg" class="master-msg"></div>
   </main>
 </div>
@@ -13180,19 +13181,21 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
     try{
       const allNames=getLiveGridProcessNames_();
       // processes owned by the Firestore layer are read locally (no network); only the rest go to Apps Script
-      const FS=window.DPB_FS2; let localAny=false;
+      const FS=window.DPB_FS2; let localAny=false, sameLive=true;
       const names=allNames.filter(n=>{ try{ return !(FS&&FS.owns&&FS.owns(n)); }catch(_){ return true; } });
       allNames.forEach(n=>{
         if(names.includes(n)) return;
         const L=FS.liveValues(n); if(!L) return;
         const prev=window.__dpbLiveGridByProcess[n];
+        if(!(prev&&prev.valuesByCoord===L)) sameLive=false;
         window.__dpbLiveGridByProcess[n]={sheet:n,valuesByCoord:L,trackers:(prev&&prev.trackers)||[],colorByCoord:(prev&&prev.colorByCoord)||new Map()};
         localAny=true;
       });
       if(localAny){
         if(window.__dpbLiveGridByProcess.Ramming) window.__dpbLiveGrid=window.__dpbLiveGridByProcess.Ramming;
         pollLastOkAt=Date.now();
-        if(dm&&typeof dm.applyLiveDiff==="function") dm.applyLiveDiff();
+        /* v252: same values as the last poll = nothing to paint; the whole-map comparison runs only when a value changed (and at least once a minute as a safety net) */
+        if(dm&&typeof dm.applyLiveDiff==="function"&&(!sameLive||Date.now()-(window.__dpbLastDiffAt||0)>60000)){ window.__dpbLastDiffAt=Date.now(); dm.applyLiveDiff(); }
       }
       if(!names.length) return;
       const res=await dpbGuardedFetch('https://dpb-firebase.local/production',{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({action:"getGridBatch",processes:names,includeColors:wantColors,light:true})});
@@ -22928,8 +22931,12 @@ body.print-activity #dpbBottomBar{display:none!important}
     var d=document.createElement('div');d.className='cfDet';d.innerHTML=h;box.appendChild(d);
   }
   function watch(){var box=document.getElementById('mapDetail');if(!box||box===obsFor)return;if(obs)obs.disconnect();obsFor=box;try{obs=new MutationObserver(function(){detail();});obs.observe(box,{childList:true});}catch(e){}}
-  async function paint(){
+  /* v251: the sequence check re-did its whole calculation every 3 s even when nothing had changed (about 0.1-0.25 s each time on a phone = a small freeze while moving the map). It now runs only when the map was redrawn / a cell changed / the switch was pressed, plus once a minute as a safety net. */
+  var dirty=true,lastRun=0;
+  async function paint(force){
     var s=shell();if(!s||!s.offsetParent)return;
+    if(force!==true&&!dirty&&Date.now()-lastRun<60000)return;
+    dirty=false;lastRun=Date.now();
     var l=eligible(),m=M();
     if(!l){if(s.querySelector('td[data-cf]')||document.querySelector('#mapLegend .cfKey'))clear();return;}
     var my=++seq,sup=isSup(),data=null;
@@ -22955,16 +22962,16 @@ body.print-activity #dpbBottomBar{display:none!important}
     var b=document.getElementById('mapDetail');if(b)b.querySelectorAll('.cfDet').forEach(function(e){e.remove();});
     detail();
   }
-  function soon(){clearTimeout(tmr);tmr=setTimeout(function(){paint();},250);}
+  function soon(){dirty=true;clearTimeout(tmr);tmr=setTimeout(function(){paint(true);},250);}
   function hook(){
     var m=M();
-    if(m&&!m.__cfWrapped&&typeof m.applyLiveDiff==='function'){var o=m.applyLiveDiff;m.applyLiveDiff=function(){var r=o.apply(this,arguments);soon();return r;};m.__cfWrapped=1;}
+    if(m&&!m.__cfWrapped&&typeof m.applyLiveDiff==='function'){var o=m.applyLiveDiff;m.applyLiveDiff=function(){var r=o.apply(this,arguments);if(r)soon();return r;};m.__cfWrapped=1;}
     if(!window.__cfRenderWrapped){var o2=window.dpbOnMapRendered;window.dpbOnMapRendered=function(){try{if(typeof o2==='function')o2.apply(this,arguments);}finally{soon();}};window.__cfRenderWrapped=1;}
   }
   document.addEventListener('click',function(e){
     var b=e.target.closest&&e.target.closest('#mapLegend .cfTgl');if(!b)return;
     on=!on;try{localStorage.setItem(KEY,on?'on':'off');}catch(_){}
-    sig='';paint();
+    sig='';paint(true);
   });
   hook();watch();
   setInterval(function(){hook();watch();paint();},3000);
@@ -24697,7 +24704,10 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbStoreRoot .stAdd input{box-sizing:border-box;flex:1;min-width:0;background:#040b14;border:1px solid #37d6a2;border-radius:10px;color:#fff;font-size:20px;padding:8px;direction:ltr;text-align:center;font-family:inherit}
 #dpbStoreRoot .stDl{margin-top:6px;font-size:11px;color:#9fb6d0}
 #dpbStoreRoot .stDl div{display:flex;gap:6px;align-items:center;padding:3px 0}
-#dpbStoreRoot .stDl button{border:0;background:transparent;color:#ff8a8a;font-size:15px;padding:2px 8px;cursor:pointer}
+#dpbStoreRoot .stDl button{border:0;background:transparent;color:#ff8a8a;font-size:20px;padding:6px 14px;min-width:48px;min-height:40px;cursor:pointer;touch-action:manipulation}
+#dpbStoreRoot .stDl .stDc{background:rgba(255,107,107,.10);border:1px solid rgba(255,107,107,.35);border-radius:10px;padding:6px 8px;font-size:13px;color:#ffd0d0}
+#dpbStoreRoot .stDl .stDc button{font-size:13px;min-width:64px;min-height:38px;padding:6px 12px;color:#fff;border:1px solid #3b5575;border-radius:9px;background:#10233a}
+#dpbStoreRoot .stDl .stDc button.r{background:#c0392b;border-color:#e0584b}
 #dpbStoreRoot .stSearch{margin:0 0 10px}
 #dpbStoreRoot .stSearch input{box-sizing:border-box;width:100%;background:#08131f;border:1px solid #2c4666;border-radius:12px;color:#fff;font-size:15px;padding:11px 12px;font-family:inherit;direction:rtl}
 #dpbStoreRoot .stCh{margin:12px 0 2px;font-weight:800;font-size:12px;color:#37d6a2}
@@ -24775,7 +24785,7 @@ function itemHtml(it){
   else h+='<div class="stAdd"><button class="stBtn g" style="flex:1" data-sa="'+esc(it.k)+'">＋ توريدة جديدة</button></div>';
   var list=ST.rcv[it.k]||[];
   if(list.length){
-    h+='<div class="stDl">'+list.slice(-3).map(function(x,i,a){var idx=list.length-a.length+i;var t='';try{t=new Date(x.t).toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'})}catch(_){}return '<div><b>+'+fmtN(x.q)+'</b><span>'+esc(t)+'</span><span style="flex:1"></span><button data-sd="'+esc(it.k)+'|'+idx+'" aria-label="حذف">×</button></div>'}).join('')+
+    h+='<div class="stDl">'+list.slice(-3).map(function(x,i,a){var idx=list.length-a.length+i;var t='';try{t=new Date(x.t).toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'})}catch(_){}if(UI.del===it.k+'|'+idx)return '<div class="stDc"><b>حذف توريدة +'+fmtN(x.q)+' ؟</b><span style="flex:1"></span><button type="button" class="stBtn r" data-sdy="'+esc(it.k)+'|'+idx+'">حذف</button><button type="button" class="stBtn" data-sdn="1">إلغاء</button></div>';return '<div><b>+'+fmtN(x.q)+'</b><span>'+esc(t)+'</span><span style="flex:1"></span><button data-sd="'+esc(it.k)+'|'+idx+'" aria-label="حذف">×</button></div>'}).join('')+
        (list.length>3?'<div>… و '+(list.length-3)+' توريدة أقدم</div>':'')+'</div>';
   }
   return h+'</div>';
@@ -24821,7 +24831,7 @@ function render(){
 }
 function findIt(k){if(!B)return null;for(var i=0;i<B.cats.length;i++)for(var j=0;j<B.cats[i].items.length;j++)if(B.cats[i].items[j].k===k)return B.cats[i].items[j];return null}
 function onClick(e){
-  var t=e.target.closest&&e.target.closest('[data-sc],[data-sz],[data-sa],[data-sv],[data-sx],[data-sd],[data-sr]');if(!t)return;
+  var t=e.target.closest&&e.target.closest('[data-sc],[data-sz],[data-sa],[data-sv],[data-sx],[data-sd],[data-sdy],[data-sdn],[data-sr]');if(!t)return;
   if(t.hasAttribute('data-sc')){UI.cat=Number(t.getAttribute('data-sc'));UI.add='';UI.q='';render();return}
   if(t.hasAttribute('data-sz')){var k=t.getAttribute('data-sz');UI.zone[UI.cat]=(t.getAttribute('aria-expanded')==='true')?'':k;UI.add='';render();return}
   if(t.hasAttribute('data-sa')){UI.add=t.getAttribute('data-sa');render();return}
@@ -24832,9 +24842,14 @@ function onClick(e){
     if(!(q>0)){if(inp){inp.style.borderColor='#ff6b6b';inp.focus()}return}
     (ST.rcv[key]=ST.rcv[key]||[]).push({q:q,t:new Date().toISOString(),by:U});UI.add='';schedPush();render();return;
   }
-  if(t.hasAttribute('data-sd')){
-    var p=t.getAttribute('data-sd').split('|'),arr=ST.rcv[p[0]]||[],i=Number(p[1]);if(!arr[i])return;
-    if(!window.confirm('حذف توريدة '+arr[i].q+' ؟'))return;arr.splice(i,1);schedPush();render();return;
+  /* v247: deleting a delivery used window.confirm(), which the phone's app window can silently refuse, so pressing the x did nothing. The question is now asked inside the page. */
+  if(t.hasAttribute('data-sd')){UI.del=t.getAttribute('data-sd');UI.add='';render();return;}
+  if(t.hasAttribute('data-sdn')){UI.del='';render();return;}
+  if(t.hasAttribute('data-sdy')){
+    /* v248: an item's key is "description|part number", so it contains a | itself: split at the LAST | only (splitting at every | found the wrong item and deleted nothing) */
+    var raw=t.getAttribute('data-sdy'),cut=raw.lastIndexOf('|'),arr=ST.rcv[raw.slice(0,cut)]||[],i=Number(raw.slice(cut+1));UI.del='';
+    if(arr[i]){arr.splice(i,1);schedPush();}
+    render();return;
   }
 }
 function onInput(e){
@@ -24869,3 +24884,34 @@ window.__dpbStoreTest={push:push,state:function(){return ST}};
 }
 </style>
 
+<style id="dpbMapFlatCss">/* v246 "light mode" switch for the map: square flat cells, no ring/outline/gloss. Lets us find out on the phone whether cell drawing is what makes the map stutter. */
+@media screen{
+html.dpbMapFlat #excelMapShell .me-map td.me-u{border:0!important;outline:0!important;border-radius:0!important;box-shadow:none!important;background-image:none!important;filter:none!important}
+html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline:2px solid #fff!important;outline-offset:-2px}
+}
+</style>
+<script>
+(function(){
+  var KEY='DPB_MAP_FLAT';
+  function on(){try{return localStorage.getItem(KEY)==='1'}catch(_){return false}}
+  function paint(){document.documentElement.classList.toggle('dpbMapFlat',on());var b=document.getElementById('dpbMapFlatBtn');if(b)b.textContent=on()?'\u26A1 \u0648\u0636\u0639 \u062E\u0641\u064A\u0641: \u0634\u063A\u0651\u0627\u0644':'\u26A1 \u0648\u0636\u0639 \u062E\u0641\u064A\u0641: \u0645\u0642\u0641\u0648\u0644';}
+  window.__dpbMountFlat=function(){
+    var lg=document.getElementById('mapLegend');if(!lg||document.getElementById('dpbMapFlatBtn'))return;
+    var b=document.createElement('button');b.id='dpbMapFlatBtn';b.type='button';b.className='btn ghost';b.style.cssText='margin:6px 0;font-size:12px';
+    b.onclick=function(){try{localStorage.setItem(KEY,on()?'0':'1')}catch(_){}paint();};
+    lg.parentNode.insertBefore(b,lg);paint();
+  };
+  paint();
+})();
+</script>
+<script>
+/* v250: the start screen shows which version this phone is running (tap it to look for an update), so we always know which build a phone has */
+(function(){
+  var filesV='';
+  function fill(){var e=document.getElementById('dpbVerLine');if(!e)return;e.textContent='v '+(window.DPB_WEB_VERSION||'web')+(filesV?' \u00b7 '+filesV:'');}
+  document.addEventListener('click',function(ev){var t=ev.target;if(t&&t.id==='dpbVerLine'){if(typeof window.dpbCheckUpdate==='function')window.dpbCheckUpdate();else{t.textContent='\u0627\u0644\u062A\u062D\u062F\u064A\u062B \u0645\u0646 \u062C\u0648\u0647 \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0641\u0642\u0637';setTimeout(fill,2500);}}});
+  function look(){try{if(window.caches&&caches.keys)caches.keys().then(function(ks){ks.forEach(function(k){var m=/^dpb-shell-(.+)$/.exec(k);if(m)filesV=(String(window.DPB_WEB_VERSION||'')&&m[1].indexOf(String(window.DPB_WEB_VERSION))>=0)?'':m[1];});fill();}).catch(function(){});}catch(_){}}
+  look();setTimeout(look,4000);
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fill);else fill();
+})();
+</script>
