@@ -6,7 +6,7 @@ const cp = require('child_process');
 const zlib = require('zlib');
 
 const ROOT = __dirname;
-const WEB_FILES = ['index.html','sw.js','manifest.json','icon-192.png','icon-512.png','dpb-fs.js','dpb-fs2-core.js','dpb-fs2.js','dpb-config.js','dpb-version.js','dpb-update.js','fonts/Cairo-600.woff','fonts/Cairo-700.woff','fonts/Cairo-800.woff','fonts/Tajawal-400.woff','fonts/Tajawal-500.woff','fonts/Tajawal-700.woff'];
+const WEB_FILES = ['index.html','sw.js','manifest.json','icon-192.png','icon-512.png','dpb-fs.js','dpb-fs2-core.js','dpb-fs2.js','dpb-config.js','dpb-version.js','dpb-update.js'];
 const PLUGINS = ['@capacitor/core','@capacitor/cli','@capacitor/android','@capacitor/filesystem','@capacitor/share','@capacitor/local-notifications','@capacitor/push-notifications'];
 const PERMS = ['POST_NOTIFICATIONS','SCHEDULE_EXACT_ALARM','RECEIVE_BOOT_COMPLETED','FOREGROUND_SERVICE','FOREGROUND_SERVICE_DATA_SYNC','WAKE_LOCK'];
 const PKG_DIR = 'com/dpb/map/v2';
