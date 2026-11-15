@@ -11796,7 +11796,7 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
           b.disabled=true;const t0=b.textContent;b.textContent="⏳";
           try{
             const payload={buildResult:pr.buildResult,types:pr.types,colors:(typeof EXACT_CODE_COLORS!=="undefined"?EXACT_CODE_COLORS:undefined),savedAt:new Date().toISOString()};
-            const res=await window.DPB_GS.saveBuildResult(payload);
+            const res=await window.DPB_GS.saveBuildResult(payload,{force:true});
             const ok=!!(res&&res.ok!==false&&res.__reachable!==false);
             // FIX: الزرار كان بيرفع الـ Build بس ويقول "اترفعت الخرايط" حتى لو كتالوج الخرايط ناقص عملية (مثلًا Modules) - المشرف كان بيفتح من غير العملية دي.
             // دلوقتي بينشر الكتالوج كمان، ويتأكد إن كل عملية مطبّقة موجودة فيه، ولو لأ بيقول أنهي عملية ناقصة.
@@ -12499,7 +12499,14 @@ setTimeout(async()=>{try{if(window.__dpbProjectManagerReadyPromise) await window
   // Build بنفسه من الصفر عشان يشوف نفس الخريطة. دلوقتي أي Build ناجح
   // بيترفع تلقائيًا على Drive، وأي جهاز تاني بيقدر يجيبه من غير ما يرفع
   // أي إكسيل خالص - Body-only, timeout أطول شوية لأن الحمولة أكبر من باقي النداءات.
-  function saveBuildResult(payload){ const json=JSON.stringify(payload||{}); return gsCall("saveBuildResult",{json:json},15000).then(res=>{ if(pbOk(res)) pbClear("build"); else pbSet("build",json); return res; }); }
+  /* v257: the app used to upload the whole Build result (about 2 MB, 3 server documents) every time it was opened, even when nothing had changed. On a weak connection these uploads piled up (the orange badge showed them waiting 60-100 s) and held back the small, important writes behind them (messages, project list). Now an identical result is not sent again for 24 hours; the "publish maps" button (and a real change) still send it. */
+  function brSig(json){ const cut=json.lastIndexOf(',"savedAt":"'); const core=cut>0?json.slice(0,cut):json; let h=2166136261; for(let i=0;i<core.length;i++){ h^=core.charCodeAt(i); h=Math.imul(h,16777619); } return (h>>>0).toString(36)+"-"+core.length; }
+  function brKey(){ try{ return "DPB_BR_SENT_"+(window.__dpbActiveProjectId||"LEGACY"); }catch(_){ return "DPB_BR_SENT_LEGACY"; } }
+  function saveBuildResult(payload,opts){
+    const json=JSON.stringify(payload||{}); let sig="";
+    try{ sig=brSig(json); const old=(localStorage.getItem(brKey())||"").split("|"); if(!(opts&&opts.force)&&old[0]===sig&&(Date.now()-Number(old[1]||0))<24*3600*1000) return Promise.resolve({ok:true,skipped:true}); }catch(_){}
+    return gsCall("saveBuildResult",{json:json},15000).then(res=>{ if(pbOk(res)){ pbClear("build"); try{ if(sig) localStorage.setItem(brKey(),sig+"|"+Date.now()); }catch(_){} } else pbSet("build",json); return res; });
+  }
   function getBuildMeta(){ return gsCall("getBuildResult",{metaOnly:true},10000).then(res=>(res&&res.ok!==false&&res.updated)?{updated:res.updated}:null); }
   function getBuildResult(){
     return gsCall("getBuildResult",{},15000).then(res=>{
