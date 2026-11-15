@@ -24893,7 +24893,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
 <script>
 (function(){
   var KEY='DPB_MAP_FLAT';
-  function on(){try{return localStorage.getItem(KEY)==='1'}catch(_){return false}}
+  function on(){try{return localStorage.getItem(KEY)!=='0'}catch(_){return true}}   /* v254: light mode is the normal look; it is off only if someone switched it off */
   function paint(){document.documentElement.classList.toggle('dpbMapFlat',on());var b=document.getElementById('dpbMapFlatBtn');if(b)b.textContent=on()?'\u26A1 \u0648\u0636\u0639 \u062E\u0641\u064A\u0641: \u0634\u063A\u0651\u0627\u0644':'\u26A1 \u0648\u0636\u0639 \u062E\u0641\u064A\u0641: \u0645\u0642\u0641\u0648\u0644';}
   window.__dpbMountFlat=function(){
     var lg=document.getElementById('mapLegend');if(!lg||document.getElementById('dpbMapFlatBtn'))return;

@@ -220,7 +220,7 @@
     // v126: when the SDK's write channel stays silent while the phone IS online (reads work, writes never get an answer), the same batch is sent
     // through a plain HTTPS request (`rescue`, one explicit request with its own timeout and a real error code). First try after 12 s; once a rescue
     // worked on this device the next ones start after 1.5 s. A definite refusal (HTTP 400/403/429...) stops the retries and is shown with its real reason.
-    var RESCUE_FIRST = deps.rescueFirst || 12000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_SLOW = deps.rescueSlow || 45000, RESCUE_QUOTA = deps.rescueQuota || 300000, RESCUE_MAX = deps.rescueMax || Infinity;
+    /* v256: the first HTTPS try used to start after 12 s, which is the long "waiting" the orange badge showed. A healthy normal channel answers inside 4 s (see the wait below), so 5 s is enough margin. */ var RESCUE_FIRST = deps.rescueFirst || 5000, RESCUE_FAST = deps.rescueFast || 1500, RESCUE_EVERY = deps.rescueEvery || 20000, RESCUE_SLOW = deps.rescueSlow || 45000, RESCUE_QUOTA = deps.rescueQuota || 300000, RESCUE_MAX = deps.rescueMax || Infinity;
     // v179: the rescue no longer gives up after 6 tries (the pending counter stayed stuck for good when the network was bad for ~2 minutes): it keeps trying every 20 s, then every 45 s,
     // until the write is confirmed (or the server definitely refuses it). When the phone says it is back online / the app returns to the screen, every waiting rescue is retried at once.
     var kicks = (makeCommitter._kicks = makeCommitter._kicks || []);
@@ -889,7 +889,7 @@
     if (W.refused) L.push('آخر رفض من السيرفر: ' + W.refused);
     if (W.rescued) L.push('اتبعت بالطريق البديل بنجاح: ' + W.rescued + ' مرة');
     if (W.fastN) L.push('كتابات كبيرة اتبعتت HTTPS مباشرة: ' + W.fastN + ' مرة');
-    try { L.push(''); L.push('زمن فتح التطبيق:'); stText().split('<br>').forEach(function (x) { L.push(x); }); } catch (e) {}
+    /* v255: the long opening-time report used to be copied into this box and made it very long; it stays in the folded report of the admin screen */
     return L.join('\n');
   }
   function showWarnBox() {
@@ -898,14 +898,14 @@
       var box = document.createElement('div'); box.id = 'dpbFs2WarnBox';
       box.style.cssText = 'position:fixed;left:10px;right:10px;top:calc(env(safe-area-inset-top,0px) + 34px);z-index:2147483001;background:#101c2b;color:#fff;border:1px solid #ffb74d;border-radius:14px;padding:12px;font:13px/1.7 sans-serif;direction:rtl;max-height:70vh;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.5)';
       var pre = document.createElement('div'); pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text';
-      var row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;margin-top:10px';
+      var row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;margin:0 0 10px;position:sticky;top:-12px;z-index:2;background:#101c2b;padding:12px 0 8px;margin-top:-12px';
       function btn(txt, bg, fn) { var b = document.createElement('button'); b.textContent = txt; b.style.cssText = 'flex:1;padding:9px;border:0;border-radius:10px;color:#fff;font-size:13px;background:' + bg; b.onclick = fn; return b; }
       function paint() { pre.textContent = warnDetail(); }
       paint();
       var tm = setInterval(function () { if (!document.getElementById('dpbFs2WarnBox')) { clearInterval(tm); return; } paint(); }, 2000);
       var tb = btn('اختبر الاتصال الآن', '#1565c0', function () { tb.textContent = 'بيختبر… (لحد 20 ثانية)'; try { var W0 = window.__dpbFs2W || {}; probeBusy = false; runProbe().then(function () { tb.textContent = 'اختبر الاتصال الآن'; paint(); }); } catch (e) { tb.textContent = 'اختبر الاتصال الآن'; } try { OBF.run(); } catch (e) {} });
       var cb = btn('✕ قفل', '#b71c1c', function () { clearInterval(tm); box.remove(); });
-      row.appendChild(tb); row.appendChild(cb); box.appendChild(pre); box.appendChild(row); document.body.appendChild(box);
+      row.appendChild(cb); row.appendChild(tb); box.appendChild(row); box.appendChild(pre); document.body.appendChild(box);
     } catch (e) {}
   }
   window.__dpbFs2Warn = warnNow; setInterval(warnNow, 5000);
