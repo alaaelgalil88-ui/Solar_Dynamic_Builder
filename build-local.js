@@ -6,7 +6,7 @@ const cp = require('child_process');
 const zlib = require('zlib');
 
 const ROOT = __dirname;
-const WEB_FILES = ['index.html','sw.js','manifest.json','icon-192.png','icon-512.png','dpb-fs.js','dpb-fs2-core.js','dpb-fs2.js','dpb-config.js','dpb-version.js','dpb-update.js'];
+const WEB_FILES = ['index.html','sw.js','manifest.json','icon-192.png','icon-512.png','dpb-fs.js','dpb-fs2-core.js','dpb-fs2.js','dpb-config.js','dpb-version.js','dpb-update.js','fonts/Cairo-600.woff','fonts/Cairo-700.woff','fonts/Cairo-800.woff','fonts/Tajawal-400.woff','fonts/Tajawal-500.woff','fonts/Tajawal-700.woff'];
 const PLUGINS = ['@capacitor/core','@capacitor/cli','@capacitor/android','@capacitor/filesystem','@capacitor/share','@capacitor/local-notifications','@capacitor/push-notifications'];
 const PERMS = ['POST_NOTIFICATIONS','SCHEDULE_EXACT_ALARM','RECEIVE_BOOT_COMPLETED','FOREGROUND_SERVICE','FOREGROUND_SERVICE_DATA_SYNC','WAKE_LOCK'];
 const PKG_DIR = 'com/dpb/map/v2';
@@ -43,6 +43,10 @@ function patchStrings(xml, name) {
   xml = xml.replace(/(<string name="app_name">)[^<]*(<\/string>)/, '$1' + name + '$2');
   xml = xml.replace(/(<string name="title_activity_main">)[^<]*(<\/string>)/, '$1' + name + '$2');
   return xml;
+}
+/* the service-worker cache name must change with every build, otherwise a phone can keep opening an old copy of the files: stamp it with the build's web version (sw.js is changed in www/ only, the source file is not touched) */
+function patchSwCache(js, version) {
+  return js.replace(/const CACHE\s*=\s*'[^']*';/, "const CACHE='dpb-shell-" + version + "';");
 }
 function copyDir(src, dst) {
   fs.mkdirSync(dst, { recursive: true });
@@ -90,7 +94,7 @@ function walkFiles(dir, base) {
   return out;
 }
 /* version = YEAR.MMDD.HHMM as plain numbers (valid semver, compared number by number in the app) */
-function makeVersion(d) { return d.getFullYear() + '.' + ((d.getMonth() + 1) * 100 + d.getDate()) + '.' + (d.getHours() * 100 + d.getMinutes()); }
+function makeVersion(d) { return d.getUTCFullYear() + '.' + ((d.getUTCMonth() + 1) * 100 + d.getUTCDate()) + '.' + (d.getUTCHours() * 100 + d.getUTCMinutes()); } /* UTC, so the laptop and GitHub write the same clock */
 function readUpdateUrl() {
   const f = path.join(ROOT, 'update-url.txt');
   if (!fs.existsSync(f)) {
@@ -129,7 +133,7 @@ function installUpdaterPlugin() {
   } catch (e) { console.log('\n[WARNING] update plugin skipped: ' + e.message); return false; }
 }
 
-module.exports = { patchManifest, patchVersion, patchStrings, copyDir, javaMajor, makeZip, makeVersion, walkFiles, crc32 };
+module.exports = { patchSwCache, patchManifest, patchVersion, patchStrings, copyDir, javaMajor, makeZip, makeVersion, walkFiles, crc32 };
 
 /* ---------- main ---------- */
 function findJava21() {
@@ -199,9 +203,14 @@ function main() {
 
   log('3/8 Copying web files into www');
   fs.mkdirSync(path.join(ROOT, 'www'), { recursive: true });
-  WEB_FILES.forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(ROOT, 'www', f)));
+  WEB_FILES.forEach(f => { fs.mkdirSync(path.dirname(path.join(ROOT, 'www', f)), { recursive: true }); fs.copyFileSync(path.join(ROOT, f), path.join(ROOT, 'www', f)); });
   const updUrl = readUpdateUrl(), webVersion = makeVersion(new Date());
   writeVersionFile(webVersion, updUrl);
+  try {   // stamp the cache name of the copy that goes into the app / update package
+    const swp = path.join(ROOT, 'www', 'sw.js'), sw0 = fs.readFileSync(swp, 'utf8'), sw1 = patchSwCache(sw0, webVersion);
+    if (sw1 === sw0) console.log('NOTE: could not find the CACHE line in sw.js - the cache name was not stamped.');
+    else fs.writeFileSync(swp, sw1);
+  } catch (e) { console.log('NOTE: sw.js cache stamp skipped: ' + e.message); }
   if (!updUrl) console.log('NOTE: update-url.txt is empty -> in-app updates are OFF in this build.');
 
   log('4/8 Bundling Firebase');
