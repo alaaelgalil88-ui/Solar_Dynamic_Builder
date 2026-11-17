@@ -898,7 +898,7 @@ html #excelMapShell .me-map td.me-u.print-outside-range{background:#1a2a3d!impor
   // كان بيدمر بيانات حقيقية مش مجرد يصلح تعارض. دلوقتي بنمسح localStorage
   // بس (اللي فيه فعلاً كاش/مزامنة قديمة ممكن تتعارض) ومنلمسش IndexedDB
   // خالص.
-  var DPB_APP_BUILD = "20261117233536"; // بصمة وقت آخر تعديل حقيقي - بتتغيّر تلقائيًا مع كل نسخة أبعتهالك
+  var DPB_APP_BUILD = "20261117234811"; // بصمة وقت آخر تعديل حقيقي - بتتغيّر تلقائيًا مع كل نسخة أبعتهالك
   var VKEY = "DPB_APP_BUILD_VERSION";
   // FIX (المرحلة 1 / بند 1): كان المسح بيشيل أي مفتاح بادئ بـ DPB_ — ومعاه
   // سجلات الإنتاج اللي لسه ماترفعتش، وخريطة المزامنة، ومشروع الجهاز
@@ -5448,7 +5448,7 @@ function renderProgBar(row,spec){
     '<button type="button" id="dpbProgDelete" title="حذف القيمة" style="'+iconBtnCss('danger')+'"'+dis+'>🗑️</button>'+
     '<button type="button" id="dpbMarkReload" class="dpbRefreshBtn" title="تحديث" aria-label="تحديث" style="'+iconBtnCss('neutral')+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8.5"/><path d="M4 4v4.5h4.5"/><path d="M4 13a8 8 0 0 0 14.3 4.6L20 15.5"/><path d="M20 20v-4.5h-4.5"/></svg></button>'+
     '</div>'+
-    '<span style="font-size:12px;font-weight:800">'+label+'</span>';
+    '<span id="dpbProgLabel" style="display:block;font-size:12px;font-weight:800;line-height:20px;min-height:20px;text-align:left;unicode-bidi:plaintext;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+label+'</span>';   /* v267: the line above the map stays put (always left, fixed height) in all three states */
   const nq=document.getElementById('dpbProgQty');
   if(nq&&keep.sig===sig){nq.value=keep.q;if(keep.focus){nq.focus();try{nq.setSelectionRange(nq.value.length,nq.value.length);}catch(_){}}}
 }
@@ -24996,7 +24996,7 @@ window.__dpbStoreTest={push:push,state:function(){return ST}};
 <style id="dpbMapFlatCss">/* v246 "light mode" switch for the map: square flat cells, no ring/outline/gloss. Lets us find out on the phone whether cell drawing is what makes the map stutter. */
 @media screen{
 html.dpbMapFlat #excelMapShell .me-map td.me-u{border:1px solid rgba(255,255,255,.3)!important;outline:0!important;border-radius:0!important;box-shadow:none!important;filter:none!important}
-/* v266: light-mode ticked cells get a yellow frame; v265: CELL ID wraps, light-mode selection outline; v264: Builder cards = Supervisor cards; v263: operator/company on cards, two-colour cells dim + light mode; v262: print range crop; cards by colour name; light-mode cell borders; map-cell writes use fast HTTPS (dpb-fs2.js) */
+/* v267: progress label fixed; v266: light-mode ticked cells get a yellow frame; v265: CELL ID wraps, light-mode selection outline; v264: Builder cards = Supervisor cards; v263: operator/company on cards, two-colour cells dim + light mode; v262: print range crop; cards by colour name; light-mode cell borders; map-cell writes use fast HTTPS (dpb-fs2.js) */
 /* v259: the progress fill of a tracker (Modules...) is a gradient: it must stay in light mode */
 html.dpbMapFlat #excelMapShell .me-map td.me-u:not(.me-prog):not([style*="gradient"]){background-image:none!important}
 html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline:2px solid #fff!important;outline-offset:-2px}
