@@ -564,6 +564,8 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
 }
 
 html.dpbMapFlat #excelMapShell .me-map td.me-u.me-sel{outline:3px solid #fff!important;outline-offset:-1px!important;box-shadow:0 0 0 4px rgba(0,0,0,.8)!important;z-index:6!important}
+html.dpbMapFlat #excelMapShell .me-map td.me-u.me-mark{outline:3px solid #ffd23f!important;outline-offset:-3px!important;z-index:5!important}
+html.dpbMapFlat #excelMapShell .me-map td.me-u.me-mark:after{display:none!important}   /* v266: ticked cells keep their real colour + a clear yellow frame (the pale yellow veil made them look faded) */
 html #excelMapShell .me-map td.me-u.print-outside-range{background:#1a2a3d!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important}
 @media screen{#printPlanArea{display:none}}
 
@@ -896,7 +898,7 @@ html #excelMapShell .me-map td.me-u.print-outside-range{background:#1a2a3d!impor
   // كان بيدمر بيانات حقيقية مش مجرد يصلح تعارض. دلوقتي بنمسح localStorage
   // بس (اللي فيه فعلاً كاش/مزامنة قديمة ممكن تتعارض) ومنلمسش IndexedDB
   // خالص.
-  var DPB_APP_BUILD = "20261117172526"; // بصمة وقت آخر تعديل حقيقي - بتتغيّر تلقائيًا مع كل نسخة أبعتهالك
+  var DPB_APP_BUILD = "20261117233536"; // بصمة وقت آخر تعديل حقيقي - بتتغيّر تلقائيًا مع كل نسخة أبعتهالك
   var VKEY = "DPB_APP_BUILD_VERSION";
   // FIX (المرحلة 1 / بند 1): كان المسح بيشيل أي مفتاح بادئ بـ DPB_ — ومعاه
   // سجلات الإنتاج اللي لسه ماترفعتش، وخريطة المزامنة، ومشروع الجهاز
@@ -24994,7 +24996,7 @@ window.__dpbStoreTest={push:push,state:function(){return ST}};
 <style id="dpbMapFlatCss">/* v246 "light mode" switch for the map: square flat cells, no ring/outline/gloss. Lets us find out on the phone whether cell drawing is what makes the map stutter. */
 @media screen{
 html.dpbMapFlat #excelMapShell .me-map td.me-u{border:1px solid rgba(255,255,255,.3)!important;outline:0!important;border-radius:0!important;box-shadow:none!important;filter:none!important}
-/* v265: CELL ID wraps, light-mode selection outline; v264: Builder cards = Supervisor cards; v263: operator/company on cards, two-colour cells dim + light mode; v262: print range crop; cards by colour name; light-mode cell borders; map-cell writes use fast HTTPS (dpb-fs2.js) */
+/* v266: light-mode ticked cells get a yellow frame; v265: CELL ID wraps, light-mode selection outline; v264: Builder cards = Supervisor cards; v263: operator/company on cards, two-colour cells dim + light mode; v262: print range crop; cards by colour name; light-mode cell borders; map-cell writes use fast HTTPS (dpb-fs2.js) */
 /* v259: the progress fill of a tracker (Modules...) is a gradient: it must stay in light mode */
 html.dpbMapFlat #excelMapShell .me-map td.me-u:not(.me-prog):not([style*="gradient"]){background-image:none!important}
 html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline:2px solid #fff!important;outline-offset:-2px}
