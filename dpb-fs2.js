@@ -5,60 +5,12 @@
  * Everything else goes to the layer underneath (dpb-fs.js or Apps Script) untouched. */
 (function () {
   'use strict';
-  /* startup timing: how long each stage of opening the app took (ms since the page started). The last 6 launches stay on the device and show in the orange-badge details box. */
-  var STUP = { id: Date.now(), fcp: 0, dcl: 0, load: 0, fb0: 0, sdk: 0, db: 0, rs: 0, how: '', al: '', auth: 0, fb: 0, splash: 0, lt: { n: 0, ms: 0, top: [] }, lo: [], tm: [] };
+  /* v258: the opening-time / stutter measurement (the timer wrapper, the long-frame observers and the report box) is removed. Only the tiny helpers that other code still calls are kept. */
+  var STUP = {};
   function stNow() { return Math.round(performance.now()); }
   var earlyRes, earlyP = new Promise(function (r) { earlyRes = r; });   // resolves with a read-from-this-phone-only helper as soon as Firestore exists (does not wait for sign-in / network)
-  function stSave() { try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'), r = { t: STUP.id, fcp: STUP.fcp, dcl: STUP.dcl, load: STUP.load, fb0: STUP.fb0, sdk: STUP.sdk, db: STUP.db, rs: STUP.rs, how: STUP.how, al: STUP.al, splash: STUP.splash, lt: STUP.lt, lo: STUP.lo, tm: STUP.tm, auth: STUP.auth, fb: STUP.fb, apk: !!window.Capacitor }, k = -1; a.forEach(function (x, n) { if (x.t === STUP.id) k = n; }); if (k >= 0) a[k] = r; else a.push(r); localStorage.setItem('dpb_startup_log', JSON.stringify(a.slice(-6))); } catch (e) {} }
-  function stMark(n) { if (!STUP[n]) { STUP[n] = stNow(); if (STUP.load) stSave(); } }   // after the page finished loading every later step updates this launch's saved row at once
-  try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.name === 'first-contentful-paint') STUP.fcp = Math.round(e.startTime); }); }).observe({ type: 'paint', buffered: true }); } catch (e) {}
-  document.addEventListener('DOMContentLoaded', function () { STUP.dcl = stNow(); });
-  // stutter measurement (timing only, changes nothing): every task that blocks the screen > 50 ms in the first 12 s, and the moment the loading splash starts to fade
-  try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (e.startTime > 12000) return; var L = STUP.lt; L.n++; L.ms += e.duration; L.top.push([Math.round(e.startTime), Math.round(e.duration)]); L.top.sort(function (a, b) { return b[1] - a[1]; }); if (L.top.length > 4) L.top.length = 4; }); }).observe({ type: 'longtask', buffered: true }); } catch (e) {}
-  // WHO is freezing the screen (timing only, changes nothing): setTimeout/setInterval callbacks that run > 200 ms are recorded with the start of their code; and, where the WebView supports it, the browser's own Long-Animation-Frame report (which script/function, and how much was style/layout instead of JavaScript)
-  (function () {
-    function keep(list, row, key) { list.push(row); list.sort(function (a, b) { return b[key] - a[key]; }); if (list.length > 4) list.length = 4; }
-    try {
-      var oST = window.setTimeout, oSI = window.setInterval;
-      var wrap = function (kind, orig) { return function (fn, ms) {
-        if (typeof fn !== 'function' || performance.now() > 14000) return orig.apply(this, arguments);
-        var rest = Array.prototype.slice.call(arguments, 2), d = +ms || 0;
-        var w = function () { var t = performance.now(); try { return fn.apply(this, arguments); } finally { var dt = performance.now() - t; if (dt > 200 && t < 40000) keep(STUP.tm, [Math.round(t), Math.round(dt), kind + ' ' + d + 'ms', String(fn).replace(/\s+/g, ' ').slice(0, 100)], 1); } };
-        return orig.apply(this, [w, ms].concat(rest));
-      }; };
-      window.setTimeout = wrap('timeout', oST); window.setInterval = wrap('interval', oSI);
-    } catch (e) {}
-    try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) {
-      if (e.startTime > 30000 || e.duration < 300) return;
-      var js = 0, top = null; (e.scripts || []).forEach(function (sc) { js += sc.duration; if (!top || sc.duration > top.duration) top = sc; });
-      var end = e.startTime + e.duration, sl = e.styleAndLayoutStart ? Math.round(end - e.styleAndLayoutStart) : 0;
-      keep(STUP.lo, [Math.round(e.startTime), Math.round(e.duration), Math.round(js), sl, top ? String((top.invoker || '') + ' ' + String(top.sourceURL || '').split('/').pop() + ':' + (top.sourceFunctionName || '?') + '@' + (top.sourceCharPosition || 0)).slice(0, 110) : '-'], 1);
-    }); }).observe({ type: 'long-animation-frame', buffered: true }); } catch (e) {}
-  })();
-  (function () { var n = 0, iv = setInterval(function () { var b = document.getElementById('dpbBoot'); if ((!b && document.readyState !== 'loading') || (b && b.style.opacity === '0')) { clearInterval(iv); STUP.splash = stNow(); if (STUP.load) stSave(); } else if (++n > 160) clearInterval(iv); }, 150); })();
-  window.addEventListener('load', function () { STUP.load = stNow(); setTimeout(stSave, 1500); setTimeout(stSave, 13000); setTimeout(stSave, 31000); });
-  function stLine(r) {
-    var f = function (ms) { return ms ? (ms / 1000).toFixed(1) : '—'; };
-    return 'ظهور ' + f(r.fcp) + ' | الصفحة ' + f(r.load) + ' | Firebase: بدأ ' + f(r.fb0) + '، المكتبة ' + f(r.sdk) + '، القاعدة ' + f(r.db) + '، المستخدم ' + f(r.rs) + '، الدخول ' + f(r.auth) + '، جاهز ' + f(r.fb) + (r.how ? ' [' + ({ saved: 'مستخدم محفوظ', email: 'دخول بالإيميل من الشبكة', anon: 'دخول مجهول من الشبكة' }[r.how] || r.how) + ']' : '') + (r.al ? ' {auth:' + r.al + '}' : '');
-  }
-  function stLt(r) {
-    var f = function (ms) { return (ms / 1000).toFixed(1); }, L = r.lt || { n: 0, ms: 0, top: [] };
-    if (!r.lt) return '';
-    return 'التقطيع: ' + L.n + ' مرة بإجمالي ' + f(L.ms) + ' ث' + (L.top.length ? ' (أطولهم: ' + L.top.map(function (t) { return f(t[1]) + ' ث عند ' + f(t[0]); }).join('، ') + ')' : '') + ' | الشاشة اتشالت عند ' + (r.splash ? f(r.splash) : '—');
-  }
-  function stWho(r) {
-    var f = function (ms) { return (ms / 1000).toFixed(1); }, o = [];
-    (r.tm || []).forEach(function (t) { o.push('   ⏱ تايمر بطيء: ' + f(t[1]) + ' ث عند ' + f(t[0]) + ' — ' + t[2] + ' — ' + t[3]); });
-    (r.lo || []).forEach(function (t) { o.push('   🎞 فريم ثقيل: ' + f(t[1]) + ' ث عند ' + f(t[0]) + ' (سكربت ' + f(t[2]) + ' ث، ستايل/تخطيط ' + f(t[3]) + ' ث) — ' + t[4]); });
-    return o;
-  }
-  function stText() {   // lines for the "app opening time" box in the cloud/backup screen
-    var L = ['الفتحة الحالية: ' + stLine(STUP), stLt(STUP)].concat(stWho(STUP));
-    try { var a = JSON.parse(localStorage.getItem('dpb_startup_log') || '[]'); a.slice().reverse().forEach(function (r) { if (r.t === STUP.id) return; L.push('• ' + stLine(r) + (r.apk ? ' (APK)' : ' (متصفح)')); var q = stLt(r); if (q) L.push('   ' + q); stWho(r).forEach(function (x) { L.push(x); }); }); } catch (e) {}
-    try { var ll = JSON.parse(localStorage.getItem('dpb_login_log') || '[]'); if (ll.length) { L.push('آخر دخول بالـ PIN:'); ll.slice().reverse().forEach(function (r) { L.push('• ' + (r.ms / 1000).toFixed(1) + ' ث — ' + (r.via === 'local' ? 'من الجهاز' : 'من السيرفر')); }); } } catch (e) {}
-    L.push('الأرقام بالثواني من لحظة بداية الفتح. (الدخول = تسجيل دخول Firebase)');
-    return L.join('<br>');
-  }
+  function stSave() {}
+  function stMark(n) { if (!STUP[n]) STUP[n] = stNow(); }
   if (window.DPB_FS2) return;
   var prevFetch = window.fetch.bind(window), CORE = window.DPB_FS2_CORE;
   var LS = { mode: 'dpb_fs2_mode', procs: 'dpb_fs2_procs', cfg: 'dpb_fs_cfg', ns: 'dpb_fs_ns', auth: 'dpb_fs_auth' };
@@ -256,9 +208,11 @@
             if (!online()) { armRescue(RESCUE_EVERY); return; }
             busy = true; tries++; onEvent('rescue-start', 'try ' + tries + ' after ' + (now() - t0) + 'ms');
             var rp; try { rp = Promise.resolve(rescue()); } catch (e) { rp = Promise.reject(e); }
-            rp.then(function () {
+            rp.then(function (rr) {
               busy = false;
-              if (settled) return; settled = true; release(); W.rescueOk = now(); W.rescued = (W.rescued || 0) + 1; if (!rescue.__fast) W.wsBadAt = now();   // v188: the normal channel stayed silent, only HTTPS got through
+              /* v259: a whole-document write that has been replaced by a NEWER write to the same document is not sent again over HTTPS (it could land after the newer one and overwrite it); the newer write carries the final state */
+              if (settled) return; if (rr && rr.superseded) { settled = true; release(); onEvent('superseded', (now() - t0) + 'ms'); fin(res, { acked: true }); doneRes(); return; }
+              settled = true; release(); W.rescueOk = now(); W.rescued = (W.rescued || 0) + 1; if (!rescue.__fast) W.wsBadAt = now();   // v188: the normal channel stayed silent, only HTTPS got through
               onEvent('rescued', (now() - t0) + 'ms'); fin(res, { acked: true }); doneRes();
             }, function (e) {
               busy = false;
@@ -277,6 +231,7 @@
     };
   }
   window.__dpbMakeCommitter = makeCommitter;
+  var wSeq = 0, lastW = {};   // v259: newest write number per whole document (see the rescue below)
 
   /* ---- v126: plain-HTTPS twin of a write batch (Firestore REST `documents:commit`). Pure functions, tested in Node. ----
      op {t:'s', path, data}  -> whole document      (same as batch.set)
@@ -732,7 +687,12 @@
                   // kept on the device, exactly as before, and do not try the fast path again for a minute.
                   cp = fastP.then(function () { return true; }, function (e) { W2.restFailAt = Date.now(); if (e && e.definite) throw e; return mk(); });
                 } else cp = mk();
-                var resc = function () { return (fastLive && fastP) ? fastP : restCommit(chunk); }; resc.__fast = !!fast;
+                var mySeq = ++wSeq, sPaths = chunk.every(function (o) { return o && o.t === 's'; }) ? chunk.map(function (o) { return o.path; }) : null;
+                if (sPaths) sPaths.forEach(function (pp) { lastW[pp] = mySeq; });
+                var resc = function () {
+                  if (sPaths && sPaths.every(function (pp) { return lastW[pp] > mySeq; })) return Promise.resolve({ superseded: true });
+                  return (fastLive && fastP) ? fastP : restCommit(chunk);
+                }; resc.__fast = !!fast;
                 return commitOrQueue(cp, resc, cpid, opsLabel(chunk), chunk.some(function (o) { return /\/rows\/(?!meta-)[^\/]+$/.test(String((o && o.path) || '')); })).then(function (w) { ws.push(w); });
               });
             });
@@ -2339,13 +2299,9 @@
       '<div class="fs2Sec">الحالة</div>' +
       boxH('حالة الطبقة', 'dpbFs2State') +
       boxH('رسائل', 'dpbFs2Msg') +
-      '<details id="dpbFs2StartupWrap" style="margin-top:10px"><summary class="hint" style="cursor:pointer">⏱️ تقرير زمن الفتح (للمطوّر — مقفول)</summary>' + boxH('⏱️ زمن فتح التطبيق', 'dpbFs2Startup', '') + '</details>';
+      '';
     var old = document.getElementById('dpbFsCard');
     if (old && old.parentNode === host) host.insertBefore(c, old.nextSibling); else host.appendChild(c);
-    /* v246: the long opening-time report is folded away and is only built (and refreshed) while it is open. Before, a long text was rebuilt every 2 s even when nobody was looking at it. */
-    (function () { var w = document.getElementById('dpbFs2StartupWrap'); function fill() { var e = document.getElementById('dpbFs2Startup'); if (e) e.innerHTML = stText(); }
-      if (w) w.addEventListener('toggle', function () { if (w.open) fill(); });
-      setInterval(function () { var w2 = document.getElementById('dpbFs2StartupWrap'); if (w2 && w2.open) fill(); }, 2000); })();
     function paint() { paintState(); if (on() && !store) getStore().catch(function () {}); }
     // ---- connection report (live) ----
     function hms(t) { var d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }

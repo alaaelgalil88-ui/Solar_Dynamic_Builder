@@ -23215,10 +23215,15 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbBm .bmCnt small{margin-top:5px;color:#8fa7c2;text-align:center}
 #dpbBm .bmCnt small b{color:#7fe3c0;cursor:pointer;font-weight:700}
 #dpbBm .bmCats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:0 0 10px}
-#dpbBm .bmCat{position:relative;overflow:hidden;min-width:0;min-height:66px;text-align:right;background:#0b1b2d;border:1px solid #243b57;border-radius:12px;padding:8px 8px 11px;color:#e6f1ff;font-family:inherit;cursor:pointer}
+#dpbBm .bmCat{position:relative;overflow:hidden;min-width:0;min-height:72px;text-align:right;background:#0b1b2d;border:1px solid #243b57;border-radius:12px;padding:8px 8px 17px;color:#e6f1ff;font-family:inherit;cursor:pointer}
 #dpbBm .bmCat b{font-weight:800;margin-bottom:3px}
 #dpbBm .bmCat span{color:#8fa7c2}
-#dpbBm .bmCat i{position:absolute;left:0;bottom:0;height:3px;background:linear-gradient(90deg,#37d6a2,#2d8cff);border-radius:0 3px 3px 0}
+/* v258: a real progress meter under every card: a dim track (always visible, even at 0%) and a fill that starts from the RIGHT (the app is Arabic): grey = nothing yet, amber = partly received, green = complete */
+#dpbBm .bmCat .bmPg{position:absolute;right:8px;left:8px;bottom:7px;height:5px;border-radius:3px;background:#17304b;overflow:hidden;display:block;text-decoration:none}
+#dpbBm .bmCat .bmPg i{position:static;display:block;height:100%;min-width:0;background:#8fa7c2;border-radius:3px;transition:width .35s ease}
+#dpbBm .bmCat.part .bmPg i{background:linear-gradient(270deg,#f0b25b,#e5a93a)}
+#dpbBm .bmCat.full .bmPg i{background:linear-gradient(270deg,#37d6a2,#2bbf8f)}
+#dpbBm .bmCat.full{border-color:rgba(55,214,162,.55)}
 #dpbBm .bmCat.on{border-color:#37d6a2;background:rgba(31,157,118,.16)}
 @media(min-width:640px){#dpbBm .bmCats{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}}
 #dpbBm .bmCgB{padding:2px 8px 8px}
@@ -24357,7 +24362,7 @@ body.print-activity #dpbBottomBar{display:none!important}
     var cs=S.bom.cats.map(function(c){var x=catStat(c);tn+=x.n;tg+=x.g;all+=c.items.length;c.items.forEach(function(it){if(missing(it)>0)nMiss++;if(status(it)==='done')nDone++});return x});
     q('bmKpi').innerHTML=[['التراكرات',fmtN(trk)],['البنود',all],['إجمالي القطع',fmtN(tn)],['تم استلام',fmtPct(tn?tg*100/tn:0)]].map(function(x){return '<div class="bmK"><b class="fit" data-min="10">'+x[1]+'</b><span>'+x[0]+'</span></div>'}).join('');
     q('bmCats').innerHTML=S.bom.cats.map(function(c,i){
-      return '<button type="button" class="bmCat'+(UI.cat===i?' on':'')+'" data-cat="'+i+'"><b class="fit" data-l="2" data-min="8.5" style="font-size:12px">'+esc(c.title)+'</b><span class="fit" data-min="7.5" style="font-size:10px">'+c.items.length+' بند</span><span class="fit" data-min="7.5" style="font-size:10px">'+fmtPct(cs[i].p)+' وصل</span><i style="width:'+Math.round(cs[i].p)+'%"></i></button>';
+      return '<button type="button" class="bmCat'+(UI.cat===i?' on':'')+(cs[i].p>=99.5?' full':(cs[i].p>0?' part':''))+'" data-cat="'+i+'"><b class="fit" data-l="2" data-min="8.5" style="font-size:12px">'+esc(c.title)+'</b><span class="fit" data-min="7.5" style="font-size:10px">'+c.items.length+' بند</span><span class="fit" data-min="7.5" style="font-size:10px">'+fmtPct(cs[i].p)+' وصل</span><s class="bmPg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(cs[i].p)+'"><i style="width:'+Math.max(0,Math.min(100,Math.round(cs[i].p)))+'%"></i></s></button>';
     }).join('');
     q('bmChips').innerHTML='<div class="bmRow"><button type="button" class="bmChip'+(UI.color?'':' on')+'" data-color="">كل الألوان</button>'+S.bom.colors.map(function(co){return '<button type="button" class="bmChip'+(UI.color===co.key?' on':'')+'" data-color="'+esc(co.key)+'" title="'+esc(co.name)+'" aria-label="'+esc(co.name)+'">'+dot(co.name,co.key)+'</button>'}).join('')+'</div>'+
       '<div class="bmRow">'+[['','الكل'],['miss','ناقص ('+nMiss+')'],['done','اكتمل ('+nDone+')']].concat((REV.__n&&REV.__n.bad)?[['rev','مراجعة ('+REV.__n.bad+')']]:[]).map(function(x){return '<button type="button" class="bmChip'+(UI.st===x[0]?' on':'')+'" data-st="'+x[0]+'">'+x[1]+'</button>'}).join('')+'</div>'+
@@ -24683,10 +24688,15 @@ body.print-activity #dpbBottomBar{display:none!important}
 #dpbStoreRoot .stChip{font-size:11px;padding:3px 9px;border-radius:9px;background:rgba(55,214,162,.12);color:#9fe8cc;white-space:nowrap}
 #dpbStoreRoot .stChip.w{background:rgba(240,178,91,.14);color:#f6c86b}
 #dpbStoreRoot .stCats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
-#dpbStoreRoot .stCat{min-height:64px;padding:8px;border-radius:12px;border:1px solid #243b57;background:#0b1b2d;color:#e6f1ff;font-family:inherit;text-align:right;cursor:pointer}
+#dpbStoreRoot .stCat{position:relative;overflow:hidden;min-height:70px;padding:8px 8px 17px;border-radius:12px;border:1px solid #243b57;background:#0b1b2d;color:#e6f1ff;font-family:inherit;text-align:right;cursor:pointer}
 #dpbStoreRoot .stCat b{display:block;font-size:12.5px;line-height:1.25}
 #dpbStoreRoot .stCat small{color:#8fa7c2;font-size:10.5px}
 #dpbStoreRoot .stCat.on{border-color:#37d6a2;background:#0f2b2b;box-shadow:0 0 0 1px rgba(55,214,162,.35)}
+/* v258: same progress meter as the admin Material cards: dim track always visible, fill from the right; grey / amber / green */
+#dpbStoreRoot .stCat .stPg{position:absolute;right:8px;left:8px;bottom:7px;height:5px;border-radius:3px;background:#17304b;overflow:hidden;display:block;text-decoration:none}
+#dpbStoreRoot .stCat .stPg i{display:block;height:100%;background:#8fa7c2;border-radius:3px}
+#dpbStoreRoot .stCat.part .stPg i{background:linear-gradient(270deg,#f0b25b,#e5a93a)}
+#dpbStoreRoot .stCat.full .stPg i{background:linear-gradient(270deg,#37d6a2,#2bbf8f)}
 #dpbStoreRoot .stZ{margin-top:8px;border:1px solid #243b57;border-radius:12px;background:#0b1b2d;overflow:hidden}
 #dpbStoreRoot .stZH{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:8px 10px;background:transparent;border:0;color:#e6f1ff;font-family:inherit;font-size:13px;text-align:right;cursor:pointer}
 #dpbStoreRoot .stZH b{flex:0 0 auto}
@@ -24830,7 +24840,8 @@ function render(){
   if(UI.cat<0||!B.cats[UI.cat])UI.cat=0;
   h+='<div class="stCats">'+B.cats.map(function(c,i){
     var req=0,got=0;c.items.forEach(function(it){var q=reqOf(it);req+=q;got+=Math.min(rcvOf(it),q)});
-    return '<button type="button" class="stCat'+(i===UI.cat?' on':'')+'" data-sc="'+i+'"><b>'+esc(c.title)+'</b><small>'+c.items.length+' بند · '+(req?Math.round(got*100/req):0)+'% وصل</small></button>';
+    var pc=req?Math.max(0,Math.min(100,Math.round(got*100/req))):0;
+    return '<button type="button" class="stCat'+(i===UI.cat?' on':'')+(pc>=100?' full':(pc>0?' part':''))+'" data-sc="'+i+'"><b>'+esc(c.title)+'</b><small>'+c.items.length+' بند · '+pc+'% وصل</small><s class="stPg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pc+'"><i style="width:'+pc+'%"></i></s></button>';
   }).join('')+'</div>';
   h+='<div class="stSearch"><input id="stQ" type="text" data-sq="1" placeholder="🔍 ابحث: وصف / رقم قطعة / لون" value="'+esc(UI.q||'')+'" autocomplete="off"></div><div id="stBody">'+bodyHtml()+'</div>';
   r.innerHTML=h;chip();
@@ -24893,7 +24904,9 @@ window.__dpbStoreTest={push:push,state:function(){return ST}};
 
 <style id="dpbMapFlatCss">/* v246 "light mode" switch for the map: square flat cells, no ring/outline/gloss. Lets us find out on the phone whether cell drawing is what makes the map stutter. */
 @media screen{
-html.dpbMapFlat #excelMapShell .me-map td.me-u{border:0!important;outline:0!important;border-radius:0!important;box-shadow:none!important;background-image:none!important;filter:none!important}
+html.dpbMapFlat #excelMapShell .me-map td.me-u{border:0!important;outline:0!important;border-radius:0!important;box-shadow:none!important;filter:none!important}
+/* v259: the progress fill of a tracker (Modules...) is a gradient: it must stay in light mode */
+html.dpbMapFlat #excelMapShell .me-map td.me-u:not(.me-prog){background-image:none!important}
 html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline:2px solid #fff!important;outline-offset:-2px}
 }
 </style>
