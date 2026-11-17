@@ -563,6 +563,7 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   .print-plan-title{position:absolute;top:4mm;left:6mm;right:6mm;text-align:center;font-size:12pt;font-weight:900;color:#111}
 }
 #excelMapShell td.me-u.print-outside-range{filter:grayscale(1) brightness(.45)}
+html #excelMapShell .me-map td.me-u.print-outside-range{opacity:.16!important;filter:grayscale(1)!important}
 @media screen{#printPlanArea{display:none}}
 
 
@@ -8770,9 +8771,39 @@ function printPlanRange(){
   if(typeof window.dpbBuilderMapPdf==='function'){
     const hasRange=a!==null||b!==null;
     const keep=function(row){return !hasRange||row.trackers.some(t=>trackerIndexInRange(t.index));};
-    try{window.dpbBuilderMapPdf(keep,legacy);return;}catch(e){console.warn('builder print engine failed',e);}
+    try{window.dpbBuilderMapPdf(keep,legacy,hasRange?cropMapTableToPrintRange:null);return;}catch(e){console.warn('builder print engine failed',e);}
   }
   legacy();
+}
+
+/* v149: النطاق من/إلى بيقصّ الخريطة فعلًا. بنعمل نسخة من جدول الخريطة فيها بس أعمدة التراكرات اللي في النطاق (+ عمود اسم الـ ROW وأرقام الصفوف على الشمال)،
+   والخلايا/أرقام التراكرات اللي جوه الأعمدة دي وبرة النطاق بتتخفي (visibility) علشان الشكل ما يتبوظش. بترجع null لو مفيش خلايا في النطاق. */
+function cropMapTableToPrintRange(table){
+  const d=DPBMap.printData(),s=DPBMap.state.last,tb=table&&table.tBodies[0];
+  if(!d||!s||!s.model||!tb)return null;
+  const model=s.model,rows=[...tb.rows];
+  const idx=new Map();d.rows.forEach(r=>r.trackers.forEach(t=>idx.set(r.label+'|'+t.label,t.index)));
+  const verdictOf=(rowLabel,label)=>{const i=idx.get(String(rowLabel||'')+'|'+String(label||''));return i===undefined?null:trackerIndexInRange(i);};
+  const bandOf=new Array(rows.length).fill('');
+  {let prevEnd=d.top-1;d.rows.forEach(row=>{const start=prevEnd+1,end=row.r2;prevEnd=Math.max(prevEnd,end);for(let r=Math.max(0,start-d.top);r<=Math.min(rows.length-1,end-d.top);r++)bandOf[r]=row.label;});}
+  const occ=[],pos=new Map();
+  rows.forEach((tr,ri)=>{const o=occ[ri]||(occ[ri]=new Set());let c=0;for(const td of tr.cells){while(o.has(c))c++;const cs=td.colSpan||1,rs=td.rowSpan||1;pos.set(td,[c,c+cs-1]);for(let k=0;k<rs;k++){const oo=occ[ri+k]||(occ[ri+k]=new Set());for(let j=0;j<cs;j++)oo.add(c+j);}c+=cs;}});
+  let lo=1e9,hi=-1,minU=1e9;const verdict=new Map();
+  rows.forEach((tr,ri)=>{for(const td of tr.cells){const p=pos.get(td);
+    if(td.classList.contains('me-u')){const u=model.unitById.get(td.dataset.u);if(!u)continue;minU=Math.min(minU,p[0]);const ok=verdictOf(u.rowLabel,u.label)!==false;verdict.set(td,ok);if(ok){lo=Math.min(lo,p[0]);hi=Math.max(hi,p[1]);}}
+    else if(td.classList.contains('me-t')){verdict.set(td,verdictOf(bandOf[ri],td.textContent.trim())!==false);}
+  }});
+  if(hi<0)return null;
+  const out=table.cloneNode(false),ntb=tb.cloneNode(false);
+  rows.forEach(tr=>{const ntr=tr.cloneNode(false);
+    for(const td of tr.cells){const p=pos.get(td);
+      const chrome=!td.classList.contains('me-u')&&p[1]<minU;   // ROW label + row numbers (left of the first tracker column)
+      if(!chrome&&(p[1]<lo||p[0]>hi))continue;
+      const c=td.cloneNode(true);
+      if(verdict.get(td)===false){c.classList.add('print-outside-range');c.style.visibility='hidden';}
+      ntr.appendChild(c);}
+    ntb.appendChild(ntr);});
+  out.appendChild(ntb);return out;
 }
 
 // Print the currently selected MAP operation with the exact colors already
@@ -18146,8 +18177,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   }
   function exportSupervisorMapPdf(){return dpbMapPdfCore(null,null);}
   /* v143: طباعة الخرايط عند البيلدر بنفس نظام المشرف (معاينة + ورق + اتجاه + ROW في الصفحة + توزيع متساوي). keep = فلتر النطاق (من/إلى)، fallback = الطريقة القديمة لو القياس فشل */
-  window.dpbBuilderMapPdf=function(keep,fallback){return dpbMapPdfCore(keep,fallback);};
-  function dpbMapPdfCore(keep,fallback){
+  window.dpbBuilderMapPdf=function(keep,fallback,crop){return dpbMapPdfCore(keep,fallback,crop);};
+  function dpbMapPdfCore(keep,fallback,crop){
     const s=DPBMap.state.last;
     if(!s){showToast("محدش عارض خريطة دلوقتي.");return;}
     const shell=document.getElementById("excelMapShell");
@@ -18162,7 +18193,11 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     // cells with no width/height rule collapse and visually merge together).
     const liveCss=document.getElementById("dpbMapEngineCss");
     const liveCssText=liveCss?liveCss.textContent:"";
-    dpbPrintDialog(table,function(plan){
+    /* v149: لو فيه نطاق، القياس والطباعة بيتعملوا على نسخة الجدول المقصوصة (بتتحط مكان الأصلي لحظة القياس بس وبترجع فورًا) */
+    let undoCrop=null;
+    if(typeof crop==='function'&&table.parentNode){try{const ct=crop(table);if(ct){table.parentNode.replaceChild(ct,table);undoCrop=function(){try{if(ct.parentNode)ct.parentNode.replaceChild(table,ct);}catch(_){}undoCrop=null;};}}catch(e){console.warn('range crop failed',e);}}
+    try{
+    dpbPrintDialog(undoCrop?shell.querySelector('table'):table,function(plan){
     if(!plan&&keep&&typeof fallback==='function'){fallback();return;}
     window.__dpbPrintOpts=plan?{landscape:plan.pl.orient==='landscape',size:plan.pl.size}:null;
     const w=window.open("","_blank");
@@ -18194,6 +18229,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     w.onload=doPrint;
     setTimeout(doPrint,400);
     },keep);
+    }finally{if(undoCrop)undoCrop();}
   }
   /* v97: Project Maps (supervisor) رجعت للخرايط الرسومية: Fixed Maps كاملة + Operations الديناميك للعمليات المسموحة للمشرف بس (supervisorFilterOps).
      جدول حالة التراكرات (openSupervisorMaps) لسه موجود في الكود بس مش بيتفتح من الزر. */
