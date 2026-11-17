@@ -563,6 +563,7 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   .print-plan-title{position:absolute;top:4mm;left:6mm;right:6mm;text-align:center;font-size:12pt;font-weight:900;color:#111}
 }
 
+html.dpbMapFlat #excelMapShell .me-map td.me-u.me-sel{outline:3px solid #fff!important;outline-offset:-1px!important;box-shadow:0 0 0 4px rgba(0,0,0,.8)!important;z-index:6!important}
 html #excelMapShell .me-map td.me-u.print-outside-range{background:#1a2a3d!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important}
 @media screen{#printPlanArea{display:none}}
 
@@ -895,7 +896,7 @@ html #excelMapShell .me-map td.me-u.print-outside-range{background:#1a2a3d!impor
   // كان بيدمر بيانات حقيقية مش مجرد يصلح تعارض. دلوقتي بنمسح localStorage
   // بس (اللي فيه فعلاً كاش/مزامنة قديمة ممكن تتعارض) ومنلمسش IndexedDB
   // خالص.
-  var DPB_APP_BUILD = "20260914232329"; // بصمة وقت آخر تعديل حقيقي - بتتغيّر تلقائيًا مع كل نسخة أبعتهالك
+  var DPB_APP_BUILD = "20261117172526"; // بصمة وقت آخر تعديل حقيقي - بتتغيّر تلقائيًا مع كل نسخة أبعتهالك
   var VKEY = "DPB_APP_BUILD_VERSION";
   // FIX (المرحلة 1 / بند 1): كان المسح بيشيل أي مفتاح بادئ بـ DPB_ — ومعاه
   // سجلات الإنتاج اللي لسه ماترفعتش، وخريطة المزامنة، ومشروع الجهاز
@@ -5137,6 +5138,17 @@ function colorNameOf(color){
   if(base==='Brown')return 'Brown';
   return (l<0.28?'Dark ':(l>0.72?'Light ':''))+base;
 }
+/* v260: a colour is always shown by NAME (never a code). Diagonal two-colour fills ("linear-gradient(135deg,A 50%,B 50%)") = both names. */
+function colorNameAny(css){
+  const t=String(css||'').trim();if(!t)return '';
+  if(/repeating-linear-gradient/i.test(t))return 'No color';
+  if(/gradient/i.test(t)){
+    const cs=t.match(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b|rgba?\([^)]*\)/ig)||[];
+    const names=[];cs.forEach(c=>{const n=colorNameOf(c)||'Custom';if(names.indexOf(n)<0)names.push(n);});
+    return names.length?names.join(' / '):'Custom';
+  }
+  return colorNameOf(t)||(t==='#ffffff'?'White':'Custom');
+}
 const _svSrc=new Map();let _svTimer=false;
 function _svSource(op){
   // PERF: the source of a process' values is resolved once per tick instead of once per cell
@@ -5549,6 +5561,7 @@ function dimBase(css){
   if(m){const n=parseInt(m[1],16);R=n>>16&255;G=n>>8&255;B=n&255;}
   else if((m=/^#([0-9a-f]{3})$/i.exec(css))){R=parseInt(m[1][0]+m[1][0],16);G=parseInt(m[1][1]+m[1][1],16);B=parseInt(m[1][2]+m[1][2],16);}
   else if((m=/^rgb\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/i.exec(css))){R=+m[1];G=+m[2];B=+m[3];}
+  else if(/gradient/i.test(css)){r=css.replace(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b|rgb\([^)]*\)/ig,function(c){return dimBase(c);});__dimCache.set(css,r);return r;}   // v263: two-colour fills fade like the rest
   else{__dimCache.set(css,css);return css;}
   const a=BASE_DIM_ALPHA,mix=(c,b)=>Math.round(b+(c-b)*a);
   r='rgb('+mix(R,11)+','+mix(G,22)+','+mix(B,34)+')';__dimCache.set(css,r);return r;
@@ -6157,7 +6170,7 @@ function details(id){
   const tinfo=((pm&&pm.ok?pm:model).types||[]).find(t=>t.code===String(tType).toUpperCase());
   // Only fields that actually carry useful data get a card — never a card
   // with a bare placeholder just to keep a fixed slot count.
-  const item=(k,v,raw)=>'<div class="map-detail-item"><div class="k">'+k+'</div><div class="v">'+(raw?v:esc(v))+'</div></div>';
+  const item=(k,v,raw,wide)=>'<div class="map-detail-item'+(wide?' map-detail-wide':'')+'"><div class="k">'+k+'</div><div class="v">'+(raw?v:esc(v))+'</div></div>';
   let cards='',statusCard='';
   if(u.rowLabel)cards+=item('ROW',u.rowLabel);
   if(u.label)cards+=item('TRACKER',u.label);
@@ -6171,14 +6184,14 @@ function details(id){
     const scRow=scCode&&shell.siteCodes&&shell.siteCodes.get(scCode);
     let pcss='',pname='';
     if(scRow&&scRow.css){pcss=scRow.css;pname=scRow.name||colorNameOf(pcss);const shade=colorNameOf(pcss);if(shade&&pname&&shade.toLowerCase()!==String(pname).toLowerCase())pname+=' ('+shade+')';}
-    else if(pm&&pm.ok){const pt=pm.trackers.get(u.rowLabel+'|'+u.label);const pu=pt&&pt.units.find(x=>x.fill);if(pu&&pu.fill){pcss=pu.fill;pname=colorNameOf(pcss)||pcss;}}
+    else if(pm&&pm.ok){const pt=pm.trackers.get(u.rowLabel+'|'+u.label);const pu=pt&&pt.units.find(x=>x.fill);if(pu&&pu.fill){pcss=pu.fill;pname=colorNameAny(pcss);}}
     // ONE card: tracker type letter + its plan-colour swatch + colour name (e.g. A [swatch] purple)
-    if(tType||pcss)cards+=item('ZONE',(tType?'<b style="font-size:15px">'+esc(String(tType).toUpperCase())+'</b> ':'')+(pcss?'<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+pcss+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(pname):''),true);
+    if(tType||pcss)cards+=item('ZONE',(tType?'<b style="font-size:15px">'+esc(String(tType).toUpperCase())+'</b> ':'')+(pcss?'<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+pcss+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(pname):''),true,true);
   }
-  const cname=colorNameOf(col.css)||(col.css==='#ffffff'?'White':col.css);
+  const cname=colorNameAny(col.css);
   const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?'':col.src==='unmapped'?' · unmapped code':' · Excel fill';
-  cards+=item('CELL COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true);
-  cards+=item('CELL ID',[u.rowLabel,u.label,u.total?('P'+u.post):''].filter(Boolean).join(' · '));
+  cards+=item('CELL COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true,true);
+  cards+=item('CELL ID',[u.rowLabel,u.label,u.total?('P'+u.post):''].filter(Boolean).join(' · '),false,true);
   const ops=(currentCatalog()||{maps:[]}).maps.filter(m=>m.op&&m.op.name&&m.op.kind!=='notstarted').map(m=>m.op);
   const progHere=(spec.op&&spec.op.kind!=='notstarted'&&progressInfoOfModel(model))?spec.op:null;
   const done=ops.filter(o=>isDone(o,u)&&!(progHere&&o.id===progHere.id));
@@ -17082,21 +17095,14 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       }
 
       const rec=matches[0];
-      if(rec && (rec.company || rec.companyName || rec.operator)){
-        return {
-          company:String(rec.company||rec.companyName||'').trim()||'Admin',
-          operator:String(rec.operator||'').trim()||String(rec.editedBy||rec.user||'Admin').trim()||'Admin'
-        };
-      }
-
-      // Legacy records that predate Company/Operator assignment.
-      const admin=String(rec?.editedBy||rec?.user||'').trim();
-      const account=state.account||{};
-      const company=String(rec?.company||rec?.companyName||account.company||account.companyName||'Admin').trim()||'Admin';
-      const operator=admin||String(account.name||state.user||'Admin').trim()||'Admin';
-      return {company,operator};
+      // v263: Operator = the operator's own name, Company = that operator's company. A record that has none of them (Excel baseline / older
+      // records) shows Admin / Admin. The supervisor's account name is never used here.
+      return {
+        company:String((rec&&(rec.company||rec.companyName))||'').trim()||'Admin',
+        operator:String((rec&&rec.operator)||'').trim()||'Admin'
+      };
     }catch(_){
-      return {company:'Admin',operator:String(state.user||'Admin')||'Admin'};
+      return {company:'Admin',operator:'Admin'};
     }
   }
   function fitRammingLines(root){
@@ -24931,6 +24937,51 @@ window.addEventListener('online',function(){if(U&&ST.dirty)push()});
 window.__dpbStoreTest={push:push,state:function(){return ST}};
 })();
 </script>
+<style id="dpbRammingCardFit">/* v263: Ramming production cards - Company / Operator text never leaves the card (long names end with ...) */
+.dpbSupUnits .dpbSupUnitGrid .dpbRammingCard{overflow:hidden!important;min-width:0!important}
+.dpbSupUnits .dpbRammingCard .dpbRammingLine{min-width:0!important;max-width:100%!important}
+.dpbSupUnits .dpbRammingCard .dpbRammingLabel{flex:0 0 auto!important}
+.dpbSupUnits .dpbRammingCard .dpbRammingValue{flex:1 1 0!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;margin:-3px 0!important;padding:3px 0!important}
+</style>
+<script id="dpbBuilderCardsLikeSup">
+/* v264: the Cell Details cards in the Builder look EXACTLY like the Supervisor ones: every CSS rule written for "#dpbSupMapCanvas #mapDetail" is copied
+   for "#mapDetail#mapDetail" (same weight), in the same order, including its @media blocks. One source of truth: change the Supervisor look and the Builder follows. */
+(function(){
+  var KEY='#dpbSupMapCanvas #mapDetail';
+  function conv(sel){return sel.split(KEY).join('#mapDetail#mapDetail');}
+  function walk(rules){
+    var out='';
+    for(var i=0;i<rules.length;i++){
+      var r=rules[i];
+      if(r.type===1){
+        if(r.selectorText&&r.selectorText.indexOf(KEY)>=0){
+          var sels=r.selectorText.split(',').map(function(x){return x.trim();}).filter(function(x){return x.indexOf(KEY)>=0;}).map(conv);
+          if(sels.length)out+=sels.join(',')+'{'+r.style.cssText+'}\n';
+        }
+      }else if((r.type===4||r.type===12)&&r.cssRules){
+        var inner=walk(r.cssRules);
+        if(inner)out+=(r.type===4?'@media '+r.conditionText:'@supports '+r.conditionText)+'{\n'+inner+'}\n';
+      }
+    }
+    return out;
+  }
+  function build(){
+    if(document.getElementById('dpbBuilderCardsCopy'))return;
+    var css='';
+    try{
+      for(var i=0;i<document.styleSheets.length;i++){
+        var sh=document.styleSheets[i],rules;
+        try{rules=sh.cssRules;}catch(_){continue;}
+        if(!rules||sh.ownerNode&&sh.ownerNode.id==='dpbBuilderCardsCopy')continue;
+        css+=walk(rules);
+      }
+    }catch(e){console.warn('builder cards copy failed',e);}
+    if(!css)return;
+    var st=document.createElement('style');st.id='dpbBuilderCardsCopy';st.textContent=css;document.head.appendChild(st);
+  }
+  if(document.readyState==='complete')build();else window.addEventListener('load',build);
+})();
+</script>
 <style id="dpbMapLite">/* v241: every map cell had a box-shadow ring. On a phone that is about 3x more drawing work than a plain border (measured on the real map: -65%), and it is what made the operation maps (Ramming...) stutter while moving. Thin borders look the same. */
 @media screen{
 #excelMapShell .me-map td.me-u:not(.me-sel){box-shadow:none!important;border:1px solid rgba(255,255,255,.28)}
@@ -24942,9 +24993,10 @@ window.__dpbStoreTest={push:push,state:function(){return ST}};
 
 <style id="dpbMapFlatCss">/* v246 "light mode" switch for the map: square flat cells, no ring/outline/gloss. Lets us find out on the phone whether cell drawing is what makes the map stutter. */
 @media screen{
-html.dpbMapFlat #excelMapShell .me-map td.me-u{border:0!important;outline:0!important;border-radius:0!important;box-shadow:none!important;filter:none!important}
+html.dpbMapFlat #excelMapShell .me-map td.me-u{border:1px solid rgba(255,255,255,.3)!important;outline:0!important;border-radius:0!important;box-shadow:none!important;filter:none!important}
+/* v265: CELL ID wraps, light-mode selection outline; v264: Builder cards = Supervisor cards; v263: operator/company on cards, two-colour cells dim + light mode; v262: print range crop; cards by colour name; light-mode cell borders; map-cell writes use fast HTTPS (dpb-fs2.js) */
 /* v259: the progress fill of a tracker (Modules...) is a gradient: it must stay in light mode */
-html.dpbMapFlat #excelMapShell .me-map td.me-u:not(.me-prog){background-image:none!important}
+html.dpbMapFlat #excelMapShell .me-map td.me-u:not(.me-prog):not([style*="gradient"]){background-image:none!important}
 html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline:2px solid #fff!important;outline-offset:-2px}
 }
 </style>
