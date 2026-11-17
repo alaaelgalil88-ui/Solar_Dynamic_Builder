@@ -562,8 +562,8 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
   .print-plan-row-wrap table.print-me td.me-u{border-radius:1.3mm;box-shadow:none!important;width:auto!important;min-width:0!important;height:auto!important}
   .print-plan-title{position:absolute;top:4mm;left:6mm;right:6mm;text-align:center;font-size:12pt;font-weight:900;color:#111}
 }
-#excelMapShell td.me-u.print-outside-range{filter:grayscale(1) brightness(.45)}
-html #excelMapShell .me-map td.me-u.print-outside-range{opacity:.16!important;filter:grayscale(1)!important}
+
+html #excelMapShell .me-map td.me-u.print-outside-range{background:#1a2a3d!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important}
 @media screen{#printPlanArea{display:none}}
 
 
@@ -8697,13 +8697,15 @@ function refreshPrintRangeClasses(){
   if(!shell) return;
   const hasRange=!!(printRange.fromTracker||printRange.toTracker);
   const d=DPBMap.printData();if(!d)return;
-  const idx=new Map();d.rows.forEach(r=>r.trackers.forEach(t=>idx.set(r.label+'|'+t.label,t.index)));
   const model=DPBMap.state.last.model;
-  shell.querySelectorAll('td.me-u').forEach(td=>{
-    const u=model.unitById.get(td.dataset.u);let out=false;
-    if(hasRange&&u){const i=idx.get(String(u.rowLabel||'')+'|'+u.label);out=!(i!==undefined&&trackerIndexInRange(i));}
-    td.classList.toggle('print-outside-range',out);
-  });
+  const outByKey=new Map();
+  if(hasRange)d.rows.forEach(r=>r.trackers.forEach(t=>outByKey.set(r.label+'|'+t.label,!trackerIndexInRange(t.index))));
+  const tds=shell.getElementsByClassName('me-u');
+  for(let i=0;i<tds.length;i++){
+    const td=tds[i];let out=false;
+    if(hasRange){const u=model.unitById.get(td.dataset.u);if(u){const v=outByKey.get(String(u.rowLabel||'')+'|'+u.label);out=v===undefined?true:v;}}
+    if(td.classList.contains('print-outside-range')!==out)td.classList.toggle('print-outside-range',out);
+  }
 }
 function trackerIndexInRange(i){
   const a=printEndpointIndex('from'), b=printEndpointIndex('to');
@@ -18194,10 +18196,10 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const liveCss=document.getElementById("dpbMapEngineCss");
     const liveCssText=liveCss?liveCss.textContent:"";
     /* v149: لو فيه نطاق، القياس والطباعة بيتعملوا على نسخة الجدول المقصوصة (بتتحط مكان الأصلي لحظة القياس بس وبترجع فورًا) */
-    let undoCrop=null;
-    if(typeof crop==='function'&&table.parentNode){try{const ct=crop(table);if(ct){table.parentNode.replaceChild(ct,table);undoCrop=function(){try{if(ct.parentNode)ct.parentNode.replaceChild(table,ct);}catch(_){}undoCrop=null;};}}catch(e){console.warn('range crop failed',e);}}
+    let undoCrop=null,cropped=null;
+    if(typeof crop==='function'&&table.parentNode){try{const ct=crop(table);if(ct){const prevDisp=table.style.display;table.parentNode.insertBefore(ct,table);table.style.display='none';cropped=ct;undoCrop=function(){try{if(ct.parentNode)ct.parentNode.removeChild(ct);table.style.display=prevDisp;}catch(_){}undoCrop=null;};}}catch(e){console.warn('range crop failed',e);}}
     try{
-    dpbPrintDialog(undoCrop?shell.querySelector('table'):table,function(plan){
+    dpbPrintDialog(cropped||table,function(plan){
     if(!plan&&keep&&typeof fallback==='function'){fallback();return;}
     window.__dpbPrintOpts=plan?{landscape:plan.pl.orient==='landscape',size:plan.pl.size}:null;
     const w=window.open("","_blank");
