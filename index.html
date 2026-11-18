@@ -16778,7 +16778,10 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     // editable for correction. All earlier operations are locked.
     const isCurrentStage=currentCode===stage;
     const isAdmin=state.account?.isAdmin===true || String(state.user||'').trim()==='Admin';
-    return {done:true,source:"الشيت اللايف",editable:isCurrentStage,adminRecord:false};
+    /* v271: لا قفل على الكروت — كل مشرف حر في الإلغاء/التعديل (التناقضات هي الرقابة). advanced = الوحدة وصلت لمرحلة بعد الحالية → رسالة تأكيد بس.
+       مفتاح dpb_cascade='on' (نفس اللي بيتحكم في قفل الخريطة) بيرجّع القفل القديم. */
+    const cascadeOn=!!(window.dpbCascadeOn&&window.dpbCascadeOn());
+    return {done:true,source:"الشيت اللايف",editable:cascadeOn?isCurrentStage:true,adminRecord:false,advanced:stage>currentCode};
   }
   window.existingDone=existingDone;
   window.records=records;
@@ -17064,6 +17067,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     }
     return {byUnit,byCoord,bad:false};
   }
+  function advWarn(adv){return adv?'⚠️ الوحدة دي اتنفذ لها خطوة بعد العملية الحالية.\n\n':'';}
   function setTxt(el,txt){
     if(!el||el.textContent===txt)return;
     if(el.childNodes.length===1&&el.firstChild.nodeType===3)el.firstChild.nodeValue=txt;else el.textContent=txt;
@@ -17332,11 +17336,11 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
                   hideSupKeyboard();
                   const sheet=u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||"");
                   const pu=window.__dpbProcUnit(t,u,state.process.name);const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+pu.r1+"_"+pu.c1,sheet,r1:pu.r1,c1:pu.c1,r2:pu.r2,c2:pu.c2,alt:{r1:u.r1,c1:u.c1}};
-                  if(!confirm(`إلغاء إدخال ${t.label} · P${i+1} نهائيًا؟\nستعود الوحدة إلى حالة متاحة بدون أي حالة مسجلة.`))return;
+                  if(!confirm(advWarn(d.advanced)+`إلغاء إدخال ${t.label} · P${i+1} نهائيًا؟\nستعود الوحدة إلى حالة متاحة بدون أي حالة مسجلة.`))return;
                   deleteSavedRecordForUnit(unitK,rec);
                 };
               }
-              wireMulti(b,unitK,t,u,i);
+              wireMulti(b,unitK,t,u,i,d.advanced);
             }
           }else{
             available++;
@@ -17387,13 +17391,13 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
                 delEl.onclick=(ev)=>{
                   ev.stopPropagation();
                   hideSupKeyboard();
-                  if(!confirm(`إلغاء إدخال ${t.label} · U${i+1} نهائيًا؟\nستعود الوحدة إلى حالة متاحة بدون أي حالة مسجلة.`))return;
+                  if(!confirm(advWarn(d.advanced)+`إلغاء إدخال ${t.label} · U${i+1} نهائيًا؟\nستعود الوحدة إلى حالة متاحة بدون أي حالة مسجلة.`))return;
                   const sheet=u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||"");
                   const pu=window.__dpbProcUnit(t,u,state.process.name);const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+pu.r1+"_"+pu.c1,sheet,r1:pu.r1,c1:pu.c1,r2:pu.r2,c2:pu.c2,alt:{r1:u.r1,c1:u.c1}};
                   deleteSavedRecordForUnit(unitK,rec);
                 };
               }
-              wireMulti(b,unitK,t,u,i);
+              wireMulti(b,unitK,t,u,i,d.advanced);
             }
           }else b.disabled=true;
         }else{
@@ -17416,7 +17420,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   /* ---- v132: select several done cards at once. Long-press a card = select it; then one tap on other cards adds them; one "حذف" button cancels them all
      (they become available again). The red X on each card and every other behaviour stay exactly as they were. ---- */
   function multiMap(){return state.multiDel||(state.multiDel=new Map());}
-  function wireMulti(b,unitK,t,u,i){
+  function wireMulti(b,unitK,t,u,i,adv){
     try{
       state.multiSeen&&state.multiSeen.add(unitK);
       const md=multiMap();
@@ -17430,7 +17434,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           const sheet=u.sheet||((window.project&&window.project.wb&&window.project.wb.SheetNames||[])[0]||"");
           const pu=window.__dpbProcUnit(t,u,state.process.name);
           const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+pu.r1+"_"+pu.c1,sheet,r1:pu.r1,c1:pu.c1,r2:pu.r2,c2:pu.c2,alt:{r1:u.r1,c1:u.c1}};
-          m.set(unitK,{unitK,rec,label:t.label+" · "+(state.process.name==="RaMmInG"?"P":"U")+(i+1)});
+          m.set(unitK,{unitK,rec,adv:!!adv,label:t.label+" · "+(state.process.name==="RaMmInG"?"P":"U")+(i+1)});
         }
         b.classList.toggle('dpbMultiSel',m.has(unitK));
         refreshUnitsFooter();renderMultiBar();
@@ -17470,7 +17474,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   async function multiDelete(){
     const md=multiMap(),items=[...md.values()];if(!items.length)return;
     hideSupKeyboard();
-    if(!confirm(`إلغاء إدخال ${items.length} وحدة نهائيًا؟\nهترجع كلها متاحة بدون أي حالة مسجلة.`))return;
+    const advN=items.filter(x=>x.adv).length;
+    if(!confirm((advN?`⚠️ ${advN} من الوحدات دي اتنفذ لها خطوة بعد العملية الحالية.\n\n`:'')+`إلغاء إدخال ${items.length} وحدة نهائيًا؟\nهترجع كلها متاحة بدون أي حالة مسجلة.`))return;
     md.clear();
     for(const it of items){
       try{await Promise.resolve(deleteSavedRecordForUnit(it.unitK,it.rec));}catch(_){}
