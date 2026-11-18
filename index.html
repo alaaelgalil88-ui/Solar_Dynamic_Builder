@@ -16766,7 +16766,8 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       // every earlier operation is considered completed and therefore locked.
       // We intentionally apply this only to entries whose id starts with
       // "grouped:". Separate operation files remain independent.
-      if(isGrouped && currentCode>0){
+      /* v272: الخرايط مستقلة — Done للكارت بيتحسب من تاب العملية نفسها بس. أعلى مرحلة (overallLiveStage) بترجع بس لو dpb_cascade='on'. */
+      if(isGrouped && currentCode>0 && window.dpbCascadeOn && window.dpbCascadeOn()){
         stage=Number(overallLiveStage(tracker,unit))||0;
       }else if(typeof window.effectiveUnitStage==='function'){
         stage=Number(window.effectiveUnitStage(tracker,unit,processNameForLookup))||0;
