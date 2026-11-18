@@ -21812,6 +21812,94 @@ html body .small,html body .hint,html body .notice,html body label,html body sma
   tick();
 })();
 </script>
+<!-- v269: أدوات رابط سكربت النسخ الاحتياطي (لصق / تحميل من ملف / تنضيف تلقائي) -->
+<style id="dpbV269LinkStyle">
+#dpbFs2Card .fs2LinkRow{display:flex;direction:ltr;gap:8px;align-items:stretch}
+#dpbFs2Card .fs2LinkRow>input{flex:1 1 auto;min-width:0;width:auto}
+#dpbFs2Card .fs2LinkRow>button{flex:0 0 46px;width:46px;min-height:44px;height:auto;padding:0;border-radius:12px;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;background:#e7eef7!important;color:#123!important;border:1px solid #ccd5df!important;cursor:pointer}
+#dpbFs2Card .fs2LinkRow>button:active{transform:scale(.93)}
+#dpbFs2Card .fs2LinkHint{margin-top:6px;font-size:12px;font-weight:700;line-height:1.6;unicode-bidi:plaintext}
+#dpbFs2Card .fs2LinkHint:empty{display:none}
+#dpbFs2Card .fs2LinkHint.ok{color:#0b7a46}
+#dpbFs2Card .fs2LinkHint.bad{color:#b3261e}
+#dpbFs2Card .fs2LinkHint.info{color:#5c6672}
+</style>
+<script id="dpbV269LinkScript">
+(function(){"use strict";
+  /* مسافات عادية + مسافات غير مرئية (NBSP، zero-width، علامات الاتجاه، BOM) */
+  var BAD=/[\s\u00a0\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g;
+  var RE=/https:\/\/script\.google\.com\/[^"'<>\u201c\u201d\u2018\u2019]*?\/exec/;
+  function strip(s){return String(s==null?'':s).replace(BAD,'');}
+  function extract(s){var m=RE.exec(strip(s));return m?m[0]:'';}
+  function preview(u){var m=/\/s\/([^\/]+)\/exec$/.exec(u);if(!m)return '';var id=m[1];return id.length>14?id.slice(0,6)+'…'+id.slice(-6):id;}
+  function enhance(){
+    var c=document.getElementById('dpbFs2Card');
+    /* لازم الكارت يكون اتبنى (v110) الأول، لأنه بينقل الخانة من مكانها */
+    if(!c||!c.getAttribute('data-v110'))return;
+    var inp=c.querySelector('#dpbFs2Url');
+    if(!inp||inp.getAttribute('data-lt'))return;
+    inp.setAttribute('data-lt','1');
+    var busy=false;
+    var row=document.createElement('div');row.className='fs2LinkRow';
+    var hint=document.createElement('div');hint.className='fs2LinkHint';
+    var par=inp.parentNode;par.insertBefore(row,inp);row.appendChild(inp);
+    par.insertBefore(hint,row.nextSibling);
+    inp.setAttribute('autocapitalize','off');inp.setAttribute('autocomplete','off');inp.setAttribute('autocorrect','off');inp.setAttribute('spellcheck','false');
+    function say(t,k){hint.textContent=t||'';hint.className='fs2LinkHint'+(k?' '+k:'');}
+    function judge(prefix){
+      var v=strip(inp.value);
+      if(!v){say(prefix||'','info');return;}
+      var ok=RE.exec(v);
+      if(ok&&ok[0]===v){say((prefix?prefix+' — ':'')+'✅ اللينك سليم: '+preview(v),'ok');return;}
+      if(/^https:\/\/script\.google\.com\//.test(v)){say('⚠️ اللينك لازم ينتهي بـ /exec','bad');return;}
+      say('⚠️ ده مش لينك سكربت جوجل (لازم يبدأ بـ https://script.google.com وينتهي بـ /exec)','bad');
+    }
+    /* بيحط القيمة في الخانة ويبلّغ باقي الكود (input + change) عشان يقرا القيمة النضيفة */
+    function setVal(v){
+      if(inp.value===v)return;
+      busy=true;
+      try{inp.value=v;inp.dispatchEvent(new Event('input',{bubbles:true}));inp.dispatchEvent(new Event('change',{bubbles:true}));}
+      finally{busy=false;}
+    }
+    function normalizeFull(){var ex=extract(inp.value);setVal(ex||strip(inp.value));}
+    inp.addEventListener('input',function(){if(busy)return;var s=strip(inp.value);if(s!==inp.value)setVal(s);judge();});
+    inp.addEventListener('change',function(){if(busy)return;normalizeFull();judge();});
+    inp.addEventListener('blur',function(){if(busy)return;normalizeFull();judge();});
+    inp.addEventListener('paste',function(){setTimeout(function(){if(busy)return;normalizeFull();judge('اتلصق');},0);});
+    function fromText(t,label){
+      var ex=extract(t);
+      if(!ex){say('⚠️ ملقيتش لينك سكربت جوجل (…/exec) جوه '+(label==='ملف'?'الملف':'النص')+'. الخانة ماتغيّرتش.','bad');return;}
+      setVal(ex);judge(label==='ملف'?'اتحمّل من الملف':'اتلصق');
+    }
+    function mkBtn(txt,title){var b=document.createElement('button');b.type='button';b.textContent=txt;b.title=title;b.setAttribute('aria-label',title);return b;}
+    var bPaste=mkBtn('📋','لصق اللينك من الكليب بورد'),bFile=mkBtn('🔗','تحميل اللينك من ملف');
+    var f=document.createElement('input');f.type='file';f.accept='text/*,.txt,.url,.md,.json,.csv';f.style.display='none';
+    row.appendChild(bPaste);row.appendChild(bFile);row.appendChild(f);
+    bPaste.addEventListener('click',function(){
+      var cb=navigator.clipboard;
+      if(!cb||!cb.readText){inp.focus();say('اضغط مطوّلاً على الخانة واختار Paste.','info');return;}
+      cb.readText().then(function(t){
+        if(!strip(t)){say('الكليب بورد فاضي.','bad');return;}
+        fromText(t,'نص');
+      }).catch(function(){inp.focus();say('التليفون منع اللصق التلقائي. اضغط مطوّلاً على الخانة واختار Paste.','info');});
+    });
+    bFile.addEventListener('click',function(){f.value='';f.click();});
+    f.addEventListener('change',function(){
+      var file=f.files&&f.files[0];if(!file)return;
+      if(file.size>300000){say('⚠️ الملف كبير. المفروض ملف نصي صغير فيه اللينك بس.','bad');return;}
+      var r=new FileReader();
+      r.onload=function(){fromText(String(r.result||''),'ملف');};
+      r.onerror=function(){say('⚠️ معرفتش أقرا الملف.','bad');};
+      r.readAsText(file);
+    });
+    /* لو في لينك محفوظ بالفعل، نفحصه ونعرض الحالة */
+    if(strip(inp.value))judge();
+  }
+  var t0=0;
+  try{new MutationObserver(function(){if(t0)return;t0=setTimeout(function(){t0=0;enhance();},120);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
+  enhance();
+})();
+</script>
 <!-- v111 -->
 <style id="dpbV111">
 #mapDetail .map-detail-grid{direction:ltr!important}
