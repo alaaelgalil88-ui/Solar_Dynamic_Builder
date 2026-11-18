@@ -105,6 +105,12 @@ var SHEET_HISTORY = "History";
 var SHEET_PRODUCTIVITY = "Productivity";
 var SHEET_UNITMAP = "UnitMap";
 
+/* v271: قفل المراحل (منع حذف/تفضية مرحلة أسبق لو مرحلة لاحقة اتنفذت على نفس الخلية) — ملغي.
+   كل مشرف حر في الإلغاء والتعديل، والرقابة من تاب التناقضات. السيرفر لسه بيحسب كل تاب لوحده بعد الحذف (revertExecutionCells_)،
+   يعني إلغاء مرحلة بيصفّر تابها هي بس وبيسيب باقي المراحل زي ما هي.
+   للرجوع للقفل القديم: غيّر القيمة لـ true. */
+var ENFORCE_STAGE_LOCK = false;
+
 var HEADERS = {
   Users: ["UserID", "Username", "Password", "Role", "ProcessIDs", "AllProcesses", "Active"],
   Production: ["RecordID", "ProjectID", "UpdatedAt", "EditedBy", "DataJSON"],
@@ -998,7 +1004,8 @@ function handleDeleteMany_(body) {
   // v70: قاعدة القفل (السيرفر هو المرجع الأخير)
   var idsSet_ = {};
   ids.forEach(function (x) { idsSet_[x] = true; });
-  var blocked_ = findBlockedDeletes_(data, idsSet_, groupedNamesSet_(body.groupedProcessNames));
+  var gset_ = groupedNamesSet_(body.groupedProcessNames); // لازم يتنادى دايمًا: بيحفظ قايمة العمليات المجمّعة للـ Cascade و onEdit
+  var blocked_ = ENFORCE_STAGE_LOCK ? findBlockedDeletes_(data, idsSet_, gset_) : {};
 
   for (var i = 1; i < data.length; i++) {
     if (ids.indexOf(String(data[i][0])) === -1) continue;
@@ -1275,7 +1282,7 @@ function onEdit(e) {
       if (clearedCells.length) {
         // v70: مرحلة سابقة عليها مرحلة لاحقة منفّذة = القيمة بتتسترجع مش بتتحذف
         var gset_ = groupedNamesSet_(null);
-        var toDel_ = Object.keys(gset_).length ? restoreLockedCells_(clearedCells, gset_) : clearedCells;
+        var toDel_ = (ENFORCE_STAGE_LOCK && Object.keys(gset_).length) ? restoreLockedCells_(clearedCells, gset_) : clearedCells;
         if (toDel_.length) deleteProductionForCells_(toDel_);
       }
       if (records.length) {
