@@ -17049,6 +17049,62 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const norm=String(state.process?.name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'');
     return !!(window.__dpbIsFirstStage&&window.__dpbIsFirstStage(state.process?.name));
   }
+  /* v270: خفة الضغط على كروت الوحدات — الضغطة بتحدّث الكارت المضغوط والعدّادات بس بدل ما تعيد بناء كل الكروت */
+  let __rmIdxOn=false,__rmIdx=null;
+  const __unitsStats={available:0,locked:0};
+  function __rmBuildIdx(all){
+    const byUnit=new Map(),byCoord=new Map(),SEP='\u0001';
+    const push=(m,k,r)=>{let a=m.get(k);if(!a){a=[];m.set(k,a);}a.push(r);};
+    for(const r of all){
+      const p=String(r.process||'').trim().toLowerCase();
+      const un=Number(r.unit);
+      if(!Number.isNaN(un))push(byUnit,p+SEP+String(r.row||'').trim()+SEP+String(r.tracker||r.label||'').trim()+SEP+un,r);
+      const r1=Number(r.r1),c1=Number(r.c1);
+      if(!Number.isNaN(r1)&&!Number.isNaN(c1))push(byCoord,p+SEP+r1+SEP+c1,r);
+    }
+    return {byUnit,byCoord,bad:false};
+  }
+  function setTxt(el,txt){
+    if(!el||el.textContent===txt)return;
+    if(el.childNodes.length===1&&el.firstChild.nodeType===3)el.firstChild.nodeValue=txt;else el.textContent=txt;
+  }
+  /* بيحدّث شريط الحالة وزرار الحفظ من الكروت المرسومة فعلًا (نفس حساب renderUnits) */
+  function refreshUnitsFooter(){
+    try{
+      const root=q("dpbSupUnits");if(!root)return;
+      if(multiMap().size)return; /* وضع الحذف المتعدد: renderMultiBar هو اللي بيتحكم في الزرار */
+      const selectedCount=root.querySelectorAll('.dpbSupUnit.selected:not(.locked)').length;
+      setTxt(q("dpbSupUnitStatus"),`${selectedCount} selected · ${__unitsStats.available} available · ${__unitsStats.locked} locked`);
+      const save=q("dpbSupSave");
+      if(save){save.style.display="block";save.disabled=selectedCount===0;setTxt(save,selectedCount?`Save Selected Units (${selectedCount})`:"Save Selected Units");}
+    }catch(_){}
+  }
+  /* ضغطة على كارت متاح: تحديث الكارت + عدّاد المجموعة + الفوتر، من غير إعادة بناء */
+  function fastToggleAvail(b,sel,headCount,i,isRamming){
+    const on=sel.has(i);
+    if(isRamming||b.classList.contains('dpbRammingCard')){
+      b.classList.toggle('selected',on);
+    }else{
+      b.className="dpbSupUnit "+(on?"selected":"available");
+      const sm=b.querySelector('small');
+      if(sm)setTxt(sm,on?"✓ Selected":"Available");
+    }
+    setTxt(headCount,sel.size+' selected');
+    refreshUnitsFooter();
+    renderMultiBar();
+    try{b.blur();}catch(_){}
+  }
+  /* تغييرات جوه شبكة الكروت لازم ماتشغّلش مراقبات الصفحة التانية */
+  window.__dpbOnlyUnits=function(ms){
+    try{
+      if(!ms||!ms.length)return false;
+      for(let k=0;k<ms.length;k++){
+        let n=ms[k].target;if(n&&n.nodeType!==1)n=n.parentElement;
+        if(!n||!n.closest||!n.closest('#dpbSupUnits'))return false;
+      }
+      return true;
+    }catch(_){return false;}
+  };
   function rammingMeta(t,u,i){
     try{
       const procName=String(state.process?.name||'').trim().toLowerCase();
@@ -17073,7 +17129,9 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       // records and cloud pulls can represent the same unit with a different
       // sheet/coordinate shape.
       const all=records();
-      let matches=all.filter(r=>
+      if(__rmIdxOn&&!__rmIdx){try{__rmIdx=__rmBuildIdx(all);}catch(_){__rmIdx={bad:true};}}
+      const ix=(__rmIdxOn&&__rmIdx&&!__rmIdx.bad)?__rmIdx:null;
+      let matches=ix?(ix.byUnit.get(procName+'\u0001'+row+'\u0001'+tracker+'\u0001'+unitNo)||[]).slice():all.filter(r=>
         String(r.process||'').trim().toLowerCase()===procName &&
         String(r.row||'').trim()===row &&
         String(r.tracker||r.label||'').trim()===tracker &&
@@ -17089,7 +17147,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       // 3) Coordinate fallback for very old records that have no unit field.
       if(!matches.length){
         const r1=Number(u?.r1), c1=Number(u?.c1);
-        matches=all.filter(r=>
+        matches=(ix?(ix.byCoord.get(procName+'\u0001'+r1+'\u0001'+c1)||[]):all).filter(r=>
           String(r.process||'').trim().toLowerCase()===procName &&
           Number(r.r1)===r1 && Number(r.c1)===c1 &&
           (!sheet || !String(r.sheet||'').trim() || String(r.sheet||'').trim()===sheet)
@@ -17110,10 +17168,11 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
   function fitRammingLines(root){
     if(!root)return;
     requestAnimationFrame(()=>{
-      root.querySelectorAll('.dpbRammingLine').forEach(line=>{
-        let size=10.5;
-        line.style.fontSize=size+'px';
-        const min=7.2;
+      const lines=Array.from(root.querySelectorAll('.dpbRammingLine'));
+      lines.forEach(line=>{line.style.fontSize='10.5px';});            /* كل الكتابة الأول */
+      const over=lines.filter(line=>line.scrollWidth>line.clientWidth); /* بعدين قراءة واحدة */
+      over.forEach(line=>{
+        let size=10.5;const min=7.2;
         while(line.scrollWidth>line.clientWidth && size>min){
           size=Math.max(min,size-.25);
           line.style.fontSize=size+'px';
@@ -17223,12 +17282,14 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     }
     if(isRamming) root.classList.add("dpbRammingUnitsRoot"); else root.classList.remove("dpbRammingUnitsRoot");
     state.multiSeen=new Set();
+    __rmIdx=null;__rmIdxOn=true;
     chosen.forEach(t=>{
       const key=trackerKey(t); if(!state.selectedUnits.has(key))state.selectedUnits.set(key,new Set());
       const sel=state.selectedUnits.get(key);
       const group=document.createElement("div");group.className="dpbUnitGroup";
       const head=document.createElement("div");head.className="dpbUnitGroupHead";
       head.innerHTML=`<b>${escapeHtml(t.label)} · ${escapeHtml(t.row||"ROW —")}</b><span>${sel.size} selected</span>`;
+      const headCount=head.querySelector('span');
       const grid=document.createElement("div");grid.className="dpbSupUnitGrid";
       if(isRamming) grid.classList.add("dpbRammingGrid");
       (t.units||[]).forEach((u,i)=>{
@@ -17280,7 +17341,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           }else{
             available++;
             if(isSelected)selectedCount++;
-            b.onclick=()=>{hideSupKeyboard();if(multiMap().size){showToast('في كروت منفذة متحددة — الغي تحديدها أو احذفها الأول.');return;}if(sel.has(i))sel.delete(i);else sel.add(i);renderUnits()};
+            b.onclick=()=>{hideSupKeyboard();if(multiMap().size){showToast('في كروت منفذة متحددة — الغي تحديدها أو احذفها الأول.');return;}if(sel.has(i))sel.delete(i);else sel.add(i);fastToggleAvail(b,sel,headCount,i,isRamming)};
           }
           grid.appendChild(b);
           return;
@@ -17339,12 +17400,13 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           available++;if(isSelected)selectedCount++;
           b.className="dpbSupUnit "+(isSelected?"selected":"available");
           b.innerHTML=`U${i+1}${isSelected?"<small>✓ Selected</small>":"<small>Available</small>"}`;
-          b.onclick=()=>{hideSupKeyboard();if(multiMap().size){showToast('في كروت منفذة متحددة — الغي تحديدها أو احذفها الأول.');return;}if(sel.has(i))sel.delete(i);else sel.add(i);renderUnits()};
+          b.onclick=()=>{hideSupKeyboard();if(multiMap().size){showToast('في كروت منفذة متحددة — الغي تحديدها أو احذفها الأول.');return;}if(sel.has(i))sel.delete(i);else sel.add(i);fastToggleAvail(b,sel,headCount,i,isRamming)};
         }
         grid.appendChild(b);
       });
       group.appendChild(head);group.appendChild(grid);root.appendChild(group);
     });
+    __rmIdxOn=false;__rmIdx=null;__unitsStats.available=available;__unitsStats.locked=locked;
     q("dpbSupUnitCount").textContent=total;
     q("dpbSupUnitStatus").textContent=`${selectedCount} selected · ${available} available · ${locked} locked`;
     const save=q("dpbSupSave");if(save){save.style.display="block";save.disabled=selectedCount===0;save.textContent=selectedCount?`Save Selected Units (${selectedCount})`:"Save Selected Units"}
@@ -17370,7 +17432,9 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
           const rec={id:"cell_"+String(state.process.code)+"_"+String(state.process.name||"").replace(/[^A-Za-z0-9]+/g,"_")+"_"+sheet+"_"+pu.r1+"_"+pu.c1,sheet,r1:pu.r1,c1:pu.c1,r2:pu.r2,c2:pu.c2,alt:{r1:u.r1,c1:u.c1}};
           m.set(unitK,{unitK,rec,label:t.label+" · "+(state.process.name==="RaMmInG"?"P":"U")+(i+1)});
         }
-        renderUnits();
+        b.classList.toggle('dpbMultiSel',m.has(unitK));
+        refreshUnitsFooter();renderMultiBar();
+        try{b.blur();}catch(_){}
       };
       b.addEventListener('contextmenu',ev=>{ev.preventDefault();});
       /* v133: one plain tap on a done card selects / un-selects it (same idea as the tracker cards). The small X / "إلغاء" button on the card still cancels just that one. */
@@ -21808,7 +21872,7 @@ html body .small,html body .hint,html body .notice,html body label,html body sma
   }
   function tick(){var c=document.getElementById('dpbFs2Card');if(c)build(c);}
   var t0=0;
-  try{new MutationObserver(function(){if(t0)return;t0=setTimeout(function(){t0=0;tick();},60);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
+  try{new MutationObserver(function(ms){if(window.__dpbOnlyUnits&&window.__dpbOnlyUnits(ms))return;if(t0)return;t0=setTimeout(function(){t0=0;tick();},60);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
   tick();
 })();
 </script>
@@ -21896,7 +21960,7 @@ html body .small,html body .hint,html body .notice,html body label,html body sma
     if(strip(inp.value))judge();
   }
   var t0=0;
-  try{new MutationObserver(function(){if(t0)return;t0=setTimeout(function(){t0=0;enhance();},120);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
+  try{new MutationObserver(function(ms){if(window.__dpbOnlyUnits&&window.__dpbOnlyUnits(ms))return;if(t0)return;t0=setTimeout(function(){t0=0;enhance();},120);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
   enhance();
 })();
 </script>
@@ -21950,7 +22014,7 @@ html body .small,html body .hint,html body .notice,html body label,html body sma
     });
   }
   function tick(){raf=0;try{fsRows();fit();}catch(_){}}
-  try{new MutationObserver(function(){if(!raf)raf=requestAnimationFrame(tick);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
+  try{new MutationObserver(function(ms){if(window.__dpbOnlyUnits&&window.__dpbOnlyUnits(ms))return;if(!raf)raf=requestAnimationFrame(tick);}).observe(document.body,{childList:true,subtree:true});}catch(_){}
   window.addEventListener('resize',function(){if(!raf)raf=requestAnimationFrame(tick);});
 })();
 </script>
@@ -22800,7 +22864,7 @@ body.print-activity #dpbBottomBar{display:none!important}
   function run(){SEL.forEach(function(s){try{document.querySelectorAll(s).forEach(fit);}catch(e){}});}
   window.__dpbAutoFit=run;
   var pend=0;function soon(){if(pend)return;pend=setTimeout(function(){pend=0;run();},60);}
-  try{new MutationObserver(soon).observe(document.documentElement,{childList:true,characterData:true,subtree:true});}catch(e){}
+  try{new MutationObserver(function(ms){if(window.__dpbOnlyUnits&&window.__dpbOnlyUnits(ms))return;soon();}).observe(document.documentElement,{childList:true,characterData:true,subtree:true});}catch(e){}
   window.addEventListener('resize',soon);window.addEventListener('orientationchange',soon);
   setInterval(function(){var o=document.getElementById('dpbSupOverlay');if(o&&o.clientWidth)run();},1500);
   if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);
