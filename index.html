@@ -5448,7 +5448,7 @@ function renderProgBar(row,spec){
     '<button type="button" id="dpbProgDelete" title="حذف القيمة" style="'+iconBtnCss('danger')+'"'+dis+'>🗑️</button>'+
     '<button type="button" id="dpbMarkReload" class="dpbRefreshBtn" title="تحديث" aria-label="تحديث" style="'+iconBtnCss('neutral')+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8.5"/><path d="M4 4v4.5h4.5"/><path d="M4 13a8 8 0 0 0 14.3 4.6L20 15.5"/><path d="M20 20v-4.5h-4.5"/></svg></button>'+
     '</div>'+
-    '<span id="dpbProgLabel" style="display:block;font-size:12px;font-weight:800;line-height:20px;min-height:20px;text-align:left;unicode-bidi:plaintext;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+label+'</span>';   /* v267: the line above the map stays put (always left, fixed height) in all three states */
+    '<span id="dpbProgLabel" data-dpb-ltr="1" style="display:block;font-size:12px;font-weight:800;line-height:20px;min-height:20px;text-align:left;unicode-bidi:plaintext;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+label+'</span>';   /* v267/v268: the line above the map stays put (always left, fixed height) in all three states; v268: data-dpb-ltr keeps the global Arabic-right script (section 3) from forcing it back to the right */
   const nq=document.getElementById('dpbProgQty');
   if(nq&&keep.sig===sig){nq.value=keep.q;if(keep.focus){nq.focus();try{nq.setSelectionRange(nq.value.length,nq.value.length);}catch(_){}}}
 }
