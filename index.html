@@ -6185,7 +6185,7 @@ function details(id){
     const scCode=String(tType||'').toLowerCase(),shell=(m=>m&&m.siteCodes&&m.siteCodes.size)(model)?model:(pm&&pm.ok?pm:model);
     const scRow=scCode&&shell.siteCodes&&shell.siteCodes.get(scCode);
     let pcss='',pname='';
-    if(scRow&&scRow.css){pcss=scRow.css;pname=scRow.name||colorNameOf(pcss);const shade=colorNameOf(pcss);if(shade&&pname&&shade.toLowerCase()!==String(pname).toLowerCase())pname+=' ('+shade+')';}
+    if(scRow&&scRow.css){pcss=scRow.css;pname=scRow.name||colorNameOf(pcss);const shade=colorNameOf(pcss);if(shade&&pname&&shade.toLowerCase().replace(/[\s_-]+/g,'')!==String(pname).toLowerCase().replace(/[\s_-]+/g,''))pname+=' ('+shade+')';}
     else if(pm&&pm.ok){const pt=pm.trackers.get(u.rowLabel+'|'+u.label);const pu=pt&&pt.units.find(x=>x.fill);if(pu&&pu.fill){pcss=pu.fill;pname=colorNameAny(pcss);}}
     // ONE card: tracker type letter + its plan-colour swatch + colour name (e.g. A [swatch] purple)
     if(tType||pcss)cards+=item('ZONE',(tType?'<b style="font-size:15px">'+esc(String(tType).toUpperCase())+'</b> ':'')+(pcss?'<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+pcss+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(pname):''),true,true);
@@ -25221,6 +25221,13 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       'html.dpbMapFS .dpbFsHost>#excelMapShell#excelMapShell::after{display:none!important;height:0!important;min-height:0!important}',
       '.dpbFsHost:not(.dpbFsSheet)>#dpbMapActions{display:none!important}',
       'html.dpbMapFS .dpbFsHost:not(.dpbFsSheet)>#mapDetail#mapDetail{display:none!important}',
+      'html.dpbMapFS .dpbFsHost>#dpbMapActions#dpbMapActions{flex-direction:row!important;flex-wrap:wrap!important;align-items:center!important;gap:6px!important;padding:6px 8px!important}',
+      'html.dpbMapFS #dpbMapActions .mbTop{flex:0 0 auto!important;display:flex!important;align-items:center!important;gap:6px!important;margin:0!important;padding:0!important;min-width:0}',
+      'html.dpbMapFS #dpbMapActions .mbCount{height:34px!important;padding:0 12px!important;font-size:13px!important;min-width:0!important}',
+      'html.dpbMapFS #dpbMapActions .mbBtns{flex:1 1 190px!important;display:flex!important;align-items:center!important;gap:6px!important;margin:0!important;padding:0!important;min-width:0}',
+      'html.dpbMapFS #dpbMapActions .mbB{height:34px!important;min-height:0!important;min-width:0!important;width:auto!important;flex:1 1 0!important;padding:0 6px!important;font-size:13px!important;border-radius:10px!important}',
+      'html.dpbMapFS #dpbMapActions .mbB.primary{flex:1.8 1 0!important}',
+      'html.dpbMapFS #dpbMapActions .mbB svg{width:17px!important;height:17px!important}',
       '.dpbFsHost.dpbFsSheet>#dpbMapActions{order:3;flex:0 0 auto;position:relative;z-index:6;margin:auto 0 0 0!important;background:#0b1626;box-shadow:0 -8px 20px rgba(0,0,0,.5)}',
       'html.dpbMapFS .dpbFsHost>#mapDetail#mapDetail{order:4;position:relative;z-index:6;background:#0b1626!important;flex:0 0 auto!important;max-height:34vh!important;min-height:0!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch;margin:0!important;border-radius:0!important;padding-bottom:max(env(safe-area-inset-bottom),8px)!important}',
       'html.dpbMapFS .dpbFsHost>#mapDetail#mapDetail.dpbFsEmpty{display:none!important}',
