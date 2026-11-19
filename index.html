@@ -25234,6 +25234,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       '.dpbFsHost.dpbFsLeg>#mapLegend .me-chip{cursor:pointer}',
       '.dpbFsHost.dpbFsLeg>#mapLegend .me-chip.dpbFsOn{outline:2px solid #fff;outline-offset:1px}',
       'html.dpbFsFilt #excelMapShell td.me-u:not(.dpbFsKeep){opacity:.13!important}',
+      'html.dpbMapFS #excelMapShell td.me-u[data-fsd="1"]{opacity:.25!important}',
       'html.dpbMapFS #excelMapShell td.me-t.dpbFsFlash{outline:3px solid #ffd23f;outline-offset:-1px;background:#6b5a00!important}',
       'html.dpbMapFS #dpbMapMarkToast,html.dpbMapFS .dpbToast,html.dpbMapFS .me-toast{z-index:2147483002!important}'
     ].join('\n');
@@ -25251,7 +25252,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
   }
   function mkBar(){
     var b=document.createElement('div');b.id='dpbFsBar';
-    b.innerHTML='<button type="button" data-a="x" aria-label="Close">\u2715</button><span class="t"></span><button type="button" data-a="find" aria-label="Find tracker">\uD83D\uDD0D</button><button type="button" data-a="leg" aria-label="Legend">\uD83C\uDFA8</button><button type="button" data-a="-" aria-label="Zoom out">\u2212</button><button type="button" data-a="+" aria-label="Zoom in">+</button>';
+    b.innerHTML='<button type="button" data-a="x" aria-label="Close">\u2715</button><span class="t"></span><button type="button" data-a="find" aria-label="Find tracker">\uD83D\uDD0D</button><button type="button" data-a="leg" aria-label="Legend">\uD83C\uDFA8</button><button type="button" data-a="dim" aria-label="Dim dark cells">\u25D0</button><button type="button" data-a="-" aria-label="Zoom out">\u2212</button><button type="button" data-a="+" aria-label="Zoom in">+</button>';
     b.querySelector('.t').textContent=title();
     b.addEventListener('click',function(e){
       var t=e.target.closest&&e.target.closest('button[data-a]');if(!t)return;
@@ -25261,6 +25262,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       else if(a==='-')zoom(-1);
       else if(a==='leg'){var on=host.classList.toggle('dpbFsLeg');t.classList.toggle('on',on);}
       else if(a==='find'){var s=host.classList.toggle('dpbFsSrch');t.classList.toggle('on',s);}
+      else if(a==='dim'){dimOn=!dimOn;t.classList.toggle('on',dimOn);applyDim();}
     });
     return b;
   }
@@ -25270,11 +25272,27 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     el.textContent=msg;document.body.appendChild(el);setTimeout(function(){el.remove();},2200);
   }
 
-  var flt=null,shMo=null,lgMo=null,wl=null,saveT=null,hits=[],hitI=0,hitKey='',sval='';
+  var dimOn=false,flt=null,shMo=null,lgMo=null,wl=null,saveT=null,hits=[],hitI=0,hitKey='',sval='';
   function posKey(){return 'DPB_FS_POS_'+title();}
   function savePos(){var s=q('excelMapShell');if(!s)return;try{localStorage.setItem(posKey(),JSON.stringify({l:s.scrollLeft,t:s.scrollTop}));}catch(_){}}
   function restorePos(){var s=q('excelMapShell');if(!s)return;try{var p=JSON.parse(localStorage.getItem(posKey())||'null');if(p){s.scrollLeft=p.l||0;s.scrollTop=p.t||0;}}catch(_){}}
   function onScroll(){clearTimeout(saveT);saveT=setTimeout(savePos,400);}
+  function lum(c){
+    var m=/^#([0-9a-f]{6})$/i.exec(c),r,g,b;
+    if(m){var n=parseInt(m[1],16);r=n>>16&255;g=n>>8&255;b=n&255;}
+    else if((m=/^#([0-9a-f]{3})$/i.exec(c))){r=parseInt(m[1][0]+m[1][0],16);g=parseInt(m[1][1]+m[1][1],16);b=parseInt(m[1][2]+m[1][2],16);}
+    else if((m=/^rgb\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/i.exec(c))){r=+m[1];g=+m[2];b=+m[3];}
+    else return 1;
+    return (0.2126*r+0.7152*g+0.0722*b)/255;
+  }
+  function applyDim(){
+    var s=q('excelMapShell');if(!s)return;var cache={};
+    s.querySelectorAll('td.me-u').forEach(function(td){
+      var k=td.getAttribute('data-live-bg')||'',v=false;
+      if(dimOn&&k){if(!(k in cache))cache[k]=lum(k)<0.16;v=cache[k]&&!td.classList.contains('me-done');}
+      if(v)td.setAttribute('data-fsd','1');else td.removeAttribute('data-fsd');
+    });
+  }
   function chipColor(chip){var i=chip.querySelector('i');if(!i||i.classList.contains('ov'))return null;var m=/background:\s*([^;]+)/i.exec(i.getAttribute('style')||'');return m?m[1].trim():null;}
   function markKeep(){
     var s=q('excelMapShell');if(!s)return;
@@ -25335,7 +25353,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     bar.parentNode.insertBefore(mkSearch(),bar.nextSibling);
     var d=q('mapDetail');syncDetail();
     var sh=q('excelMapShell');restorePos();sh.addEventListener('scroll',onScroll,{passive:true});
-    if(window.MutationObserver){shMo=new MutationObserver(function(){markKeep();});shMo.observe(sh,{childList:true});
+    if(window.MutationObserver){shMo=new MutationObserver(function(){markKeep();if(dimOn)applyDim();});shMo.observe(sh,{childList:true});
       var lg=q('mapLegend');if(lg){lgMo=new MutationObserver(paintChips);lgMo.observe(lg,{childList:true});}}
     keepAwake();
     if(d&&window.MutationObserver){mo=new MutationObserver(syncDetail);mo.observe(d,{childList:true,subtree:true,characterData:true});}
@@ -25344,8 +25362,8 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
   function cleanup(){
     savePos();var sh0=q('excelMapShell');if(sh0)sh0.removeEventListener('scroll',onScroll);
     if(shMo){shMo.disconnect();shMo=null;}if(lgMo){lgMo.disconnect();lgMo=null;}
-    flt=null;H.classList.remove('dpbFsFilt');
-    if(sh0)sh0.querySelectorAll('td.dpbFsKeep,td.dpbFsFlash').forEach(function(td){td.classList.remove('dpbFsKeep','dpbFsFlash');});
+    flt=null;dimOn=false;H.classList.remove('dpbFsFilt');
+    if(sh0)sh0.querySelectorAll('td.dpbFsKeep,td[data-fsd],td.dpbFsFlash').forEach(function(td){td.classList.remove('dpbFsKeep','dpbFsFlash');td.removeAttribute('data-fsd');});
     var sr=q('dpbFsSearch');if(sr&&sr.parentNode)sr.parentNode.removeChild(sr);sval='';
     freeAwake();
     if(mo){mo.disconnect();mo=null;}
