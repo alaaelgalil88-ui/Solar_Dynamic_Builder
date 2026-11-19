@@ -4699,7 +4699,7 @@ function dpbLiveSiteCellColors(){
         const spec=viewSpec(m.id); if(!spec) return;
         const model=modelForKey(spec.snap); if(!model||!model.ok) return;
         (model.units||[]).forEach(u=>{
-          try{ const col=colorOf(spec,model,u); if(col&&col.css) set.add(String(col.css).toLowerCase()); }catch(_){}
+          try{ const col=colorOf(spec,model,u); if(col&&col.css&&col.src!=='nocolor') set.add(String(col.css).toLowerCase()); }catch(_){}
         });
       }catch(_){}
     });
@@ -4876,7 +4876,7 @@ function dpbLiveMapCellColors(code){
         const spec=viewSpec(m.id); if(!spec) return;
         const model=modelForKey(spec.snap); if(!model||!model.ok) return;
         (model.units||[]).forEach(u=>{
-          try{ const col=colorOf(spec,model,u); if(col&&col.css) set.add(String(col.css).toLowerCase()); }catch(_){}
+          try{ const col=colorOf(spec,model,u); if(col&&col.css&&col.src!=='nocolor') set.add(String(col.css).toLowerCase()); }catch(_){}
         });
       }catch(_){}
     });
@@ -5228,6 +5228,10 @@ function planZoneOf(u){
 const typeOf=(u)=>u.letter||(u.tracker&&u.tracker.typeCode)||planZoneOf(u)||'';
 const trackerTypeOf=(u)=>planZoneOf(u)||(u.tracker&&u.tracker.typeCode)||u.letter||'';
 window.__dpbTrackerTypeOf=trackerTypeOf;
+/* v-nocolor: a cell with NO fill (what the Excel marks as "no colour", and what Zone Colors already draws hatched) is its OWN state on the maps - never White.
+   Same hatch as Zone Colors, listed/counted as "No color". A real white fill (#FFFFFF) stays White. */
+const NC_CSS='repeating-linear-gradient(45deg,#ffffff 0 5px,#c9d3dd 5px 9px)',NC_FLAT='#d5dce6';
+window.__dpbNoColorCss=NC_CSS;
 function colorOf(spec,model,u){
   // FIX (لون خلية حي من جوجل شيت -> على الخريطة، بطلب المستخدم): لما بنبص
   // على ماب Dynamic لعملية معينة، ولو فيه لون حقيقي متسجل دلوقتي في تبويب
@@ -5254,7 +5258,7 @@ function colorOf(spec,model,u){
     if(model.siteCodes.size)return{css:'#9aa0a6',src:'unmapped',code:code.toUpperCase(),name:row?row.name:''};
     return{css:u.fill||'#ffffff',src:'unmapped',code:code.toUpperCase()};
   }
-  return u.fill?{css:(u.fill2?'linear-gradient(135deg,'+u.fill+' 50%,'+u.fill2+' 50%)':u.fill),src:'fill'}:{css:'#ffffff',src:'blank'};
+  return u.fill?{css:(u.fill2?'linear-gradient(135deg,'+u.fill+' 50%,'+u.fill2+' 50%)':u.fill),src:'fill'}:{css:NC_CSS,src:'nocolor'};
 }
 
 /* ============================================================
@@ -5326,6 +5330,7 @@ function progPct(d,t){
 }
 function progPaint(baseCss,ovCss,d,t){
   const dd=Math.max(0,Math.min(d,t||d)),p=progPct(d,t),full=t>0&&dd>=t,frac=t>0?Math.min(100,dd*100/t):0;
+  if(!full&&dd>0&&/gradient/i.test(baseCss))baseCss=NC_FLAT;
   let bg=baseCss;
   if(full)bg=ovCss;
   else if(dd>0)bg='linear-gradient(to top,'+ovCss+' 0,'+ovCss+' '+frac.toFixed(1)+'%,'+baseCss+' '+frac.toFixed(1)+'%,'+baseCss+' 100%)';
@@ -5644,7 +5649,7 @@ function renderNow(){
       listh+='<span class="me-chip"><i style="background:'+css+'"></i><span class="nm">'+esc(row?row.name:(colorNameOf(css)||'Unmapped'))+'</span><span class="ct">'+n+'</span></span>';
     }
   }else{
-    [...counts].sort((a,b)=>b[1]-a[1]).slice(0,10).forEach(([css,n])=>{listh+='<span class="me-chip"><i style="background:'+css+'"></i><span class="nm">'+(css==='#ffffff'?'White':esc(colorNameOf(css)||css))+'</span><span class="ct">'+n+'</span></span>';});
+    [...counts].sort((a,b)=>b[1]-a[1]).slice(0,10).forEach(([css,n])=>{listh+='<span class="me-chip"><i style="background:'+css+'"></i><span class="nm">'+(css==='#ffffff'?'White':esc(colorNameAny(css)||css))+'</span><span class="ct">'+n+'</span></span>';});
   }
   if(spec.legendOv)listh=(function(){let t='<span class="me-chip" style="color:'+spec.legendOv.css+'"><i class="ov" style="background:'+spec.legendOv.css+'"></i><span style="color:inherit">'+esc(spec.legendOv.label)+(prog?progLegend(progSumDone,progSumTotal):' · '+doneCount+' / '+model.units.length)+'</span></span>';return t;})()+listh;
   if(spec.color==='siteCode'){
@@ -6191,7 +6196,7 @@ function details(id){
     if(tType||pcss)cards+=item('ZONE',(tType?'<b style="font-size:15px">'+esc(String(tType).toUpperCase())+'</b> ':'')+(pcss?'<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+pcss+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(pname):''),true,true);
   }
   const cname=colorNameAny(col.css);
-  const csrc=col.src==='code'?(' · '+col.name):col.src==='blank'?'':col.src==='unmapped'?' · unmapped code':' · Excel fill';
+  const csrc=col.src==='code'?(' · '+col.name):(col.src==='blank'||col.src==='nocolor')?'':col.src==='unmapped'?' · unmapped code':' · Excel fill';
   cards+=item('CELL COLOR','<i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+col.css+';vertical-align:-2px;border:1px solid #60738b"></i> '+esc(cname)+esc(csrc),true,true);
   cards+=item('CELL ID',[u.rowLabel,u.label,u.total?('P'+u.post):''].filter(Boolean).join(' · '),false,true);
   const ops=(currentCatalog()||{maps:[]}).maps.filter(m=>m.op&&m.op.name&&m.op.kind!=='notstarted').map(m=>m.op);
@@ -6749,7 +6754,7 @@ function drawStatusMaps(box,f,maxW,pid){
     const progM=opc?progressInfoOfModel(model):null;
     for(const u of model.units){
       const ok=cellsT?cellsT(u):test(u);if(ok)hit++;
-      let css='#ffffff',frac=0;try{css=colorOf(spec,model,u).css||css;}catch(_){}
+      let css='#ffffff',frac=0;try{css=colorOf(spec,model,u).css||css;if(css===NC_CSS)css=NC_FLAT;}catch(_){}
       if(opc){
         try{
           if(progM){const tot=progTotal(model,u),d=Math.min(progDone(m.op,u),tot);if(tot>0&&d>=tot)css=opc;else if(d>0)frac=d/tot;}
