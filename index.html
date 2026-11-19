@@ -25185,3 +25185,199 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fill);else fill();
 })();
 </script>
+<script>
+/* v267: Full-Screen Map mode. A button next to the map opens ONLY the map (plus the cell cards under it) over the whole screen.
+   Leave with the X, the phone's back button, or a swipe in from the screen edge (left or right). The map itself is not redrawn or moved:
+   its parent box is simply stretched over the screen, so selection, marking, filters and zoom keep working exactly as before. */
+(function(){
+  if(window.__dpbFsInstalled)return;window.__dpbFsInstalled=true;
+  var H=document.documentElement,host=null,bar=null,mo=null,pushed=false,ignorePop=false,tx=null;
+  function q(id){return document.getElementById(id);}
+  function active(){return H.classList.contains('dpbMapFS');}
+  function css(){
+    if(q('dpbFsCss'))return;
+    var s=document.createElement('style');s.id='dpbFsCss';
+    s.textContent=[
+      'html.dpbMapFS,html.dpbMapFS body{overflow:hidden!important;overscroll-behavior:none}',
+      '.dpbFsHost{position:fixed!important;inset:0!important;z-index:2147483000!important;display:flex!important;flex-direction:column!important;background:#0b1626!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;max-width:none!important;width:auto!important;height:auto!important;overflow:hidden!important;transform:none!important;filter:none!important}',
+            '.dpbFsHost>*:not(#excelMapShell):not(#mapDetail):not(#dpbMapActions):not(#dpbFsBar):not(#mapLegend):not(#dpbFsSearch){display:none!important}',
+      '.dpbFsHost>#mapLegend{display:none!important}',
+      '.dpbFsHost.dpbFsLeg>#mapLegend{display:flex!important;order:1;flex:0 0 auto;max-height:34vh;overflow:auto!important;margin:0!important;padding:8px 10px!important;background:#0f2236!important;border-bottom:1px solid #27506f}',
+      '.dpbFsHost>#dpbFsBar{order:0;flex:0 0 auto;display:flex;align-items:center;gap:8px;direction:ltr;padding:max(env(safe-area-inset-top),6px) 8px 6px;background:#0f2236;border-bottom:1px solid #27506f;color:#dceafa;font:700 13px system-ui,sans-serif}',
+      '#dpbFsBar .t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '#dpbFsBar button{flex:0 0 auto;min-width:40px;height:36px;border-radius:10px;border:1px solid #31516d;background:#13293f;color:#fff;font:800 16px system-ui,sans-serif;padding:0 10px}',
+      '#dpbFsBar button.on{border-color:#1ca878;background:#0f3a2c}',
+      '#dpbFsBar button:active{filter:brightness(1.4)}',
+      '.dpbFsHost>#excelMapShell{order:2;flex:1 1 auto!important;min-height:0!important;max-height:none!important;height:auto!important;margin:0!important}',
+      '.dpbFsHost>#dpbMapActions{order:3;flex:0 0 auto;margin:0!important;background:#0b1626}',
+      '.dpbFsHost>#mapDetail#mapDetail{order:4;flex:0 0 auto;max-height:36vh;overflow:auto;margin:0!important;border-radius:0!important;padding-bottom:max(env(safe-area-inset-bottom),8px)}',
+      '.dpbFsHost>#mapDetail#mapDetail.dpbFsEmpty{display:none!important}',
+      '#dpbFsBar button{min-width:36px;padding:0 8px;font-size:15px}#dpbFsBar{gap:6px!important}',
+      '.dpbFsHost>#dpbFsSearch{order:1;flex:0 0 auto;display:none;gap:6px;direction:ltr;padding:6px 8px;background:#0f2236;border-bottom:1px solid #27506f}',
+      '.dpbFsHost.dpbFsSrch>#dpbFsSearch{display:flex}',
+      '#dpbFsSearch input{flex:1 1 auto;min-width:0;height:36px;border-radius:10px;border:1px solid #31516d;background:#0b1626;color:#fff;font:700 15px system-ui,sans-serif;padding:0 10px;direction:ltr}',
+      '#dpbFsSearch button{flex:0 0 auto;height:36px;border-radius:10px;border:1px solid #1ca878;background:#0f3a2c;color:#fff;font:800 14px system-ui,sans-serif;padding:0 14px}',
+      '.dpbFsHost.dpbFsLeg>#mapLegend{order:1}',
+      '.dpbFsHost.dpbFsLeg>#mapLegend .me-chip{cursor:pointer}',
+      '.dpbFsHost.dpbFsLeg>#mapLegend .me-chip.dpbFsOn{outline:2px solid #fff;outline-offset:1px}',
+      'html.dpbFsFilt #excelMapShell td.me-u:not(.dpbFsKeep){opacity:.13!important}',
+      'html.dpbMapFS #excelMapShell td.me-u[data-fsd="1"]{opacity:.25!important}',
+      'html.dpbMapFS #excelMapShell td.me-t.dpbFsFlash{outline:3px solid #ffd23f;outline-offset:-1px;background:#6b5a00!important}',
+      'html.dpbMapFS #dpbMapMarkToast,html.dpbMapFS .dpbToast,html.dpbMapFS .me-toast{z-index:2147483002!important}'
+    ].join('\n');
+    document.head.appendChild(s);
+  }
+  function title(){
+    var ids=['mapDynamicSelector','mapFixedSelector'],i,e,t='';
+    for(i=0;i<ids.length;i++){e=q(ids[i]);if(e&&e.value&&e.selectedIndex>=0){t=e.options[e.selectedIndex].text;break;}}
+    return t||'Site Map';
+  }
+  function zoom(d){var b=document.querySelector('#mapLegend .me-zoom button[data-z="'+d+'"]');if(b)b.click();}
+  function syncDetail(){
+    var d=q('mapDetail');if(!d)return;
+    d.classList.toggle('dpbFsEmpty',!d.querySelector('.map-detail-item'));
+  }
+  function mkBar(){
+    var b=document.createElement('div');b.id='dpbFsBar';
+    b.innerHTML='<button type="button" data-a="x" aria-label="Close">\u2715</button><span class="t"></span><button type="button" data-a="find" aria-label="Find tracker">\uD83D\uDD0D</button><button type="button" data-a="leg" aria-label="Legend">\uD83C\uDFA8</button><button type="button" data-a="dim" aria-label="Dim dark cells">\u25D0</button><button type="button" data-a="-" aria-label="Zoom out">\u2212</button><button type="button" data-a="+" aria-label="Zoom in">+</button>';
+    b.querySelector('.t').textContent=title();
+    b.addEventListener('click',function(e){
+      var t=e.target.closest&&e.target.closest('button[data-a]');if(!t)return;
+      var a=t.dataset.a;
+      if(a==='x')exit(false);
+      else if(a==='+')zoom(1);
+      else if(a==='-')zoom(-1);
+      else if(a==='leg'){var on=host.classList.toggle('dpbFsLeg');t.classList.toggle('on',on);}
+      else if(a==='find'){var s=host.classList.toggle('dpbFsSrch');t.classList.toggle('on',s);if(s){var i=q('dpbFsInput');if(i)setTimeout(function(){i.focus();},50);}}
+      else if(a==='dim'){dimOn=!dimOn;t.classList.toggle('on',dimOn);applyDim();}
+    });
+    return b;
+  }
+  function toast(msg){
+    var el=document.createElement('div');
+    el.style.cssText='position:fixed;left:12px;right:12px;bottom:90px;z-index:2147483003;background:#10283d;color:#fff;border:1px solid #31516d;border-radius:12px;padding:10px 14px;font:700 13px system-ui,sans-serif;text-align:center';
+    el.textContent=msg;document.body.appendChild(el);setTimeout(function(){el.remove();},2200);
+  }
+
+  var dimOn=false,flt=null,shMo=null,lgMo=null,wl=null,saveT=null,hits=[],hitI=0,hitKey='';
+  function posKey(){return 'DPB_FS_POS_'+title();}
+  function savePos(){var s=q('excelMapShell');if(!s)return;try{localStorage.setItem(posKey(),JSON.stringify({l:s.scrollLeft,t:s.scrollTop}));}catch(_){}}
+  function restorePos(){var s=q('excelMapShell');if(!s)return;try{var p=JSON.parse(localStorage.getItem(posKey())||'null');if(p){s.scrollLeft=p.l||0;s.scrollTop=p.t||0;}}catch(_){}}
+  function onScroll(){clearTimeout(saveT);saveT=setTimeout(savePos,400);}
+  function lum(c){
+    var m=/^#([0-9a-f]{6})$/i.exec(c),r,g,b;
+    if(m){var n=parseInt(m[1],16);r=n>>16&255;g=n>>8&255;b=n&255;}
+    else if((m=/^#([0-9a-f]{3})$/i.exec(c))){r=parseInt(m[1][0]+m[1][0],16);g=parseInt(m[1][1]+m[1][1],16);b=parseInt(m[1][2]+m[1][2],16);}
+    else if((m=/^rgb\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/i.exec(c))){r=+m[1];g=+m[2];b=+m[3];}
+    else return 1;
+    return (0.2126*r+0.7152*g+0.0722*b)/255;
+  }
+  function applyDim(){
+    var s=q('excelMapShell');if(!s)return;var cache={};
+    s.querySelectorAll('td.me-u').forEach(function(td){
+      var k=td.getAttribute('data-live-bg')||'',v=false;
+      if(dimOn&&k){if(!(k in cache))cache[k]=lum(k)<0.16&&!td.classList.contains('me-done');v=cache[k]&&!td.classList.contains('me-done');}
+      if(v)td.setAttribute('data-fsd','1');else td.removeAttribute('data-fsd');
+    });
+  }
+  function chipColor(chip){var i=chip.querySelector('i');if(!i||i.classList.contains('ov'))return null;var m=/background:\s*([^;]+)/i.exec(i.getAttribute('style')||'');return m?m[1].trim():null;}
+  function markKeep(){
+    var s=q('excelMapShell');if(!s)return;
+    s.querySelectorAll('td.dpbFsKeep').forEach(function(td){td.classList.remove('dpbFsKeep');});
+    if(!flt)return;
+    s.querySelectorAll('td.me-u').forEach(function(td){if((td.getAttribute('data-live-bg')||'').toLowerCase()===flt.toLowerCase())td.classList.add('dpbFsKeep');});
+  }
+  function paintChips(){
+    var lg=q('mapLegend');if(!lg)return;
+    lg.querySelectorAll('.me-chip').forEach(function(c){var k=chipColor(c);c.classList.toggle('dpbFsOn',!!(flt&&k&&k.toLowerCase()===flt.toLowerCase()));});
+  }
+  function setFilter(c){flt=(flt&&c&&flt.toLowerCase()===c.toLowerCase())?null:c;H.classList.toggle('dpbFsFilt',!!flt);markKeep();paintChips();}
+  function buzz(n){try{if(navigator.vibrate)navigator.vibrate(n||12);}catch(_){}}
+  function find(){
+    var inp=q('dpbFsInput'),s=q('excelMapShell');if(!inp||!s)return;
+    var v=String(inp.value||'').replace(/[^0-9]/g,'');if(!v){toast('\u0627\u0643\u062A\u0628 \u0631\u0642\u0645 \u0627\u0644\u062A\u0631\u0627\u0643\u0631');return;}
+    if(hitKey!==v){hitKey=v;hitI=0;hits=[].slice.call(s.querySelectorAll('td.me-t')).filter(function(td){return String(td.textContent||'').replace(/[^0-9]/g,'')===v;});}
+    if(!hits.length){toast('\u0645\u0641\u064A\u0634 \u062A\u0631\u0627\u0643\u0631 \u0628\u0627\u0644\u0631\u0642\u0645 \u062F\u0647');return;}
+    var td=hits[hitI%hits.length];hitI++;
+    s.querySelectorAll('td.dpbFsFlash').forEach(function(x){x.classList.remove('dpbFsFlash');});
+    var sr=s.getBoundingClientRect(),tr=td.getBoundingClientRect();
+    s.scrollLeft+=tr.left-sr.left-(sr.width/2-tr.width/2);
+    s.scrollTop+=tr.top-sr.top-(sr.height/2-tr.height/2);
+    td.classList.add('dpbFsFlash');setTimeout(function(){td.classList.remove('dpbFsFlash');},2200);buzz(18);
+    if(hits.length>1)toast((((hitI-1)%hits.length)+1)+' / '+hits.length);
+  }
+  function mkSearch(){
+    var d=document.createElement('div');d.id='dpbFsSearch';
+    d.innerHTML='<input id="dpbFsInput" type="text" inputmode="numeric" placeholder="T52" autocomplete="off"><button type="button">\u0627\u0630\u0647\u0628</button>';
+    d.querySelector('button').addEventListener('click',find);
+    d.querySelector('input').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();find();}});
+    d.querySelector('input').addEventListener('input',function(){hitKey='';});
+    return d;
+  }
+  function keepAwake(){try{if(navigator.wakeLock&&active()&&!wl){navigator.wakeLock.request('screen').then(function(l){wl=l;l.addEventListener('release',function(){wl=null;});}).catch(function(){});}}catch(_){}}
+  function freeAwake(){try{if(wl){wl.release();wl=null;}}catch(_){}}
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)keepAwake();});
+  document.addEventListener('click',function(e){
+    if(!active())return;
+    var chip=e.target.closest&&e.target.closest('#mapLegend .me-chip');
+    if(chip&&host&&host.classList.contains('dpbFsLeg')){var c=chipColor(chip);if(c){setFilter(c);buzz(10);}return;}
+    if(e.target.closest&&e.target.closest('#excelMapShell td.me-u'))buzz(12);
+  },true);
+  function enter(){
+    if(active())return;
+    var shell=q('excelMapShell');
+    if(!shell||!shell.parentElement||!shell.querySelector('table.me-map')){toast('\u0627\u062E\u062A\u0627\u0631 \u062E\u0631\u064A\u0637\u0629 \u0627\u0644\u0623\u0648\u0644');return;}
+    css();host=shell.parentElement;host.classList.add('dpbFsHost');H.classList.add('dpbMapFS');
+    bar=mkBar();host.insertBefore(bar,host.firstChild);
+    bar.parentNode.insertBefore(mkSearch(),bar.nextSibling);
+    var d=q('mapDetail');syncDetail();
+    var sh=q('excelMapShell');restorePos();sh.addEventListener('scroll',onScroll,{passive:true});
+    if(window.MutationObserver){shMo=new MutationObserver(function(){markKeep();if(dimOn)applyDim();});shMo.observe(sh,{childList:true});
+      var lg=q('mapLegend');if(lg){lgMo=new MutationObserver(paintChips);lgMo.observe(lg,{childList:true});}}
+    keepAwake();
+    if(d&&window.MutationObserver){mo=new MutationObserver(syncDetail);mo.observe(d,{childList:true,subtree:true,characterData:true});}
+    try{history.pushState({dpbFs:1},'');pushed=true;}catch(_){pushed=false;}
+  }
+  function cleanup(){
+    savePos();var sh0=q('excelMapShell');if(sh0)sh0.removeEventListener('scroll',onScroll);
+    if(shMo){shMo.disconnect();shMo=null;}if(lgMo){lgMo.disconnect();lgMo=null;}
+    flt=null;dimOn=false;H.classList.remove('dpbFsFilt');
+    if(sh0)sh0.querySelectorAll('td.dpbFsKeep,td[data-fsd],td.dpbFsFlash').forEach(function(td){td.classList.remove('dpbFsKeep','dpbFsFlash');td.removeAttribute('data-fsd');});
+    var sr=q('dpbFsSearch');if(sr&&sr.parentNode)sr.parentNode.removeChild(sr);
+    freeAwake();
+    if(mo){mo.disconnect();mo=null;}
+    if(bar&&bar.parentNode)bar.parentNode.removeChild(bar);bar=null;
+    if(host){host.classList.remove('dpbFsHost','dpbFsLeg','dpbFsSrch');host=null;}
+    var d=q('mapDetail');if(d)d.classList.remove('dpbFsEmpty');
+    H.classList.remove('dpbMapFS');
+  }
+  function exit(viaPop){
+    if(!active())return;
+    cleanup();
+    if(!viaPop&&pushed){ignorePop=true;try{history.back();}catch(_){ignorePop=false;}}
+    pushed=false;
+  }
+  window.addEventListener('popstate',function(){if(ignorePop){ignorePop=false;return;}if(active())exit(true);});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&active())exit(false);});
+  document.addEventListener('touchstart',function(e){
+    if(!active()||e.touches.length!==1){tx=null;return;}
+    var t=e.touches[0],w=window.innerWidth,m=28;
+    tx=(t.clientX<=m||t.clientX>=w-m)?{x:t.clientX,y:t.clientY,left:t.clientX<=m}:null;
+  },{passive:true});
+  document.addEventListener('touchend',function(e){
+    if(!tx||!active()){tx=null;return;}
+    var t=e.changedTouches[0],dx=t.clientX-tx.x,dy=t.clientY-tx.y,inward=tx.left?dx:-dx;
+    if(inward>=60&&Math.abs(dy)<inward*0.6)exit(false);
+    tx=null;
+  },{passive:true});
+  function mount(){
+    var lg=q('mapLegend');if(!lg||!lg.parentNode)return;
+    var b=q('dpbFsBtn');
+    if(!b){b=document.createElement('button');b.id='dpbFsBtn';b.type='button';b.className='btn ghost';b.style.cssText='margin:6px 6px 6px 0;font-size:12px';b.textContent='\u26F6 \u0645\u0644\u0621 \u0627\u0644\u0634\u0627\u0634\u0629';b.onclick=enter;}
+    if(b.nextSibling!==lg||b.parentNode!==lg.parentNode)lg.parentNode.insertBefore(b,lg);
+  }
+  window.__dpbFsEnter=enter;window.__dpbFsExit=function(){exit(false);};
+  setInterval(function(){if(!active())mount();},1500);
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount);else mount();
+})();
+</script>
