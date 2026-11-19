@@ -25235,8 +25235,6 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       '.dpbFsHost.dpbFsLeg>#mapLegend{order:1}',
       '.dpbFsHost.dpbFsLeg>#mapLegend .me-chip{cursor:pointer}',
       '.dpbFsHost.dpbFsLeg>#mapLegend .me-chip.dpbFsOn{outline:2px solid #fff;outline-offset:1px}',
-      'html.dpbFsFilt #excelMapShell td.me-u:not(.dpbFsKeep){opacity:.13!important}',
-      'html.dpbMapFS #excelMapShell td.me-u[data-fsd="1"]{opacity:.25!important}',
       'html.dpbMapFS #excelMapShell td.me-t.dpbFsFlash{outline:3px solid #ffd23f;outline-offset:-1px;background:#6b5a00!important}',
       'html.dpbMapFS #dpbMapMarkToast,html.dpbMapFS .dpbToast,html.dpbMapFS .me-toast{z-index:2147483002!important}'
     ].join('\n');
@@ -25247,7 +25245,28 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     for(i=0;i<ids.length;i++){e=q(ids[i]);if(e&&e.value&&e.selectedIndex>=0){t=e.options[e.selectedIndex].text;break;}}
     return t||'Site Map';
   }
-  function zoom(d){var b=document.querySelector('#mapLegend .me-zoom button[data-z="'+d+'"]');if(b)b.click();}
+  function tbl(){var s=q('excelMapShell');return s?s.querySelector('table.me-map'):null;}
+  /* zoom = scale the drawn map (cheap); the 11,000 cells are NOT rebuilt or re-measured */
+  function applyScale(){
+    var t=tbl();if(!t)return;
+    if(!fsScale||Math.abs(fsScale-1)<0.001){t.style.removeProperty('transform');t.style.removeProperty('transform-origin');t.style.removeProperty('margin');return;}
+    t.style.removeProperty('transform');t.style.removeProperty('margin');
+    var w=t.offsetWidth,h=t.offsetHeight;
+    t.style.setProperty('transform-origin','0 0');t.style.setProperty('transform','scale('+fsScale+')');
+    t.style.setProperty('margin','0 '+Math.min(0,(fsScale-1)*w)+'px '+Math.min(0,(fsScale-1)*h)+'px 0','important');
+  }
+  var zPend=0,zRaf=0;
+  function zoom(d){
+    zPend+=d;if(zRaf)return;
+    zRaf=requestAnimationFrame(function(){
+      zRaf=0;var dz=zPend;zPend=0;var sh=q('excelMapShell');if(!sh)return;
+      var base=baseSize||18,n=Math.max(0.55,Math.min(3.2,fsScale+dz*(4/base)));
+      n=Math.round(n*1000)/1000;if(n===fsScale)return;
+      var r=n/fsScale,cx=sh.scrollLeft+sh.clientWidth/2,cy=sh.scrollTop+sh.clientHeight/2;
+      fsScale=n;applyScale();
+      sh.scrollLeft=cx*r-sh.clientWidth/2;sh.scrollTop=cy*r-sh.clientHeight/2;
+    });
+  }
   function syncDetail(){
     var d=q('mapDetail');if(!d)return;
     d.classList.toggle('dpbFsEmpty',!d.querySelector('.map-detail-item'));
@@ -25276,7 +25295,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     el.textContent=msg;document.body.appendChild(el);setTimeout(function(){el.remove();},2200);
   }
 
-  var hostSt=null,shellSt=null,maxT=0,dimOn=false,flt=null,shMo=null,lgMo=null,wl=null,saveT=null,hits=[],hitI=0,hitKey='',sval='';
+  var fsScale=1,baseSize=0,dynEl=null,hostSt=null,shellSt=null,maxT=0,dimOn=false,flt=null,shMo=null,lgMo=null,wl=null,saveT=null,hits=[],hitI=0,hitKey='',sval='';
   function posKey(){return 'DPB_FS_POS_'+title();}
   function savePos(){var s=q('excelMapShell');if(!s)return;try{localStorage.setItem(posKey(),JSON.stringify({l:s.scrollLeft,t:s.scrollTop}));}catch(_){}}
   function restorePos(){var s=q('excelMapShell');if(!s)return;try{var p=JSON.parse(localStorage.getItem(posKey())||'null');if(p){s.scrollLeft=p.l||0;s.scrollTop=p.t||0;}}catch(_){}}
@@ -25289,26 +25308,31 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     else return 1;
     return (0.2126*r+0.7152*g+0.0722*b)/255;
   }
-  function applyDim(){
-    var s=q('excelMapShell');if(!s)return;var cache={};
-    s.querySelectorAll('td.me-u').forEach(function(td){
-      var k=td.getAttribute('data-live-bg')||'',v=false;
-      if(dimOn&&k){if(!(k in cache))cache[k]=lum(k)<0.16;v=cache[k]&&!td.classList.contains('me-done');}
-      if(v)td.setAttribute('data-fsd','1');else td.removeAttribute('data-fsd');
-    });
-  }
-  function chipColor(chip){var i=chip.querySelector('i');if(!i||i.classList.contains('ov'))return null;var m=/background:\s*([^;]+)/i.exec(i.getAttribute('style')||'');return m?m[1].trim():null;}
-  function markKeep(){
+  var CM=null;
+  function canMix(){if(CM===null){try{CM=!!(window.CSS&&CSS.supports&&CSS.supports('background','color-mix(in srgb,#000 50%,#fff)'));}catch(_){CM=false;}}return CM;}
+  function esc(k){return String(k).replace(/["\\]/g,'\\$&');}
+  function fade(sel,k,pct){return canMix()?(sel+'{background:color-mix(in srgb,'+k+' '+pct+'%,#0b1626)!important}'):(sel+'{opacity:'+(pct/100)+'!important}');}
+  /* dim + colour filter: a handful of CSS rules (one per colour) instead of changing thousands of cells one by one */
+  function rebuildDyn(){
     var s=q('excelMapShell');if(!s)return;
-    s.querySelectorAll('td.dpbFsKeep').forEach(function(td){td.classList.remove('dpbFsKeep');});
-    if(!flt)return;
-    s.querySelectorAll('td.me-u').forEach(function(td){if((td.getAttribute('data-live-bg')||'').toLowerCase()===flt.toLowerCase())td.classList.add('dpbFsKeep');});
+    if(!dynEl){dynEl=document.createElement('style');dynEl.id='dpbFsDyn';document.head.appendChild(dynEl);}
+    if(!dimOn&&!flt){dynEl.textContent='';return;}
+    var seen={},css=[];
+    s.querySelectorAll('td.me-u[data-live-bg]').forEach(function(td){seen[td.getAttribute('data-live-bg')]=1;});
+    Object.keys(seen).forEach(function(k){
+      var sel='td.me-u[data-live-bg="'+esc(k)+'"]';
+      if(dimOn&&lum(k)<0.16&&!(flt&&k.toLowerCase()===flt.toLowerCase()))css.push(fade('html.dpbMapFS #excelMapShell '+sel+':not(.me-done)',k,25));
+      if(flt&&k.toLowerCase()!==flt.toLowerCase())css.push(fade('html.dpbMapFS #excelMapShell '+sel,k,15));
+    });
+    dynEl.textContent=css.join('\n');
   }
+  function applyDim(){rebuildDyn();}
+  function chipColor(chip){var i=chip.querySelector('i');if(!i||i.classList.contains('ov'))return null;var m=/background:\s*([^;]+)/i.exec(i.getAttribute('style')||'');return m?m[1].trim():null;}
   function paintChips(){
     var lg=q('mapLegend');if(!lg)return;
     lg.querySelectorAll('.me-chip').forEach(function(c){var k=chipColor(c);c.classList.toggle('dpbFsOn',!!(flt&&k&&k.toLowerCase()===flt.toLowerCase()));});
   }
-  function setFilter(c){flt=(flt&&c&&flt.toLowerCase()===c.toLowerCase())?null:c;H.classList.toggle('dpbFsFilt',!!flt);markKeep();paintChips();}
+  function setFilter(c){flt=(flt&&c&&flt.toLowerCase()===c.toLowerCase())?null:c;H.classList.toggle('dpbFsFilt',!!flt);rebuildDyn();paintChips();}
   function buzz(n){try{if(navigator.vibrate)navigator.vibrate(n||12);}catch(_){}}
   function find(){
     var s=q('excelMapShell');if(!s)return;
@@ -25370,14 +25394,15 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     try{var ae=document.activeElement;if(ae&&ae.blur&&ae!==document.body)ae.blur();}catch(_){}
     css();host=shell.parentElement;hostSt=host.getAttribute('style');shellSt=shell.getAttribute('style');
     host.classList.add('dpbFsHost');H.classList.add('dpbMapFS');
-    force(host,{'padding':'0','margin':'0','border':'0','border-radius':'0','min-height':'0','max-height':'none','height':'auto'});
-    force(shell,{'height':'auto','min-height':'0','max-height':'none','margin':'0','border-radius':'0','border':'0','flex':'1 1 auto'});
+    force(host,{'display':'flex','flex-direction':'column','position':'fixed','top':'0','left':'0','right':'0','bottom':'0','width':'auto','height':'auto','padding':'0','margin':'0','border':'0','border-radius':'0','min-height':'0','max-height':'none','overflow':'hidden'});
+    force(shell,{'display':'block','height':'auto','min-height':'0','max-height':'none','margin':'0','border-radius':'0','border':'0','flex':'1 1 0%','overflow':'auto'});
     if(!H.classList.contains('dpbMapFlat')){H.classList.add('dpbMapFlat');addedFlat=true;}
+    var t0=tbl();baseSize=t0?(parseFloat(t0.style.getPropertyValue('--me-w'))||18):18;fsScale=1;
     bar=mkBar();host.insertBefore(bar,host.firstChild);
     bar.parentNode.insertBefore(mkSearch(),bar.nextSibling);
     var d=q('mapDetail');syncDetail();
     var sh=q('excelMapShell');restorePos();sh.addEventListener('scroll',onScroll,{passive:true});
-    if(window.MutationObserver){shMo=new MutationObserver(function(){markKeep();if(dimOn)applyDim();});shMo.observe(sh,{childList:true});
+    if(window.MutationObserver){shMo=new MutationObserver(function(){if(fsScale!==1)applyScale();if(dimOn||flt)rebuildDyn();});shMo.observe(sh,{childList:true});
       var lg=q('mapLegend');if(lg){lgMo=new MutationObserver(paintChips);lgMo.observe(lg,{childList:true});}}
     keepAwake();
     if(d&&window.MutationObserver){mo=new MutationObserver(syncDetail);mo.observe(d,{childList:true,subtree:true,characterData:true});}
@@ -25386,8 +25411,8 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
   function cleanup(){
     savePos();var sh0=q('excelMapShell');if(sh0)sh0.removeEventListener('scroll',onScroll);
     if(shMo){shMo.disconnect();shMo=null;}if(lgMo){lgMo.disconnect();lgMo=null;}
-    flt=null;dimOn=false;H.classList.remove('dpbFsFilt');
-    if(sh0)sh0.querySelectorAll('td.dpbFsKeep,td[data-fsd],td.dpbFsFlash').forEach(function(td){td.classList.remove('dpbFsKeep','dpbFsFlash');td.removeAttribute('data-fsd');});
+    flt=null;dimOn=false;H.classList.remove('dpbFsFilt');if(dynEl)dynEl.textContent='';if(fsScale!==1){fsScale=1;applyScale();}baseSize=0;
+    if(sh0)sh0.querySelectorAll('td.dpbFsFlash').forEach(function(td){td.classList.remove('dpbFsFlash');});
     var sr=q('dpbFsSearch');if(sr&&sr.parentNode)sr.parentNode.removeChild(sr);sval='';
     freeAwake();
     if(mo){mo.disconnect();mo=null;}
