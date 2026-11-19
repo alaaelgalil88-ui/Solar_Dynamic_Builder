@@ -25210,18 +25210,21 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       '.dpbFsHost>*:not(#excelMapShell):not(#mapDetail):not(#dpbMapActions):not(#dpbFsBar):not(#mapLegend):not(#dpbFsSearch){display:none!important}',
       '.dpbFsHost *{animation:none!important;transition:none!important}',
       '.dpbFsHost>#mapLegend{display:none!important}',
-      '.dpbFsHost.dpbFsLeg>#mapLegend{display:flex!important;order:1;flex:0 0 auto;max-height:34vh;overflow:auto!important;margin:0!important;padding:8px 10px!important;background:#0f2236!important;border-bottom:1px solid #27506f}',
-      '.dpbFsHost>#dpbFsBar{order:0;flex:0 0 auto;display:flex;align-items:center;gap:6px;direction:ltr;padding:max(env(safe-area-inset-top),6px) 8px 6px;background:#0f2236;border-bottom:1px solid #27506f;color:#dceafa;font:700 13px system-ui,sans-serif}',
+      '.dpbFsHost.dpbFsLeg>#mapLegend{display:flex!important;position:absolute!important;top:var(--fsTop,50px);left:0;right:0;z-index:6;max-height:60vh;overflow:auto!important;margin:0!important;padding:8px 10px!important;background:#0f2236!important;border-bottom:1px solid #27506f;box-shadow:0 10px 24px rgba(0,0,0,.55)}',
+      'html.dpbMapFS #mapLegend .me-zoom{display:none!important}',
+      '.dpbFsHost>#dpbFsBar{order:0;flex:0 0 auto;position:relative;z-index:7;display:flex;align-items:center;gap:6px;direction:ltr;padding:max(env(safe-area-inset-top),6px) 8px 6px;background:#0f2236;border-bottom:1px solid #27506f;color:#dceafa;font:700 13px system-ui,sans-serif}',
       '#dpbFsBar .t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '#dpbFsBar button{flex:0 0 auto;min-width:36px;height:36px;border-radius:10px;border:1px solid #31516d;background:#13293f;color:#fff;font:800 15px system-ui,sans-serif;padding:0 8px}',
+      '#dpbFsBar button{flex:0 0 auto;min-width:34px;height:36px;border-radius:10px;border:1px solid #31516d;background:#13293f;color:#fff;font:800 15px system-ui,sans-serif;padding:0 6px}',
       '#dpbFsBar button.on{border-color:#1ca878;background:#0f3a2c}',
       '#dpbFsBar button:active{filter:brightness(1.4)}',
-      'html.dpbMapFS .dpbFsHost>#excelMapShell#excelMapShell{order:2;flex:1 1 auto!important;min-height:0!important;max-height:none!important;height:auto!important;margin:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;overscroll-behavior:contain}',
+      'html.dpbMapFS .dpbFsHost>#excelMapShell#excelMapShell{position:absolute!important;top:var(--fsTop,50px)!important;left:0!important;right:0!important;bottom:0!important;z-index:1;flex:none!important;min-height:0!important;max-height:none!important;height:auto!important;margin:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;overscroll-behavior:contain}',
       'html.dpbMapFS .dpbFsHost>#excelMapShell#excelMapShell::after{display:none!important;height:0!important;min-height:0!important}',
-      '.dpbFsHost>#dpbMapActions{order:3;flex:0 0 auto;margin:0!important;background:#0b1626}',
-      'html.dpbMapFS .dpbFsHost>#mapDetail#mapDetail{order:4;flex:0 0 auto!important;max-height:40vh!important;min-height:0!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch;margin:0!important;border-radius:0!important;padding-bottom:max(env(safe-area-inset-bottom),8px)!important}',
+      '.dpbFsHost:not(.dpbFsSheet)>#dpbMapActions{display:none!important}',
+      'html.dpbMapFS .dpbFsHost:not(.dpbFsSheet)>#mapDetail#mapDetail{display:none!important}',
+      '.dpbFsHost.dpbFsSheet>#dpbMapActions{order:3;flex:0 0 auto;position:relative;z-index:6;margin:auto 0 0 0!important;background:#0b1626;box-shadow:0 -8px 20px rgba(0,0,0,.5)}',
+      'html.dpbMapFS .dpbFsHost>#mapDetail#mapDetail{order:4;position:relative;z-index:6;background:#0b1626!important;flex:0 0 auto!important;max-height:34vh!important;min-height:0!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch;margin:0!important;border-radius:0!important;padding-bottom:max(env(safe-area-inset-bottom),8px)!important}',
       'html.dpbMapFS .dpbFsHost>#mapDetail#mapDetail.dpbFsEmpty{display:none!important}',
-      '.dpbFsHost>#dpbFsSearch{order:1;flex:0 0 auto;display:none;flex-direction:column;gap:6px;direction:ltr;padding:6px 8px;background:#0f2236;border-bottom:1px solid #27506f;-webkit-user-select:none;user-select:none}',
+      '.dpbFsHost>#dpbFsSearch{position:absolute;top:var(--fsTop,50px);left:0;right:0;z-index:6;box-shadow:0 10px 24px rgba(0,0,0,.55);display:none;flex-direction:column;gap:6px;direction:ltr;padding:6px 8px;background:#0f2236;border-bottom:1px solid #27506f;-webkit-user-select:none;user-select:none}',
       '.dpbFsHost.dpbFsSrch>#dpbFsSearch{display:flex}',
       '#dpbFsSearch .r1{display:flex;gap:6px;align-items:center}',
       '#dpbFsSearch .val{flex:1 1 auto;min-width:0;height:36px;line-height:34px;border-radius:10px;border:1px solid #31516d;background:#0b1626;color:#fff;font:800 16px system-ui,sans-serif;padding:0 10px;overflow:hidden;white-space:nowrap}',
@@ -25267,13 +25270,48 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       sh.scrollLeft=cx*r-sh.clientWidth/2;sh.scrollTop=cy*r-sh.clientHeight/2;
     });
   }
+  var PN={leg:'dpbFsLeg',srch:'dpbFsSrch',sheet:'dpbFsSheet'},PB={leg:'leg',srch:'find',sheet:'sheet'};
+  function panel(n,on){
+    if(!host||!bar)return;
+    if(on===undefined)on=!host.classList.contains(PN[n]);
+    Object.keys(PN).forEach(function(k){
+      var v=(k===n)?on:(on?false:host.classList.contains(PN[k]));
+      host.classList.toggle(PN[k],v);
+      var b=bar.querySelector('[data-a="'+PB[k]+'"]');if(b)b.classList.toggle('on',v);
+    });
+    if(n==='srch'&&on)updatePad();
+    sheetPad();
+  }
+  /* when the cards are open they cover the bottom of the map: leave room so the last rows can still be scrolled up above them */
+  function sheetPad(){
+    var sh=q('excelMapShell');if(!sh||!host)return;
+    if(!host.classList.contains('dpbFsSheet')){sh.style.removeProperty('padding-bottom');return;}
+    requestAnimationFrame(function(){
+      if(!host||!host.classList.contains('dpbFsSheet'))return;
+      var top=window.innerHeight;
+      ['dpbMapActions','mapDetail'].forEach(function(id){var e=q(id);if(e){var r=e.getBoundingClientRect();if(r.height>0&&r.top<top)top=r.top;}});
+      sh.style.setProperty('padding-bottom',Math.max(8,window.innerHeight-top+8)+'px','important');
+    });
+  }
+  function reveal(){
+    var sh=q('excelMapShell');if(!sh||!host)return;
+    var td=sh.querySelector('td.me-sel');if(!td)return;
+    var top=bar?bar.getBoundingClientRect().bottom:0,bot=window.innerHeight;
+    ['dpbMapActions','mapDetail'].forEach(function(id){var e=q(id);if(e){var r=e.getBoundingClientRect();if(r.height>0&&r.top<bot)bot=r.top;}});
+    var r=td.getBoundingClientRect();
+    if(r.top<top+8||r.bottom>bot-8)sh.scrollTop+=(r.top+r.height/2)-((top+bot)/2);
+    if(r.left<8||r.right>window.innerWidth-8)sh.scrollLeft+=(r.left+r.width/2)-window.innerWidth/2;
+  }
   function syncDetail(){
     var d=q('mapDetail');if(!d)return;
-    d.classList.toggle('dpbFsEmpty',!d.querySelector('.map-detail-item'));
+    var has=!!d.querySelector('.map-detail-item');
+    d.classList.toggle('dpbFsEmpty',!has);
+    if(has&&host&&!host.classList.contains('dpbFsSheet')){panel('sheet',true);requestAnimationFrame(function(){requestAnimationFrame(reveal);});}
+    else if(has&&host)sheetPad();
   }
   function mkBar(){
     var b=document.createElement('div');b.id='dpbFsBar';
-    b.innerHTML='<button type="button" data-a="x" aria-label="Close">\u2715</button><span class="t"></span><button type="button" data-a="find" aria-label="Find tracker">\uD83D\uDD0D</button><button type="button" data-a="leg" aria-label="Legend">\uD83C\uDFA8</button><button type="button" data-a="dim" aria-label="Dim dark cells">\u25D0</button><button type="button" data-a="-" aria-label="Zoom out">\u2212</button><button type="button" data-a="+" aria-label="Zoom in">+</button>';
+    b.innerHTML='<button type="button" data-a="x" aria-label="Close">\u2715</button><span class="t"></span><button type="button" data-a="find" aria-label="Find tracker">\uD83D\uDD0D</button><button type="button" data-a="leg" aria-label="Legend">\uD83C\uDFA8</button><button type="button" data-a="sheet" aria-label="Cards">\u25A4</button><button type="button" data-a="dim" aria-label="Dim dark cells">\u25D0</button><button type="button" data-a="-" aria-label="Zoom out">\u2212</button><button type="button" data-a="+" aria-label="Zoom in">+</button>';
     b.querySelector('.t').textContent=title();
     b.addEventListener('click',function(e){
       var t=e.target.closest&&e.target.closest('button[data-a]');if(!t)return;
@@ -25281,11 +25319,10 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       if(a==='x')exit(false);
       else if(a==='+')zoom(1);
       else if(a==='-')zoom(-1);
-      else if(a==='leg'){var on=host.classList.toggle('dpbFsLeg');t.classList.toggle('on',on);
-        if(on){host.classList.remove('dpbFsSrch');var fb=bar.querySelector('[data-a="find"]');if(fb)fb.classList.remove('on');}}
-      else if(a==='find'){var s=host.classList.toggle('dpbFsSrch');t.classList.toggle('on',s);
-        if(s){host.classList.remove('dpbFsLeg');var lb=bar.querySelector('[data-a="leg"]');if(lb)lb.classList.remove('on');updatePad();}}
-      else if(a==='dim'){dimOn=!dimOn;t.classList.toggle('on',dimOn);applyDim();}
+      else if(a==='leg')panel('leg');
+      else if(a==='find')panel('srch');
+      else if(a==='sheet')panel('sheet');
+      else if(a==='dim'){dimOn=!dimOn;t.classList.toggle('on',dimOn);applyDim();toast(dimOn?'\u062A\u0628\u0647\u064A\u062A \u0627\u0644\u062E\u0644\u0627\u064A\u0627 \u0627\u0644\u063A\u0627\u0645\u0642\u0629: \u0634\u063A\u0651\u0627\u0644':'\u062A\u0628\u0647\u064A\u062A \u0627\u0644\u062E\u0644\u0627\u064A\u0627 \u0627\u0644\u063A\u0627\u0645\u0642\u0629: \u0645\u062A\u0648\u0642\u0651\u0641');}
     });
     return b;
   }
@@ -25395,10 +25432,10 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     css();host=shell.parentElement;hostSt=host.getAttribute('style');shellSt=shell.getAttribute('style');
     host.classList.add('dpbFsHost');H.classList.add('dpbMapFS');
     force(host,{'display':'flex','flex-direction':'column','position':'fixed','top':'0','left':'0','right':'0','bottom':'0','width':'auto','height':'auto','padding':'0','margin':'0','border':'0','border-radius':'0','min-height':'0','max-height':'none','overflow':'hidden'});
-    force(shell,{'display':'block','height':'auto','min-height':'0','max-height':'none','margin':'0','border-radius':'0','border':'0','flex':'1 1 0%','overflow':'auto'});
+    force(shell,{'display':'block','position':'absolute','top':'var(--fsTop,50px)','left':'0','right':'0','bottom':'0','z-index':'1','height':'auto','min-height':'0','max-height':'none','margin':'0','border-radius':'0','border':'0','flex':'none','overflow':'auto'});
     if(!H.classList.contains('dpbMapFlat')){H.classList.add('dpbMapFlat');addedFlat=true;}
     var t0=tbl();baseSize=t0?(parseFloat(t0.style.getPropertyValue('--me-w'))||18):18;fsScale=1;
-    bar=mkBar();host.insertBefore(bar,host.firstChild);
+    bar=mkBar();host.insertBefore(bar,host.firstChild);host.style.setProperty('--fsTop',bar.offsetHeight+'px','important');
     bar.parentNode.insertBefore(mkSearch(),bar.nextSibling);
     var d=q('mapDetail');syncDetail();
     var sh=q('excelMapShell');restorePos();sh.addEventListener('scroll',onScroll,{passive:true});
@@ -25417,7 +25454,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     freeAwake();
     if(mo){mo.disconnect();mo=null;}
     if(bar&&bar.parentNode)bar.parentNode.removeChild(bar);bar=null;
-    if(host){host.classList.remove('dpbFsHost','dpbFsLeg','dpbFsSrch');
+    if(host){host.classList.remove('dpbFsHost','dpbFsLeg','dpbFsSrch','dpbFsSheet');
       if(hostSt===null)host.removeAttribute('style');else host.setAttribute('style',hostSt);
       var sh1=q('excelMapShell');if(sh1){if(shellSt===null)sh1.removeAttribute('style');else sh1.setAttribute('style',shellSt);}
       host=null;hostSt=null;shellSt=null;}
