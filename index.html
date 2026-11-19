@@ -6178,7 +6178,7 @@ function details(id){
   // Only fields that actually carry useful data get a card — never a card
   // with a bare placeholder just to keep a fixed slot count.
   const item=(k,v,raw,wide)=>'<div class="map-detail-item'+(wide?' map-detail-wide':'')+'"><div class="k">'+k+'</div><div class="v">'+(raw?v:esc(v))+'</div></div>';
-  let cards='',statusCard='';
+  let cards='',statusCard='',opCard='';
   if(u.rowLabel)cards+=item('ROW',u.rowLabel);
   if(u.label)cards+=item('TRACKER',u.label);
   if(u.total)cards+=item('POST',u.post+' / '+u.total);
@@ -6237,19 +6237,20 @@ function details(id){
     if(opName)lines.push('👤 '+esc(opName));
     if(coName)lines.push('🏢 '+esc(coName));
     // v105: "By <supervisor>" moved to the ENTRY card in the last row (all processes); this card keeps only operator/company
-    if(lines.length)cards+='<div class="map-detail-item map-detail-wide"><div class="k">RAMMING OPERATOR</div><div class="v">'+lines.join('<br>')+'</div></div>';
+    if(lines.length)opCard='<div class="map-detail-item map-detail-op"><div class="k">RAMMING OPERATOR</div><div class="v">'+lines.join('<br>')+'</div></div>';
   }
   // SITE COLOR CODE: which zone this cell falls in on the Site Color Code
   // map (yellow/brown/blue/...), read live from the same Plan model every
   // other map (Ramming/Saddle/Bearing) already shares — never hardcoded, so
   // if the Plan's site_color_code table changes, this follows automatically.
   // v105: LAST ROW = STATUS (first, left) + ENTRY (who entered this process, date, time). Both are auto-width and share the full row width.
-  cards+=dpbLastRow(statusCard,spec,u);
+  cards+=dpbLastRow(statusCard,spec,u,opCard);
   box.innerHTML='<b>'+esc(spec.name)+'</b><div class="map-detail-grid">'+cards+'</div>';
   try{const g=box.querySelector('.map-detail-grid');if(g){const cols=(getComputedStyle(g).gridTemplateColumns||'').split(' ').filter(Boolean).length||1;const its=[].slice.call(g.children).filter(x=>x.classList.contains('map-detail-item'));const rem=its.length%cols;if(rem&&its.length)its[its.length-1].style.setProperty('grid-column','span '+(cols-rem+1),'important');}}catch(_){}
 }
 /* v105: last row of Cell Details: STATUS + ENTRY card (supervisor / date / time of the process shown on this map). One line per item, no wrapping. */
-function dpbLastRow(statusCard,spec,u){
+function dpbLastRow(statusCard,spec,u,opCard){
+  opCard=opCard||'';
   let ent='';
   try{
     const op=spec&&spec.op;
@@ -6266,7 +6267,7 @@ function dpbLastRow(statusCard,spec,u){
       ent='<div class="map-detail-item map-detail-ent"><div class="k">'+esc(op.name)+' · ENTRY</div><div class="v">'+l+'</div></div>';
     }
   }catch(_){}
-  return (statusCard||ent)?'<div class="mdLast">'+statusCard+ent+'</div>':'';
+  return (statusCard||ent||opCard)?'<div class="mdLast'+(opCard?' mdEq':'')+'">'+statusCard+opCard+ent+'</div>':'';
 }
 /* v104: who entered a cell. Excel baseline (id sheet_*, source SheetImport) or no record = Admin; otherwise the supervisor stored on the record. */
 function dpbEntryBy(rec){
@@ -21796,6 +21797,10 @@ html body .small,html body .hint,html body .notice,html body label,html body sma
 #mapDetail .mdLast .map-detail-item .v,#dpbSupMapCanvas #mapDetail .mdLast>.map-detail-item .v,#dpbSupMapCanvas #mapDetail .mdLast>.map-detail-item .v div{
   white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;line-height:1.55!important}
 /* ===== 4) تاب المزامنة: كارت الطبقة الجديدة ===== */
+/* v-eqrow: STATUS + RAMMING OPERATOR (+ ENTRY when present) share ONE row with equal widths; text wraps inside its own card instead of stacking the cards */
+#mapDetail .map-detail-grid>.mdLast.mdEq,#dpbSupMapCanvas #mapDetail .map-detail-grid>.mdLast.mdEq{flex-wrap:nowrap!important;align-items:stretch!important}
+#mapDetail .map-detail-grid>.mdLast.mdEq>.map-detail-item,#dpbSupMapCanvas #mapDetail .map-detail-grid>.mdLast.mdEq>.map-detail-item{flex:1 1 0!important;min-width:0!important;width:auto!important;max-width:none!important}
+#mapDetail .map-detail-grid>.mdLast.mdEq>.map-detail-item .v,#mapDetail .map-detail-grid>.mdLast.mdEq>.map-detail-item .v div,#dpbSupMapCanvas #mapDetail .map-detail-grid>.mdLast.mdEq>.map-detail-item .v,#dpbSupMapCanvas #mapDetail .map-detail-grid>.mdLast.mdEq>.map-detail-item .v div{white-space:normal!important;overflow-wrap:anywhere!important;line-height:1.5!important}
 #dpbFs2Card{direction:rtl;text-align:right}
 #dpbFs2Card>h3{margin:0 0 6px;font-size:16px}
 #dpbFs2Card .fs2Sec{font-size:10.5px;font-weight:900;letter-spacing:.06em;color:#8fa7c2;margin:14px 2px 7px}
