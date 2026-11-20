@@ -25217,7 +25217,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       'html.dpbMapFS,html.dpbMapFS body{overflow:hidden!important;overscroll-behavior:none}',
       hide,
       '.dpbFsHost{position:fixed!important;inset:0!important;z-index:2147483000!important;display:flex!important;flex-direction:column!important;background:#0b1626!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;max-width:none!important;width:auto!important;height:auto!important;overflow:hidden!important;transform:none!important;filter:none!important;backdrop-filter:none!important}',
-      '.dpbFsHost>*:not(#excelMapShell):not(#mapDetail):not(#dpbMapActions):not(#dpbFsBar):not(#mapLegend):not(#dpbFsSearch):not(#dpbFsMaps){display:none!important}',
+      '.dpbFsHost>*:not(#excelMapShell):not(#mapDetail):not(#dpbMapActions):not(#dpbFsBar):not(#mapLegend):not(#dpbFsSearch):not(#dpbFsMaps):not(#dpbMapFloatA){display:none!important}',
       '.dpbFsHost *{animation:none!important;transition:none!important}',
       '.dpbFsHost>#mapLegend{display:none!important}',
       '.dpbFsHost.dpbFsLeg>#mapLegend{display:flex!important;position:absolute!important;top:var(--fsTop,50px);left:0;right:0;z-index:6;max-height:60vh;overflow:auto!important;margin:0!important;padding:8px 10px!important;background:#0f2236!important;border-bottom:1px solid #27506f;box-shadow:0 10px 24px rgba(0,0,0,.55)}',
@@ -25505,6 +25505,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     keepAwake();
     if(d&&window.MutationObserver){mo=new MutationObserver(syncDetail);mo.observe(d,{childList:true,subtree:true,characterData:true});}
     try{history.pushState({dpbFs:1},'');pushed=true;}catch(_){pushed=false;}
+    try{mount();}catch(_){}
   }
   function cleanup(){
     savePos();var sh0=q('excelMapShell');if(sh0)sh0.removeEventListener('scroll',onScroll);
@@ -25522,6 +25523,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     var d=q('mapDetail');if(d)d.classList.remove('dpbFsEmpty');
     if(addedFlat){H.classList.remove('dpbMapFlat');addedFlat=false;}
     H.classList.remove('dpbMapFS');
+    try{mount();}catch(_){}
   }
   function exit(viaPop){
     if(!active())return;
@@ -25542,17 +25544,45 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     if(inward>=60&&Math.abs(dy)<inward*0.6)exit(false);
     tx=null;
   },{passive:true});
+  /* v-float: fullscreen + zoom -/+ are ONE floating, transparent group on the top-right of the map (not in the legend row any more).
+     The group's box lets every touch through; only the three buttons catch touches. It stays in fullscreen too (the fullscreen button becomes "exit"). */
+  function floatCss(){
+    if(q('dpbFloatCss'))return;
+    var st=document.createElement('style');st.id='dpbFloatCss';
+    st.textContent=[
+      '#mapLegend .me-zoom{display:none!important}',
+      '#dpbFsBtn{display:none!important}',
+      '#dpbMapFloatA{position:sticky;top:6px;height:0;z-index:30;direction:ltr;pointer-events:none;overflow:visible}',
+      '#dpbMapFloatA .fg{position:absolute;top:6px;right:6px;display:flex;gap:6px;pointer-events:none}',
+      '#dpbMapFloatA button{pointer-events:auto;width:34px;height:34px;min-width:0;padding:0;margin:0;border-radius:10px;border:1px solid rgba(255,255,255,.55);background:rgba(11,22,38,.5);color:#fff;text-shadow:0 0 3px rgba(0,0,0,.9);box-shadow:0 0 0 1px rgba(0,0,0,.25);font:800 16px/1 system-ui,sans-serif;opacity:.72;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:opacity .15s}',
+      '#dpbMapFloatA button:active,#dpbMapFloatA button:focus-visible{opacity:1;background:rgba(19,41,63,.85)}',
+      '#dpbMapFloatA button.on{opacity:.9}',
+      'html.dpbMapFS .dpbFsHost>#dpbMapFloatA{position:absolute!important;top:calc(var(--fsTop,50px) + 4px)!important;left:0!important;right:0!important;display:block!important;z-index:8!important}'
+    ].join('\n');
+    document.head.appendChild(st);
+  }
+  function floatMk(){
+    var a=q('dpbMapFloatA');if(a)return a;
+    a=document.createElement('div');a.id='dpbMapFloatA';
+    a.innerHTML='<div class="fg"><button type="button" data-f="fs" aria-label="Full screen">\u26F6</button><button type="button" data-f="-" aria-label="Zoom out">\u2212</button><button type="button" data-f="+" aria-label="Zoom in">+</button></div>';
+    a.addEventListener('click',function(e){
+      var t=e.target.closest&&e.target.closest('button[data-f]');if(!t)return;var f=t.dataset.f;
+      if(f==='fs'){if(active())exit(false);else enter();return;}
+      var d=(f==='+')?1:-1;
+      if(active()){zoom(d);return;}
+      var zb=document.querySelector('#mapLegend .me-zoom button[data-z="'+d+'"]');if(zb)zb.click();
+    });
+    return a;
+  }
   function mount(){
-    var z=document.querySelector('#mapLegend .me-zoom');if(!z||!z.parentNode)return;
-    var b=q('dpbFsBtn');
-    if(!b){
-      b=document.createElement('button');b.id='dpbFsBtn';b.type='button';b.textContent='\u26F6';
-      b.setAttribute('aria-label','Full screen');b.title='\u0645\u0644\u0621 \u0627\u0644\u0634\u0627\u0634\u0629';b.onclick=enter;
-    }
-    var r=z.querySelector('button');
-    if(r){var cs=getComputedStyle(r);b.style.cssText='border:'+cs.border+';background:'+cs.backgroundColor+';color:'+cs.color+';border-radius:'+cs.borderRadius+';width:'+cs.width+';height:'+cs.height+';font-size:'+cs.fontSize+';padding:0;flex-shrink:0;cursor:pointer;margin:0 6px 0 auto;';}
-    else b.style.cssText='border:1px solid rgba(255,255,255,.3);background:transparent;color:inherit;border-radius:6px;min-width:30px;height:26px;font-size:15px;margin:0 6px 0 auto;';
-    if(b.nextSibling!==z||b.parentNode!==z.parentNode)z.parentNode.insertBefore(b,z);
+    floatCss();
+    var old=q('dpbFsBtn');if(old&&old.parentNode)old.parentNode.removeChild(old);
+    var sh=q('excelMapShell');if(!sh||!sh.parentNode)return;
+    var a=floatMk();
+    if(a.nextSibling!==sh||a.parentNode!==sh.parentNode)sh.parentNode.insertBefore(a,sh);
+    var has=!!sh.querySelector('table.me-map');
+    a.style.display=has?'':'none';
+    var fb=a.querySelector('[data-f="fs"]');if(fb){var on=active();fb.classList.toggle('on',on);fb.setAttribute('aria-label',on?'Exit full screen':'Full screen');}
   }
   var lgWatch=null;
   function watchLegend(){
@@ -25561,6 +25591,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
   }
   window.__dpbFsEnter=enter;window.__dpbFsExit=function(){exit(false);};
   setInterval(function(){if(!active()){mount();watchLegend();}},1500);
+  window.__dpbFloatMount=mount;
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){mount();watchLegend();});else{mount();watchLegend();}
 })();
 </script>
