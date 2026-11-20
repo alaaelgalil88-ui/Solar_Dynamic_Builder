@@ -25217,13 +25217,22 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       'html.dpbMapFS,html.dpbMapFS body{overflow:hidden!important;overscroll-behavior:none}',
       hide,
       '.dpbFsHost{position:fixed!important;inset:0!important;z-index:2147483000!important;display:flex!important;flex-direction:column!important;background:#0b1626!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;max-width:none!important;width:auto!important;height:auto!important;overflow:hidden!important;transform:none!important;filter:none!important;backdrop-filter:none!important}',
-      '.dpbFsHost>*:not(#excelMapShell):not(#mapDetail):not(#dpbMapActions):not(#dpbFsBar):not(#mapLegend):not(#dpbFsSearch):not(#dpbFsMaps):not(#dpbMapFloatA){display:none!important}',
+      '.dpbFsHost>*:not(#excelMapShell):not(#mapDetail):not(#dpbMapActions):not(#dpbFsBar):not(#mapLegend):not(#dpbFsSearch):not(#dpbFsMaps):not(#dpbMapFloatA):not(#dpbFsPeek){display:none!important}',
       '.dpbFsHost *{animation:none!important;transition:none!important}',
       '.dpbFsHost>#mapLegend{display:none!important}',
       '.dpbFsHost.dpbFsLeg>#mapLegend{display:flex!important;position:absolute!important;top:var(--fsTop,50px);left:0;right:0;z-index:6;max-height:60vh;overflow:auto!important;margin:0!important;padding:8px 10px!important;background:#0f2236!important;border-bottom:1px solid #27506f;box-shadow:0 10px 24px rgba(0,0,0,.55)}',
       'html.dpbMapFS #mapLegend .me-zoom{display:none!important}',
       'html.dpbMapFS #dpbFsBtn{display:none!important}',
       '.dpbFsHost>#dpbFsBar{order:0;flex:0 0 auto;position:relative;z-index:7;display:flex;align-items:center;gap:4px;direction:ltr;padding:max(env(safe-area-inset-top),6px) 6px 6px;background:#0f2236;border-bottom:1px solid #27506f;color:#dceafa;font:700 13px system-ui,sans-serif}',
+      '.dpbFsHost>#dpbFsPeek{display:none}',
+      '.dpbFsHost.dpbFsPeek>#dpbFsPeek{display:flex;order:4;flex:0 0 auto;position:relative;z-index:6;align-items:stretch;gap:6px;direction:ltr;padding:6px 8px max(env(safe-area-inset-bottom),6px);background:#0b1626;border-top:1px solid #27506f;box-shadow:0 -8px 20px rgba(0,0,0,.5)}',
+      '#dpbFsPeek .pk{flex:1 1 auto;min-width:0;height:38px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-radius:10px;border:1px solid #31516d;background:#13293f;color:#fff;font:800 14px system-ui,sans-serif;padding:0 12px;overflow:hidden;white-space:nowrap;touch-action:manipulation}',
+      '#dpbFsPeek .pk .pl{overflow:hidden;text-overflow:ellipsis}',
+      '#dpbFsPeek .px{flex:0 0 38px;height:38px;border-radius:10px;border:1px solid #31516d;background:#13293f;color:#fff;font:800 15px system-ui,sans-serif;padding:0}',
+      'html.dpbMapFS .dpbFsHost.dpbFsPeek>#mapDetail#mapDetail{display:none!important}',
+      '.dpbFsDimSw{flex:1 0 100%;display:flex;align-items:center;justify-content:space-between;direction:rtl;height:38px;margin-top:6px;border-radius:10px;border:1px solid #31516d;background:#13293f;color:#fff;font:800 14px system-ui,sans-serif;padding:0 12px;touch-action:manipulation}',
+      '.dpbFsDimSw .st{font-weight:700;opacity:.8}',
+      '.dpbFsDimSw.on{border-color:#1ca878;background:#0f3a2c}',
       '#dpbFsBar button.t{flex:1 1 auto;min-width:0;height:36px;text-align:left;background:transparent;border:1px solid transparent;color:#fff;font:800 14px system-ui,sans-serif;padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '#dpbFsBar button.t.on{background:#13293f;border-color:#31516d}',
       '.dpbFsHost>#dpbFsMaps{position:absolute;top:var(--fsTop,50px);left:0;right:0;z-index:6;max-height:70vh;overflow:auto;display:none;background:#0f2236;border-bottom:1px solid #27506f;box-shadow:0 10px 24px rgba(0,0,0,.55);padding:6px 8px 10px;direction:ltr}',
@@ -25318,7 +25327,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     requestAnimationFrame(function(){
       if(!host||!host.classList.contains('dpbFsSheet'))return;
       var top=window.innerHeight;
-      ['dpbMapActions','mapDetail'].forEach(function(id){var e=q(id);if(e){var r=e.getBoundingClientRect();if(r.height>0&&r.top<top)top=r.top;}});
+      ['dpbMapActions','mapDetail','dpbFsPeek'].forEach(function(id){var e=q(id);if(e){var r=e.getBoundingClientRect();if(r.height>0&&r.top<top)top=r.top;}});
       sh.style.setProperty('padding-bottom',Math.max(8,window.innerHeight-top+8)+'px','important');
     });
   }
@@ -25326,21 +25335,65 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     var sh=q('excelMapShell');if(!sh||!host)return;
     var td=sh.querySelector('td.me-sel');if(!td)return;
     var top=bar?bar.getBoundingClientRect().bottom:0,bot=window.innerHeight;
-    ['dpbMapActions','mapDetail'].forEach(function(id){var e=q(id);if(e){var r=e.getBoundingClientRect();if(r.height>0&&r.top<bot)bot=r.top;}});
+    ['dpbMapActions','mapDetail','dpbFsPeek'].forEach(function(id){var e=q(id);if(e){var r=e.getBoundingClientRect();if(r.height>0&&r.top<bot)bot=r.top;}});
     var r=td.getBoundingClientRect();
     if(r.top<top+8||r.bottom>bot-8)sh.scrollTop+=(r.top+r.height/2)-((top+bot)/2);
     if(r.left<8||r.right>window.innerWidth-8)sh.scrollLeft+=(r.left+r.width/2)-window.innerWidth/2;
   }
+  /* v-panels: one panel at a time and nothing stays stuck on the map.
+     - legend / search / maps list close as soon as the map is touched (the typed tracker number is kept)
+     - the cell cards fold into a thin strip when the map is dragged, a new cell opens them again, swipe down on them folds them too
+     - Android back closes the open panel first and only then leaves full screen */
+  var lastSel='',gx=0,gy=0,gOn=false,dy0=0;
+  function peekOn(){return !!host&&host.classList.contains('dpbFsPeek');}
+  function selKey(){var s0=q('excelMapShell'),td=s0&&s0.querySelector('td.me-sel');return td?String(td.getAttribute('data-u')||''):'';}
+  function cellLabel(){
+    var d=q('mapDetail'),t='';if(!d)return '\u0627\u0644\u062E\u0644\u064A\u0629';
+    [].forEach.call(d.querySelectorAll('.map-detail-item'),function(it){var k=it.querySelector('.k'),v=it.querySelector('.v');if(k&&v&&/CELL ID/i.test(k.textContent))t=String(v.textContent||'').replace(/\s+/g,' ').trim();});
+    return t||'\u0627\u0644\u062E\u0644\u064A\u0629';
+  }
+  function mkPeek(){
+    var d=document.createElement('div');d.id='dpbFsPeek';
+    d.innerHTML='<button type="button" class="pk" data-p="open"><span class="pl"></span><span class="pa">\u25B2</span></button><button type="button" class="px" data-p="close" aria-label="Close">\u2715</button>';
+    d.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-p]');if(!b)return;if(b.dataset.p==='open')expandCards();else{host.classList.remove('dpbFsPeek');panel('sheet',false);}});
+    return d;
+  }
+  function collapseCards(){
+    if(!host||!host.classList.contains('dpbFsSheet')||peekOn())return;
+    var d=q('mapDetail');if(!d||!d.querySelector('.map-detail-item'))return;
+    var pl=host.querySelector('#dpbFsPeek .pl');if(pl)pl.textContent=cellLabel();
+    host.classList.add('dpbFsPeek');
+    var pk=q('dpbFsPeek'),ac=q('dpbMapActions'),acVis=!!(ac&&ac.parentNode===host&&getComputedStyle(ac).display!=='none');
+    if(pk)pk.style.setProperty('margin-top',acVis?'0':'auto','important');   /* the strip sits at the very bottom, under the action bar when there is one */
+    sheetPad();
+  }
+  function expandCards(){if(!host)return;host.classList.remove('dpbFsPeek');sheetPad();requestAnimationFrame(function(){requestAnimationFrame(reveal);});}
+  function closeTransient(){if(!host)return;['leg','srch','maps'].forEach(function(k){if(host.classList.contains(PN[k]))panel(k,false);});}
+  function anyPanelOpen(){return !!host&&(host.classList.contains('dpbFsLeg')||host.classList.contains('dpbFsSrch')||host.classList.contains('dpbFsMaps')||(host.classList.contains('dpbFsSheet')&&!peekOn()&&!!(q('mapDetail')&&q('mapDetail').querySelector('.map-detail-item'))));}
+  function backClose(){
+    if(!host)return;
+    if(host.classList.contains('dpbFsLeg')||host.classList.contains('dpbFsSrch')||host.classList.contains('dpbFsMaps')){closeTransient();return;}
+    collapseCards();
+  }
+  function onShTs(e){if(e.touches.length!==1){gOn=false;return;}gx=e.touches[0].clientX;gy=e.touches[0].clientY;gOn=true;closeTransient();}
+  function onShTm(e){if(!gOn||e.touches.length!==1)return;var t=e.touches[0];if(Math.abs(t.clientX-gx)>12||Math.abs(t.clientY-gy)>12){gOn=false;collapseCards();}}
+  function onDtTs(e){dy0=e.touches.length===1?e.touches[0].clientY:null;}
+  function onDtTe(e){var d=q('mapDetail');if(dy0===null||!d||!e.changedTouches.length)return;if(e.changedTouches[0].clientY-dy0>60&&d.scrollTop<=0)collapseCards();dy0=null;}
   function syncDetail(){
     var d=q('mapDetail');if(!d)return;
     var has=!!d.querySelector('.map-detail-item');
     d.classList.toggle('dpbFsEmpty',!has);
-    if(has&&host&&!host.classList.contains('dpbFsSheet')){panel('sheet',true);requestAnimationFrame(function(){requestAnimationFrame(reveal);});}
-    else if(has&&host)sheetPad();
+    var sk=selKey();
+    if(!has&&host&&peekOn())host.classList.remove('dpbFsPeek');
+    if(has&&host&&!host.classList.contains('dpbFsSheet')){lastSel=sk;panel('sheet',true);requestAnimationFrame(function(){requestAnimationFrame(reveal);});}
+    else if(has&&host){
+      if(peekOn()&&sk!==lastSel){lastSel=sk;expandCards();}
+      else{lastSel=sk;if(peekOn()){var pl=host.querySelector('#dpbFsPeek .pl');if(pl)pl.textContent=cellLabel();}sheetPad();}
+    }
   }
   function mkBar(){
     var b=document.createElement('div');b.id='dpbFsBar';
-    b.innerHTML='<button type="button" data-a="x" aria-label="Close">\u2715</button><button type="button" class="t" data-a="maps" aria-label="Choose map"></button><button type="button" data-a="find" aria-label="Find tracker">\uD83D\uDD0D</button><button type="button" data-a="leg" aria-label="Legend">\uD83C\uDFA8</button><button type="button" data-a="sheet" aria-label="Cards">\u25A4</button><button type="button" data-a="dim" aria-label="Dim dark cells">\u25D0</button><button type="button" data-a="-" aria-label="Zoom out">\u2212</button><button type="button" data-a="+" aria-label="Zoom in">+</button>';
+    b.innerHTML='<button type="button" class="t" data-a="maps" aria-label="Choose map"></button><button type="button" data-a="find" aria-label="Find tracker">\uD83D\uDD0D</button><button type="button" data-a="leg" aria-label="Legend">\uD83C\uDFA8</button><button type="button" data-a="sheet" aria-label="Cards">\u25A4</button>';
     b.querySelector('.t').textContent=title()+' \u25BE';
     b.addEventListener('click',function(e){
       var t=e.target.closest&&e.target.closest('button[data-a]');if(!t)return;
@@ -25350,7 +25403,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       else if(a==='-')zoom(-1);
       else if(a==='leg')panel('leg');
       else if(a==='find')panel('srch');
-      else if(a==='sheet')panel('sheet');
+      else if(a==='sheet'){if(peekOn())expandCards();else panel('sheet');}
       else if(a==='maps')panel('maps');
       else if(a==='dim'){dimOn=!dimOn;t.classList.toggle('on',dimOn);applyDim();toast(dimOn?'\u062A\u0628\u0647\u064A\u062A \u0627\u0644\u062E\u0644\u0627\u064A\u0627 \u0627\u0644\u063A\u0627\u0645\u0642\u0629: \u0634\u063A\u0651\u0627\u0644':'\u062A\u0628\u0647\u064A\u062A \u0627\u0644\u062E\u0644\u0627\u064A\u0627 \u0627\u0644\u063A\u0627\u0645\u0642\u0629: \u0645\u062A\u0648\u0642\u0651\u0641');}
     });
@@ -25398,6 +25451,11 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
   function paintChips(){
     var lg=q('mapLegend');if(!lg)return;
     lg.querySelectorAll('.me-chip').forEach(function(c){var k=chipColor(c);c.classList.toggle('dpbFsOn',!!(flt&&k&&k.toLowerCase()===flt.toLowerCase()));});
+    if(active()){
+      var sw=lg.querySelector('.dpbFsDimSw');
+      if(!sw){sw=document.createElement('button');sw.type='button';sw.className='dpbFsDimSw';sw.innerHTML='<span>\u062A\u0639\u062A\u064A\u0645 \u0627\u0644\u062E\u0644\u0627\u064A\u0627 \u0627\u0644\u063A\u0627\u0645\u0642\u0629</span><span class="st"></span>';lg.appendChild(sw);}
+      sw.classList.toggle('on',dimOn);sw.setAttribute('aria-pressed',dimOn?'true':'false');sw.querySelector('.st').textContent=dimOn?'\u0634\u063A\u0651\u0627\u0644':'\u0645\u062A\u0648\u0642\u0651\u0641';
+    }
   }
   function setFilter(c){flt=(flt&&c&&flt.toLowerCase()===c.toLowerCase())?null:c;H.classList.toggle('dpbFsFilt',!!flt);rebuildDyn();paintChips();}
   function buzz(n){try{if(navigator.vibrate)navigator.vibrate(n||12);}catch(_){}}
@@ -25413,6 +25471,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     s.scrollTop+=tr.top-sr.top-(sr.height/2-tr.height/2);
     td.classList.add('dpbFsFlash');setTimeout(function(){td.classList.remove('dpbFsFlash');},2200);buzz(18);
     if(hits.length>1)toast((((hitI-1)%hits.length)+1)+' / '+hits.length);
+    panel('srch',false);
   }
   function maxTracker(){
     var s=q('excelMapShell'),mx=0;if(!s)return 0;
@@ -25478,8 +25537,10 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
   document.addEventListener('visibilitychange',function(){if(!document.hidden)keepAwake();});
   document.addEventListener('click',function(e){
     if(!active())return;
+    var dsw=e.target.closest&&e.target.closest('#mapLegend .dpbFsDimSw');
+    if(dsw){dimOn=!dimOn;applyDim();paintChips();buzz(10);return;}
     var chip=e.target.closest&&e.target.closest('#mapLegend .me-chip');
-    if(chip&&host&&host.classList.contains('dpbFsLeg')){var c=chipColor(chip);if(c){setFilter(c);buzz(10);}return;}
+    if(chip&&host&&host.classList.contains('dpbFsLeg')){var c=chipColor(chip);if(c){setFilter(c);buzz(10);panel('leg',false);}return;}
     if(e.target.closest&&e.target.closest('#excelMapShell td.me-u'))buzz(12);
   },true);
   /* the Supervisor/Maps screens add their own padding, height limits and spacers with !important rules; inline !important beats them all */
@@ -25498,25 +25559,32 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     bar=mkBar();host.insertBefore(bar,host.firstChild);host.style.setProperty('--fsTop',bar.offsetHeight+'px','important');
     bar.parentNode.insertBefore(mkSearch(),bar.nextSibling);
     bar.parentNode.insertBefore(mkMaps(),bar.nextSibling);
+    bar.parentNode.insertBefore(mkPeek(),bar.nextSibling);
     var d=q('mapDetail');syncDetail();
     var sh=q('excelMapShell');restorePos();sh.addEventListener('scroll',onScroll,{passive:true});
+    lastSel='';sh.addEventListener('touchstart',onShTs,{passive:true});sh.addEventListener('touchmove',onShTm,{passive:true});
+    if(d){d.addEventListener('touchstart',onDtTs,{passive:true});d.addEventListener('touchend',onDtTe,{passive:true});}
     if(window.MutationObserver){shMo=new MutationObserver(function(){if(fsScale!==1)applyScale();if(dimOn||flt)rebuildDyn();});shMo.observe(sh,{childList:true});
       var lg=q('mapLegend');if(lg){lgMo=new MutationObserver(paintChips);lgMo.observe(lg,{childList:true});}}
     keepAwake();
     if(d&&window.MutationObserver){mo=new MutationObserver(syncDetail);mo.observe(d,{childList:true,subtree:true,characterData:true});}
     try{history.pushState({dpbFs:1},'');pushed=true;}catch(_){pushed=false;}
     try{mount();}catch(_){}
+    try{paintChips();}catch(_){}
   }
   function cleanup(){
     savePos();var sh0=q('excelMapShell');if(sh0)sh0.removeEventListener('scroll',onScroll);
     if(shMo){shMo.disconnect();shMo=null;}if(lgMo){lgMo.disconnect();lgMo=null;}
     flt=null;dimOn=false;H.classList.remove('dpbFsFilt');if(dynEl)dynEl.textContent='';if(fsScale!==1){fsScale=1;applyScale();}baseSize=0;
     if(sh0)sh0.querySelectorAll('td.dpbFsFlash').forEach(function(td){td.classList.remove('dpbFsFlash');});
+    var dsw0=document.querySelector('#mapLegend .dpbFsDimSw');if(dsw0&&dsw0.parentNode)dsw0.parentNode.removeChild(dsw0);
+    var pk=q('dpbFsPeek');if(pk&&pk.parentNode)pk.parentNode.removeChild(pk);if(sh0){sh0.removeEventListener('touchstart',onShTs);sh0.removeEventListener('touchmove',onShTm);}
+    var dd0=q('mapDetail');if(dd0){dd0.removeEventListener('touchstart',onDtTs);dd0.removeEventListener('touchend',onDtTe);}
     var sr=q('dpbFsSearch');if(sr&&sr.parentNode)sr.parentNode.removeChild(sr);sval='';var mp=q('dpbFsMaps');if(mp&&mp.parentNode)mp.parentNode.removeChild(mp);
     freeAwake();
     if(mo){mo.disconnect();mo=null;}
     if(bar&&bar.parentNode)bar.parentNode.removeChild(bar);bar=null;
-    if(host){host.classList.remove('dpbFsHost','dpbFsLeg','dpbFsSrch','dpbFsSheet','dpbFsMaps');
+    if(host){host.classList.remove('dpbFsHost','dpbFsLeg','dpbFsSrch','dpbFsSheet','dpbFsMaps','dpbFsPeek');
       if(hostSt===null)host.removeAttribute('style');else host.setAttribute('style',hostSt);
       var sh1=q('excelMapShell');if(sh1){if(shellSt===null)sh1.removeAttribute('style');else sh1.setAttribute('style',shellSt);}
       host=null;hostSt=null;shellSt=null;}
@@ -25531,7 +25599,7 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
     if(!viaPop&&pushed){ignorePop=true;try{history.back();}catch(_){ignorePop=false;}}
     pushed=false;
   }
-  window.addEventListener('popstate',function(){if(ignorePop){ignorePop=false;return;}if(active())exit(true);});
+  window.addEventListener('popstate',function(){if(ignorePop){ignorePop=false;return;}if(!active())return;if(anyPanelOpen()){backClose();try{history.pushState({dpbFs:1},'');pushed=true;}catch(_){}return;}exit(true);});
   document.addEventListener('keydown',function(e){if(e.key==='Escape'&&active())exit(false);});
   document.addEventListener('touchstart',function(e){
     if(!active()||e.touches.length!==1){tx=null;return;}
@@ -25557,14 +25625,14 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
       '#dpbMapFloatA button{pointer-events:auto;width:34px;height:34px;min-width:0;padding:0;margin:0;border-radius:10px;border:1px solid rgba(255,255,255,.55);background:rgba(11,22,38,.5);color:#fff;text-shadow:0 0 3px rgba(0,0,0,.9);box-shadow:0 0 0 1px rgba(0,0,0,.25);font:800 16px/1 system-ui,sans-serif;opacity:.72;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:opacity .15s}',
       '#dpbMapFloatA button:active,#dpbMapFloatA button:focus-visible{opacity:1;background:rgba(19,41,63,.85)}',
       '#dpbMapFloatA button.on{opacity:.9}',
-      'html.dpbMapFS .dpbFsHost>#dpbMapFloatA{position:absolute!important;top:calc(var(--fsTop,50px) + 4px)!important;left:0!important;right:0!important;display:block!important;z-index:8!important}'
+      'html.dpbMapFS .dpbFsHost>#dpbMapFloatA{position:absolute!important;top:calc(var(--fsTop,50px) + 4px)!important;left:0!important;right:0!important;display:block!important;z-index:5!important}'
     ].join('\n');
     document.head.appendChild(st);
   }
   function floatMk(){
     var a=q('dpbMapFloatA');if(a)return a;
     a=document.createElement('div');a.id='dpbMapFloatA';
-    a.innerHTML='<div class="fg"><button type="button" data-f="fs" aria-label="Full screen">\u26F6</button><button type="button" data-f="-" aria-label="Zoom out">\u2212</button><button type="button" data-f="+" aria-label="Zoom in">+</button></div>';
+    a.innerHTML='<div class="fg"><button type="button" data-f="-" aria-label="Zoom out">\u2212</button><button type="button" data-f="+" aria-label="Zoom in">+</button><button type="button" data-f="fs" aria-label="Full screen">\u26F6</button></div>';
     a.addEventListener('click',function(e){
       var t=e.target.closest&&e.target.closest('button[data-f]');if(!t)return;var f=t.dataset.f;
       if(f==='fs'){if(active())exit(false);else enter();return;}
