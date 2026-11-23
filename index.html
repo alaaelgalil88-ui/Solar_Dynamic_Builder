@@ -25175,7 +25175,8 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
 .dpbQm.on .qs{background:#1ca878}
 .dpbQm.on .qs i{left:12px}
 .dpbQm:active{filter:brightness(1.3)}
-.dpbQmLg .qt{line-height:1.1;text-align:left}
+.dpbQmLg{flex-direction:column;gap:3px;padding:4px 5px;border-radius:12px;font-size:9.5px}
+.dpbQmLg .qt{line-height:1;text-align:center}
 .dpbQmHero{font-size:11px;gap:7px;padding:4px 7px 4px 10px}
 .dpbQmHero .qs{width:28px;height:16px}
 .dpbQmHero .qs i{width:12px;height:12px}
@@ -25187,17 +25188,22 @@ html.dpbMapFS .dpbQm{display:none!important}
 </style>
 <script>
 (function(){
-  var KEY='DPB_MAP_FLAT';
-  function on(){try{return localStorage.getItem(KEY)!=='0'}catch(_){return true}}   /* v254: light mode is the normal look; it is off only if someone switched it off */
-  /* Quick mode = the old "light mode", now an on/off switch. Each phone keeps its own choice (localStorage), so a supervisor controls his own phone. */
-  window.__dpbQmHtml=function(){var o=on();return '<button type="button" class="dpbQm dpbQmLg'+(o?' on':'')+'" role="switch" aria-checked="'+(o?'true':'false')+'" aria-label="Quick mode"><span class="qt">\u26A1 Quick<br>mode</span><span class="qs"><i></i></span></button>';};
+  var KEY_ADM='DPB_MAP_FLAT',KEY_SUP='DPB_MAP_FLAT_SUP';
+  /* Quick mode (= the old "light mode") is an on/off switch with TWO separate saved choices: one for the Admin/Builder map and one for the Supervisor's Project Maps.
+     Changing one never touches the other. Default for both = on (v254 look). */
+  function ctxOf(el){return el&&el.closest&&el.closest('#dpbSupMaps')?'sup':'adm';}
+  function ctxNow(){var s=document.getElementById('excelMapShell');return ctxOf(s);}   /* which screen is the map on right now */
+  function on(c){var k=c==='sup'?KEY_SUP:KEY_ADM;try{return localStorage.getItem(k)!=='0'}catch(_){return true}}
+  window.__dpbQmHtml=function(){var o=on('adm');return '<button type="button" class="dpbQm dpbQmLg'+(o?' on':'')+'" role="switch" aria-checked="'+(o?'true':'false')+'" aria-label="Quick mode"><span class="qt">\u26A1 Quick mode</span><span class="qs"><i></i></span></button>';};
+  var lastCtx='';
   function paint(){
-    var o=on();document.documentElement.classList.toggle('dpbMapFlat',o);
-    document.querySelectorAll('.dpbQm').forEach(function(b){b.classList.toggle('on',o);b.setAttribute('aria-checked',o?'true':'false');});
+    lastCtx=ctxNow();document.documentElement.classList.toggle('dpbMapFlat',on(lastCtx));
+    document.querySelectorAll('.dpbQm').forEach(function(b){var o=on(ctxOf(b));b.classList.toggle('on',o);b.setAttribute('aria-checked',o?'true':'false');});
     var old=document.getElementById('dpbMapFlatBtn');if(old&&old.parentNode)old.parentNode.removeChild(old);
   }
   window.__dpbMountFlat=function(){paint();};
-  document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.dpbQm');if(!b)return;try{localStorage.setItem(KEY,on()?'0':'1')}catch(_){}paint();},true);
+  document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.dpbQm');if(!b)return;var c=ctxOf(b);try{localStorage.setItem(c==='sup'?KEY_SUP:KEY_ADM,on(c)?'0':'1')}catch(_){}paint();},true);
+  setInterval(function(){if(ctxNow()!==lastCtx)paint();},300);   /* the map moves between the Admin screen and the Supervisor screen: switch to that screen's own choice */
   paint();
 })();
 </script>
