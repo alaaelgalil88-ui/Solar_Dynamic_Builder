@@ -534,7 +534,7 @@ code{background:#0a1727;padding:1px 6px;border-radius:5px;font-size:11px;color:#
 @media(max-width:760px){.pro-map-filter{grid-template-columns:1fr 1fr}.pro-map-filter .map-reset{grid-column:1/-1}}
 .print-range-bar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;gap:10px;align-items:end;margin:10px 0 12px;padding:12px;background:linear-gradient(180deg,#12243a,#0b1828);border:1px solid #294766;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
 .print-title{grid-column:1/-1;font-size:12px;font-weight:900;white-space:nowrap;color:#e8f1fb}.print-range-group{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-width:0}.print-arrow{font-size:20px;font-weight:900;color:#8fa7c2;align-self:center}.print-range-bar select{min-width:0}.print-range-bar label{font-size:9px!important;margin-bottom:4px!important}.print-range-active{outline:2px solid #f6c86b!important;outline-offset:-2px!important}.print-range-bar .btn{white-space:nowrap}.print-range-bar .btn:disabled{opacity:.35}
-@media(max-width:760px){.print-range-bar{grid-template-columns:1fr;gap:8px}.print-title{grid-column:1}.print-range-group{grid-template-columns:1fr}.print-arrow{text-align:center;transform:rotate(90deg);height:18px}.print-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.print-range-bar .btn{width:100%}}
+@media(max-width:760px){.print-range-bar{grid-template-columns:1fr;gap:8px}.print-title{grid-column:1}.print-range-group{grid-template-columns:1fr 1fr}.print-arrow{text-align:center;transform:rotate(90deg);height:14px;line-height:14px;font-size:16px}.print-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.print-range-bar .btn{width:100%}}
 .excel-map-shell{scroll-behavior:auto}.excel-plan{border-spacing:3px 3px!important}.excel-plan .data{min-width:27px;width:27px;height:27px;border:0!important;outline:0!important}.excel-plan .tracker-cell{transition:transform .12s ease,opacity .15s ease,filter .15s ease,box-shadow .15s ease}
 @media print{
   @page planA3{size:420mm 297mm;margin:4mm}
@@ -5638,8 +5638,8 @@ function renderNow(){
   shell.innerHTML=h;
   state.last={spec,model};
   state.tdIndex=null; // full render just replaced the DOM - the diff-poll's cached td refs are stale now
-  let lgh='<span class="pill">'+esc(spec.name)+' · '+(spec.mode==='dynamic'?'Dynamic':'Fixed')+'</span>'+
-    '<span class="pill">Cells: '+model.units.length+'</span>'+(window.__dpbQmHtml?window.__dpbQmHtml():'')+'<span class="me-zoom"><button type="button" data-z="-1">−</button><button type="button" data-z="1">+</button></span>';
+  let lgh='<div class="dpbLgTop"><span class="pill">'+esc(spec.name)+' · '+(spec.mode==='dynamic'?'Dynamic':'Fixed')+'</span>'+
+    '<span class="pill">Cells: '+model.units.length+'</span>'+(window.__dpbQmHtml?window.__dpbQmHtml():'')+'<span class="me-zoom"><button type="button" data-z="-1">−</button><button type="button" data-z="1">+</button></span></div>';
   let listh='';
   if(spec.color==='siteCode'){
     const per=new Map();for(const u of model.units){const t=typeOf(u).toLowerCase();per.set(t,(per.get(t)||0)+1);}
@@ -16156,7 +16156,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       </section>
 
       <section class="dpbSupScreen" id="dpbSupMaps">
-        <div class="dpbSupHero dpbSupMapHero"><button type="button" class="dpbQm dpbQmHero" role="switch" aria-checked="true" aria-label="Quick mode"><span class="qt">⚡ Quick mode</span><span class="qs"><i></i></span></button><h2>🗺️ Project Maps</h2><p>جدول حالة التراكرات لعملياتك — فلتر وابحث واطبع.</p></div>
+        <div class="dpbSupHero dpbSupMapHero"><button type="button" class="dpbQm dpbQmHero" role="switch" aria-checked="true" aria-label="Quick mode"><span class="qt"><svg class="qb" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6z"/></svg> Quick mode</span><span class="qs"><i></i></span></button><h2>🗺️ Project Maps</h2><p>جدول حالة التراكرات لعملياتك — فلتر وابحث واطبع.</p></div>
         <div id="dpbSupMapStatus" class="dpbRp" dir="rtl"></div>
         <div class="dpbSupMapControls" style="display:none!important">
           <div class="dpbSupMapSectionTitle">FIXED MAPS</div><select id="dpbSupMapFixed" class="dpbSupSelect"><option value="">Select Fixed Map</option></select>
@@ -25175,8 +25175,16 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline
 .dpbQm.on .qs{background:#1ca878}
 .dpbQm.on .qs i{left:12px}
 .dpbQm:active{filter:brightness(1.3)}
-.dpbQmLg{flex-direction:column;gap:3px;padding:4px 5px;border-radius:12px;font-size:9.5px}
+.dpbQm .qb{display:inline-block;vertical-align:-2px;margin-inline-end:2px;color:#7f90a4;opacity:.75;transition:color .15s,opacity .15s}
+.dpbQm.on .qb{color:#2fe0a0;opacity:1}
+.dpbQmLg{flex-direction:row;gap:4px;padding:3px 4px 3px 5px;border-radius:999px;font-size:9px}
 .dpbQmLg .qt{line-height:1;text-align:center}
+.dpbQmLg .qs{width:20px;height:11px}
+.dpbQmLg .qs i{width:7px;height:7px;top:2px;left:2px}
+.dpbQmLg.on .qs i{left:11px}
+#mapLegend .dpbLgTop{display:flex;flex-wrap:nowrap;align-items:center;gap:4px;flex:0 0 100%;width:100%;min-width:0}
+#mapLegend .dpbLgTop>.pill{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap!important;display:block!important;line-height:1.5!important;font-size:9px!important;padding:3px 4px!important}
+#mapLegend .dpbLgTop>.dpbQm{flex:0 0 auto;margin-inline-start:auto}
 .dpbQmHero{font-size:11px;gap:7px;padding:4px 7px 4px 10px}
 .dpbQmHero .qs{width:28px;height:16px}
 .dpbQmHero .qs i{width:12px;height:12px}
@@ -25194,7 +25202,7 @@ html.dpbMapFS .dpbQm{display:none!important}
   function ctxOf(el){return el&&el.closest&&el.closest('#dpbSupMaps')?'sup':'adm';}
   function ctxNow(){var s=document.getElementById('excelMapShell');return ctxOf(s);}   /* which screen is the map on right now */
   function on(c){var k=c==='sup'?KEY_SUP:KEY_ADM;try{return localStorage.getItem(k)!=='0'}catch(_){return true}}
-  window.__dpbQmHtml=function(){var o=on('adm');return '<button type="button" class="dpbQm dpbQmLg'+(o?' on':'')+'" role="switch" aria-checked="'+(o?'true':'false')+'" aria-label="Quick mode"><span class="qt">\u26A1 Quick mode</span><span class="qs"><i></i></span></button>';};
+  window.__dpbQmHtml=function(){var o=on('adm');return '<button type="button" class="dpbQm dpbQmLg'+(o?' on':'')+'" role="switch" aria-checked="'+(o?'true':'false')+'" aria-label="Quick mode"><span class="qt"><svg class="qb" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6z"/></svg> Quick mode</span><span class="qs"><i></i></span></button>';};
   var lastCtx='';
   function paint(){
     lastCtx=ctxNow();document.documentElement.classList.toggle('dpbMapFlat',on(lastCtx));
