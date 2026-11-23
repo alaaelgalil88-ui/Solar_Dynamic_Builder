@@ -5639,7 +5639,7 @@ function renderNow(){
   state.last={spec,model};
   state.tdIndex=null; // full render just replaced the DOM - the diff-poll's cached td refs are stale now
   let lgh='<span class="pill">'+esc(spec.name)+' · '+(spec.mode==='dynamic'?'Dynamic':'Fixed')+'</span>'+
-    '<span class="pill">Cells: '+model.units.length+'</span><span class="me-zoom"><button type="button" data-z="-1">−</button><button type="button" data-z="1">+</button></span>';
+    '<span class="pill">Cells: '+model.units.length+'</span>'+(window.__dpbQmHtml?window.__dpbQmHtml():'')+'<span class="me-zoom"><button type="button" data-z="-1">−</button><button type="button" data-z="1">+</button></span>';
   let listh='';
   if(spec.color==='siteCode'){
     const per=new Map();for(const u of model.units){const t=typeOf(u).toLowerCase();per.set(t,(per.get(t)||0)+1);}
@@ -16156,7 +16156,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
       </section>
 
       <section class="dpbSupScreen" id="dpbSupMaps">
-        <div class="dpbSupHero dpbSupMapHero"><h2>🗺️ Project Maps</h2><p>جدول حالة التراكرات لعملياتك — فلتر وابحث واطبع.</p></div>
+        <div class="dpbSupHero dpbSupMapHero"><button type="button" class="dpbQm dpbQmHero" role="switch" aria-checked="true" aria-label="Quick mode"><span class="qt">⚡ Quick mode</span><span class="qs"><i></i></span></button><h2>🗺️ Project Maps</h2><p>جدول حالة التراكرات لعملياتك — فلتر وابحث واطبع.</p></div>
         <div id="dpbSupMapStatus" class="dpbRp" dir="rtl"></div>
         <div class="dpbSupMapControls" style="display:none!important">
           <div class="dpbSupMapSectionTitle">FIXED MAPS</div><select id="dpbSupMapFixed" class="dpbSupSelect"><option value="">Select Fixed Map</option></select>
@@ -25169,18 +25169,35 @@ html.dpbMapFlat #excelMapShell .me-map td.me-u{border:1px solid rgba(255,255,255
 html.dpbMapFlat #excelMapShell .me-map td.me-u:not(.me-prog):not([style*="gradient"]){background-image:none!important}
 html.dpbMapFlat #excelMapShell .me-map td.me-u[data-ns="1"][data-dim=""]{outline:2px solid #fff!important;outline-offset:-2px}
 }
+.dpbQm{display:inline-flex;align-items:center;gap:4px;margin-inline-start:auto;padding:3px 5px 3px 7px;border-radius:999px;border:1px solid #31516d;background:#10283d;color:#dceafa;font:800 10px system-ui,sans-serif;direction:ltr;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.dpbQm .qs{position:relative;width:24px;height:14px;border-radius:999px;background:#3a4a5c;flex:0 0 auto;transition:background .15s}
+.dpbQm .qs i{position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#fff;transition:left .15s}
+.dpbQm.on .qs{background:#1ca878}
+.dpbQm.on .qs i{left:12px}
+.dpbQm:active{filter:brightness(1.3)}
+.dpbQmLg .qt{line-height:1.1;text-align:left}
+.dpbQmHero{font-size:11px;gap:7px;padding:4px 7px 4px 10px}
+.dpbQmHero .qs{width:28px;height:16px}
+.dpbQmHero .qs i{width:12px;height:12px}
+.dpbQmHero.on .qs i{left:14px}
+#dpbSupMaps .dpbSupMapHero{position:relative!important}
+.dpbQmHero{position:absolute;top:9px;right:12px;margin:0}
+#dpbSupMaps #mapLegend .dpbQmLg{display:none!important}
+html.dpbMapFS .dpbQm{display:none!important}
 </style>
 <script>
 (function(){
   var KEY='DPB_MAP_FLAT';
   function on(){try{return localStorage.getItem(KEY)!=='0'}catch(_){return true}}   /* v254: light mode is the normal look; it is off only if someone switched it off */
-  function paint(){document.documentElement.classList.toggle('dpbMapFlat',on());var b=document.getElementById('dpbMapFlatBtn');if(b)b.textContent=on()?'\u26A1 \u0648\u0636\u0639 \u062E\u0641\u064A\u0641: \u0634\u063A\u0651\u0627\u0644':'\u26A1 \u0648\u0636\u0639 \u062E\u0641\u064A\u0641: \u0645\u0642\u0641\u0648\u0644';}
-  window.__dpbMountFlat=function(){
-    var lg=document.getElementById('mapLegend');if(!lg||document.getElementById('dpbMapFlatBtn'))return;
-    var b=document.createElement('button');b.id='dpbMapFlatBtn';b.type='button';b.className='btn ghost';b.style.cssText='margin:6px 0;font-size:12px';
-    b.onclick=function(){try{localStorage.setItem(KEY,on()?'0':'1')}catch(_){}paint();};
-    lg.parentNode.insertBefore(b,lg);paint();
-  };
+  /* Quick mode = the old "light mode", now an on/off switch. Each phone keeps its own choice (localStorage), so a supervisor controls his own phone. */
+  window.__dpbQmHtml=function(){var o=on();return '<button type="button" class="dpbQm dpbQmLg'+(o?' on':'')+'" role="switch" aria-checked="'+(o?'true':'false')+'" aria-label="Quick mode"><span class="qt">\u26A1 Quick<br>mode</span><span class="qs"><i></i></span></button>';};
+  function paint(){
+    var o=on();document.documentElement.classList.toggle('dpbMapFlat',o);
+    document.querySelectorAll('.dpbQm').forEach(function(b){b.classList.toggle('on',o);b.setAttribute('aria-checked',o?'true':'false');});
+    var old=document.getElementById('dpbMapFlatBtn');if(old&&old.parentNode)old.parentNode.removeChild(old);
+  }
+  window.__dpbMountFlat=function(){paint();};
+  document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.dpbQm');if(!b)return;try{localStorage.setItem(KEY,on()?'0':'1')}catch(_){}paint();},true);
   paint();
 })();
 </script>
