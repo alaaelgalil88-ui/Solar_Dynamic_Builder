@@ -18646,7 +18646,12 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const list=getSupervisorAccounts().filter(a=>a.active!==false);
     /* v199: مربع Admin اتشال من شاشة دخول المشرف. رقم الأدمن بيتكتب في الأدمن كنترول بس؛ للشغل اليومي استخدم حساب مشرف شخصي. */
     const all=list.filter(a=>!a.isAdmin&&String(a.name||"").toLowerCase()!=="admin");
-    if(!selectedLoginAccount || !all.some(a=>String(a.id)===String(selectedLoginAccount.id))) selectedLoginAccount=all[0]||null;
+    if(!selectedLoginAccount || !all.some(a=>String(a.id)===String(selectedLoginAccount.id))){
+      /* the supervisor that last logged in successfully on THIS device comes pre-selected (the PIN is still required); if he no longer exists / is inactive, fall back to the first account as before */
+      let lastId=null;try{lastId=localStorage.getItem("DPB_SUP_LOGIN_LAST_V1")}catch(_){}
+      selectedLoginAccount=(lastId&&all.find(a=>String(a.id)===String(lastId)))||all[0]||null;
+      try{if(selectedLoginAccount&&q("dpbSupUser")&&!q("dpbSupUser").value)q("dpbSupUser").value=selectedLoginAccount.name||""}catch(_){}
+    }
     root.innerHTML=all.length?all.map(a=>{
       const isSelected=selectedLoginAccount&&String(selectedLoginAccount.id)===String(a.id);
       const icon=a.isAdmin
@@ -18671,6 +18676,7 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const pass=q("dpbSupPass").value.trim(), account=selectedLoginAccount;
     if(!account){q("dpbSupLoginErr").textContent="اختار الحساب أولاً.";return}
     const finishLogin=(acc)=>{
+      try{if(account&&!account.isAdmin&&account.id!=null)localStorage.setItem("DPB_SUP_LOGIN_LAST_V1",String(account.id))}catch(_){}
       state.account=acc;state.assignedProcessIds=supervisorAllowedProcessIds(acc);state.assignedProcessId=state.assignedProcessIds.length===1?state.assignedProcessIds[0]:null;state.user=acc.name;
       q("dpbSupWelcome").textContent=`Welcome, ${state.user}`;q("dpbSupLoginErr").textContent="";state.autoOpenProject=!acc.isAdmin;try{if(window.dpbReminders)window.dpbReminders.onLogin(acc)}catch(_){}showScreen("projects");
       if(window.DPB_GS&&typeof window.DPB_GS.logHistory==="function")window.DPB_GS.logHistory({user:state.user,action:"login",details:acc.isAdmin?"Admin":"Supervisor"});
