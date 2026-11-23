@@ -25211,7 +25211,17 @@ html.dpbMapFS .dpbQm{display:none!important}
   }
   window.__dpbMountFlat=function(){paint();};
   document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.dpbQm');if(!b)return;var c=ctxOf(b);try{localStorage.setItem(c==='sup'?KEY_SUP:KEY_ADM,on(c)?'0':'1')}catch(_){}paint();},true);
-  setInterval(function(){if(ctxNow()!==lastCtx)paint();},300);   /* the map moves between the Admin screen and the Supervisor screen: switch to that screen's own choice */
+  /* Each button always shows ITS OWN saved choice (Builder = DPB_MAP_FLAT, Supervisor = DPB_MAP_FLAT_SUP, both kept on the device).
+     The map moves between the Admin screen and the Supervisor screen, and the Supervisor button is rebuilt every time that screen is drawn
+     (a fresh button has no "on" look), so we re-sync on a timer AND the moment any Quick-mode button is added to the page. */
+  setInterval(paint,300);
+  try{
+    var qmRaf=0;
+    new MutationObserver(function(ms){
+      for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes;for(var j=0;j<a.length;j++){var n=a[j];
+        if(n&&n.nodeType===1&&(n.classList&&n.classList.contains('dpbQm')||(n.querySelector&&n.querySelector('.dpbQm')))){if(!qmRaf)qmRaf=requestAnimationFrame(function(){qmRaf=0;paint();});return;}}}
+    }).observe(document.documentElement,{childList:true,subtree:true});
+  }catch(_){}
   paint();
 })();
 </script>
