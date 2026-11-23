@@ -232,6 +232,24 @@
   }
   window.__dpbMakeCommitter = makeCommitter;
   var wSeq = 0, lastW = {};   // v259: newest write number per whole document (see the rescue below)
+  /* v261: map-cell writes (op t:'f') may now use the fast HTTPS path too. Pure helpers (also used by the Node test):
+     fastShapeOk  = which batches may go HTTPS-first (cell batches of any size, or whole-document batches >= 100 KB as before)
+     cellKeysOf   = one key per (document, cell column) of a cell batch, null for any other batch
+     keysSuperseded = true when EVERY cell of this batch was written again later, so the older batch must not be sent again (it could land after the newer one) */
+  function fastShapeOk(chunk, jl) {
+    if (!chunk || !chunk.length) return false;
+    if (chunk.every(function (o) { return o && o.t === 'f' && !/\/kv\/(msg[as]|fcm)_/.test(String(o.path || '')); })) return true;
+    var bytes = 0;
+    for (var i = 0; i < chunk.length; i++) { var o = chunk[i]; if (!o || o.t !== 's' || /\/kv\/(msg[as]|fcm)_/.test(String(o.path || ''))) return false; bytes += jl(o.data); }
+    return bytes >= 100000;
+  }
+  function cellKeysOf(chunk) {
+    if (!chunk || !chunk.length || !chunk.every(function (o) { return o && o.t === 'f'; })) return null;
+    var ks = []; chunk.forEach(function (o) { Object.keys(o.cells || {}).forEach(function (k) { ks.push(String(o.path) + '|' + k); }); });
+    return ks.length ? ks : null;
+  }
+  function keysSuperseded(keys, mySeq, lastC) { return !!keys && keys.every(function (k) { return lastC[k] > mySeq; }); }
+  var lastC = {}, fastChain = Promise.resolve();   // newest write number per cell; HTTPS-first sends go out one after another, in the order they were made
 
   /* ---- v126: plain-HTTPS twin of a write batch (Firestore REST `documents:commit`). Pure functions, tested in Node. ----
      op {t:'s', path, data}  -> whole document      (same as batch.set)
@@ -486,9 +504,7 @@
       function fastEligible(chunk) {
         if (navigator.onLine === false || !wsBad()) return false;
         var W = window.__dpbFs2W || {}; if (W.restFailAt && Date.now() - W.restFailAt < 60000) return false;   // HTTPS just failed: do not insist
-        var bytes = 0;
-        for (var i = 0; i < chunk.length; i++) { var o = chunk[i]; if (!o || o.t !== 's' || /\/kv\/(msg[as]|fcm)_/.test(String(o.path || ''))) return false; bytes += jlen(o.data); }
-        return bytes >= 100000;
+        return fastShapeOk(chunk, jlen);
       }
       function restProbe() {
         var dev = ls('dpb_fs2_dev', '') || 'dev';
@@ -677,9 +693,15 @@
                 };
                 var cpid = ''; for (var ci = 0; ci < chunk.length && !cpid; ci++) { var co = chunk[ci], cb = (co.base && co.base.projectId) || (co.data && co.data.projectId) || ((/\/rows\/([A-Za-z0-9_\-]+?)__/.exec(String(co.path || '')) || [])[1]); if (cb) cpid = String(cb).replace(/[^A-Za-z0-9_\-]/g, '_'); }
                 if (!cpid) cpid = pidS();   // project-less batches (pointer docs) belong to the project that is open now
+                var mySeq = ++wSeq, sPaths = chunk.every(function (o) { return o && o.t === 's'; }) ? chunk.map(function (o) { return o.path; }) : null, cKeys = cellKeysOf(chunk);
+                if (sPaths) sPaths.forEach(function (pp) { lastW[pp] = mySeq; });
+                if (cKeys) cKeys.forEach(function (k) { lastC[k] = mySeq; });
                 var fast = fastEligible(chunk), fastP = null, fastLive = false, cp;
                 if (fast) {
-                  fastLive = true; fastP = restCommitFast(chunk);
+                  fastLive = true;
+                  // one HTTPS-first request at a time, oldest first: two writes to the same cell can never overtake each other on the network
+                  fastP = Promise.race([fastChain, new Promise(function (r) { setTimeout(r, 8000); })]).then(function () { return keysSuperseded(cKeys, mySeq, lastC) ? { superseded: true } : restCommitFast(chunk); });   // an earlier request that hangs holds the line for 8 s at most
+                  fastChain = fastP.then(function () {}, function () {});
                   var fastEnd = function () { fastLive = false; }; fastP.then(fastEnd, fastEnd);
                   var W2 = window.__dpbFs2W = window.__dpbFs2W || {}; W2.fastN = (W2.fastN || 0) + 1;
                   try { dlog('fast-https', opsLabel(chunk)); } catch (e) {}
@@ -687,10 +709,9 @@
                   // kept on the device, exactly as before, and do not try the fast path again for a minute.
                   cp = fastP.then(function () { return true; }, function (e) { W2.restFailAt = Date.now(); if (e && e.definite) throw e; return mk(); });
                 } else cp = mk();
-                var mySeq = ++wSeq, sPaths = chunk.every(function (o) { return o && o.t === 's'; }) ? chunk.map(function (o) { return o.path; }) : null;
-                if (sPaths) sPaths.forEach(function (pp) { lastW[pp] = mySeq; });
                 var resc = function () {
                   if (sPaths && sPaths.every(function (pp) { return lastW[pp] > mySeq; })) return Promise.resolve({ superseded: true });
+                  if (keysSuperseded(cKeys, mySeq, lastC)) return Promise.resolve({ superseded: true });
                   return (fastLive && fastP) ? fastP : restCommit(chunk);
                 }; resc.__fast = !!fast;
                 return commitOrQueue(cp, resc, cpid, opsLabel(chunk), chunk.some(function (o) { return /\/rows\/(?!meta-)[^\/]+$/.test(String((o && o.path) || '')); })).then(function (w) { ws.push(w); });
