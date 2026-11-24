@@ -18646,11 +18646,13 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
     const list=getSupervisorAccounts().filter(a=>a.active!==false);
     /* v199: مربع Admin اتشال من شاشة دخول المشرف. رقم الأدمن بيتكتب في الأدمن كنترول بس؛ للشغل اليومي استخدم حساب مشرف شخصي. */
     const all=list.filter(a=>!a.isAdmin&&String(a.name||"").toLowerCase()!=="admin");
+    let focusSelected=false;
     if(!selectedLoginAccount || !all.some(a=>String(a.id)===String(selectedLoginAccount.id))){
       /* the supervisor that last logged in successfully on THIS device comes pre-selected (the PIN is still required); if he no longer exists / is inactive, fall back to the first account as before */
       let lastId=null;try{lastId=localStorage.getItem("DPB_SUP_LOGIN_LAST_V1")}catch(_){}
       selectedLoginAccount=(lastId&&all.find(a=>String(a.id)===String(lastId)))||all[0]||null;
       try{if(selectedLoginAccount&&q("dpbSupUser")&&!q("dpbSupUser").value)q("dpbSupUser").value=selectedLoginAccount.name||""}catch(_){}
+      focusSelected=true;
     }
     root.innerHTML=all.length?all.map(a=>{
       const isSelected=selectedLoginAccount&&String(selectedLoginAccount.id)===String(a.id);
@@ -18665,6 +18667,11 @@ body.dpbProjectInsideMode #dpbAdminHammerBackBtn{display:none!important}
         <small class="dpbUserPerm" title="${escapeHtml(perm)}">${escapeHtml(perm)}</small>
       </button>`
     }).join(""):'<div class="hint">لا توجد حسابات مشرفين مفعلة.</div>';
+    /* bring the pre-selected supervisor into view (the list may be longer than the screen); retried because the overlay may still be laying out */
+    if(focusSelected){
+      const bring=()=>{try{const el=root.querySelector(".dpbSupAccountBtn.active");if(el&&el.offsetParent!==null)el.scrollIntoView({block:"center",inline:"nearest"})}catch(_){}};
+      requestAnimationFrame(bring);setTimeout(bring,150);setTimeout(bring,500);
+    }
     root.querySelectorAll("[data-account-id]").forEach(btn=>btn.onclick=()=>{
       const id=btn.dataset.accountId; selectedLoginAccount=all.find(a=>String(a.id)===String(id))||null;
       q("dpbSupUser").value=selectedLoginAccount?.name||"";
